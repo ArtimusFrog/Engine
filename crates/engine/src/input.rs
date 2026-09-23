@@ -15,6 +15,7 @@ pub struct Input {
     buttons_down: HashSet<MouseButton>,
     buttons_pressed: HashSet<MouseButton>,
     mouse_delta: Vec2,
+    scroll: f32,
 }
 
 impl Input {
@@ -39,6 +40,15 @@ impl Input {
     /// Mausbewegung seit dem letzten Frame (roh, ohne Mausbeschleunigung).
     pub fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
+    }
+
+    /// Mausrad seit dem letzten Frame in Rasterstufen, positiv = vom Nutzer weg.
+    pub fn scroll(&self) -> f32 {
+        self.scroll
+    }
+
+    pub(crate) fn on_scroll(&mut self, steps: f32) {
+        self.scroll += steps;
     }
 
     pub(crate) fn on_key(&mut self, key: PhysicalKey, state: ElementState, repeat: bool) {
@@ -82,5 +92,6 @@ impl Input {
         self.keys_pressed.clear();
         self.buttons_pressed.clear();
         self.mouse_delta = Vec2::ZERO;
+        self.scroll = 0.0;
     }
 }

@@ -5,19 +5,30 @@ use std::time::Instant;
 use glam::{UVec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::assets::Assets;
 use crate::camera::Camera;
 use crate::input::{Input, KeyCode};
+use crate::physics::Physics;
 use crate::renderer::Renderer;
 use crate::scene::Scene;
 
-/// Das Spiel. Die Engine ruft `init` einmal beim Start und `update` einmal pro Frame auf.
+/// Das Spiel.
+///
+/// Ablauf pro Frame: so oft wie nötig `fixed_update` + Physik-Takt (60 Hz), danach
+/// einmal `update` und das Zeichnen.
 pub trait Game: 'static {
+    /// Einmal beim Start.
     fn init(&mut self, ctx: &mut Context);
+
+    /// In festen Takten von `Physics::FIXED_DT`, direkt vor jedem Physik-Takt.
+    /// Gehört hier hin: alles, was die Spielwelt verändert (Bewegung, Treffer, Regeln).
+    fn fixed_update(&mut self, _ctx: &mut Context) {}
+
+    /// Einmal pro Bild. Gehört hier hin: Kamera, Anzeige, Effekte.
     fn update(&mut self, ctx: &mut Context);
 }
 
@@ -40,6 +51,8 @@ pub struct Time {
     /// Sekunden seit dem Start.
     pub elapsed: f32,
     pub frame: u64,
+    /// Anzahl der bisherigen Physik-Takte.
+    pub tick: u64,
 }
 
 /// Licht und Atmosphäre der Welt. Alle Farben in linearem RGB.
@@ -70,6 +83,7 @@ impl Default for Environment {
 /// Alles, worauf das Spiel zugreifen kann.
 pub struct Context {
     pub scene: Scene,
+    pub physics: Physics,
     pub camera: Camera,
     pub input: Input,
     pub assets: Assets,
@@ -85,6 +99,7 @@ impl Context {
     fn new() -> Self {
         Context {
             scene: Scene::default(),
+            physics: Physics::new(),
             camera: Camera::default(),
             input: Input::default(),
             assets: Assets::new(),
@@ -124,6 +139,7 @@ pub fn run(config: EngineConfig, game: impl Game) {
         cursor_locked: false,
         last_frame: Instant::now(),
         start: Instant::now(),
+        accumulator: 0.0,
         fps_timer: 0.0,
         fps_frames: 0,
         auto_screenshot: AutoScreenshot::from_args(),
@@ -159,6 +175,7 @@ struct App {
     cursor_locked: bool,
     last_frame: Instant,
     start: Instant,
+    accumulator: f32,
     fps_timer: f32,
     fps_frames: u32,
     auto_screenshot: Option<AutoScreenshot>,
@@ -173,6 +190,21 @@ impl App {
         self.ctx.time.delta = (now - self.last_frame).as_secs_f32().min(0.1);
         self.ctx.time.elapsed = (now - self.start).as_secs_f32();
         self.last_frame = now;
+
+        // Feste Takte nachholen. Höchstens 5 pro Frame, sonst schaukelt sich ein
+        // langsamer Rechner immer weiter auf.
+        self.accumulator += self.ctx.time.delta;
+        let mut steps = 0;
+        while self.accumulator >= Physics::FIXED_DT && steps < 5 {
+            self.game.fixed_update(&mut self.ctx);
+            self.ctx.physics.step();
+            self.ctx.time.tick += 1;
+            self.accumulator -= Physics::FIXED_DT;
+            steps += 1;
+        }
+        self.accumulator = self.accumulator.min(Physics::FIXED_DT);
+        let alpha = self.accumulator / Physics::FIXED_DT;
+        self.ctx.physics.sync_to_scene(&mut self.ctx.scene, alpha);
 
         self.game.update(&mut self.ctx);
 
@@ -252,6 +284,13 @@ impl ApplicationHandler for App {
                 self.ctx.input.on_key(event.physical_key, event.state, event.repeat);
             }
             WindowEvent::MouseInput { state, button, .. } => self.ctx.input.on_mouse_button(button, state),
+            WindowEvent::MouseWheel { delta, .. } => {
+                let steps = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 100.0,
+                };
+                self.ctx.input.on_scroll(steps);
+            }
             WindowEvent::Focused(false) => self.ctx.input.release_all(),
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}

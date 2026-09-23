@@ -22,19 +22,29 @@ Eigene Spiele-Engine in Rust, nativ für Windows (DirectX 12 / Vulkan über wgpu
 
 Die fertige Datei liegt danach unter `target/release/game.exe`.
 
-## Steuerung (Sandbox)
+## Steuerung (Spielplatz)
 
 | Eingabe | Aktion |
 |---|---|
-| Rechte Maustaste halten | Umschauen |
-| W / A / S / D | Fliegen (während rechte Maustaste gehalten) |
-| Q / E | Runter / hoch |
-| Shift | Schneller |
+| Linksklick ins Fenster | Maus einfangen |
+| Maus | Kamera drehen |
+| Mausrad | Zoom |
+| W / A / S / D | Laufen |
+| Shift | Rennen |
+| Leertaste | Springen |
+| Linksklick (Maus gefangen) | Ball werfen |
+| Esc | Maus freigeben |
+| F1 | Freie Kamera an/aus (rechte Maustaste + WASD/QE) |
 | F12 | Screenshot nach `screenshots/` |
-| Esc | Beenden |
+
+## Tests
+
+    cargo test -p engine
+
+Prüft die Physik ohne Fenster (Fallen, Landen, Laufen, Treppen, Springen, Sichtstrahlen).
 
 ## Automatischer Screenshot
 
     cargo run -p game -- --screenshot screenshots/test.png --frames 60
 
-Startet das Spiel, speichert nach 60 Frames ein Bild und beendet sich.
+Startet das Spiel, speichert nach 60 Frames ein Bild und beendet sich. Mit `--autopilot` läuft die Figur dabei von allein los.

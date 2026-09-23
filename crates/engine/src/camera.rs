@@ -45,6 +45,44 @@ impl Camera {
     }
 }
 
+/// Third-Person-Kamera, die um ein Ziel (meist die Spielfigur) kreist.
+/// Maus dreht die Kamera, solange der Zeiger gefangen ist; das Mausrad zoomt.
+pub struct OrbitController {
+    pub distance: f32,
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub sensitivity: f32,
+    /// Die Kamera bleibt vor Wänden stehen, statt hindurchzusehen.
+    pub avoid_walls: bool,
+}
+
+impl Default for OrbitController {
+    fn default() -> Self {
+        OrbitController { distance: 6.0, min_distance: 2.0, max_distance: 20.0, sensitivity: 0.0025, avoid_walls: true }
+    }
+}
+
+impl OrbitController {
+    /// `ignore` ist die Spielfigur selbst, damit die Kamera nicht an ihr hängen bleibt.
+    pub fn update(&mut self, ctx: &mut Context, target: Vec3, ignore: Option<crate::physics::CharacterId>) {
+        if ctx.cursor_locked {
+            let delta = ctx.input.mouse_delta() * self.sensitivity;
+            ctx.camera.yaw += delta.x;
+            ctx.camera.pitch = (ctx.camera.pitch - delta.y).clamp(-1.4, 1.2);
+        }
+        self.distance = (self.distance * 0.9f32.powf(ctx.input.scroll())).clamp(self.min_distance, self.max_distance);
+
+        let back = -ctx.camera.forward();
+        let mut distance = self.distance;
+        if self.avoid_walls {
+            if let Some((_, hit)) = ctx.physics.raycast(target, back, distance, ignore) {
+                distance = (hit - 0.2).max(0.3);
+            }
+        }
+        ctx.camera.position = target + back * distance;
+    }
+}
+
 /// Freie Kamera wie im Unreal-Viewport: rechte Maustaste halten, mit WASD/QE fliegen.
 pub struct FlyController {
     pub speed: f32,

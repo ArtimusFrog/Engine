@@ -10,5 +10,6 @@ glam = "0.33.9"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 log = "0.4.34"
 pollster = "1.0.1"
+rapier3d = "0.35.3"
 wgpu = "30.0.1"
 winit = "0.30.13"

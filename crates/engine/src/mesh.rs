@@ -64,6 +64,38 @@ impl MeshData {
         mesh
     }
 
+    /// Aufrechte Kapsel, `height` ist die Gesamthöhe inklusive Halbkugeln.
+    /// Passt zu `physics::Shape::Capsule` mit denselben Maßen.
+    pub fn capsule(radius: f32, height: f32, segments: u32, rings_per_cap: u32) -> Self {
+        let half_cylinder = (height / 2.0 - radius).max(0.0);
+        let mut mesh = MeshData::default();
+        // Obere Halbkugel, dann untere; der Äquator kommt doppelt vor, dazwischen
+        // entsteht der Zylindermantel.
+        let rows = (0..=rings_per_cap)
+            .map(|r| (r, half_cylinder))
+            .chain((rings_per_cap..=2 * rings_per_cap).map(|r| (r, -half_cylinder)));
+        let mut row_count = 0;
+        for (ring, offset) in rows {
+            let theta = std::f32::consts::PI * ring as f32 / (2 * rings_per_cap) as f32;
+            for seg in 0..=segments {
+                let phi = std::f32::consts::TAU * seg as f32 / segments as f32;
+                let n = Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin());
+                let position = n * radius + Vec3::Y * offset;
+                mesh.vertices.push(Vertex { position: position.into(), normal: n.into() });
+            }
+            row_count += 1;
+        }
+        let stride = segments + 1;
+        for row in 0..row_count - 1 {
+            for seg in 0..segments {
+                let a = row * stride + seg;
+                let b = a + stride;
+                mesh.indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
+            }
+        }
+        mesh
+    }
+
     fn push_quad(&mut self, center: Vec3, u: Vec3, v: Vec3, normal: Vec3) {
         let base = self.vertices.len() as u32;
         for corner in [center - u - v, center + u - v, center + u + v, center - u + v] {

@@ -309,12 +309,11 @@ impl Renderer {
 
         // Objekte nach Mesh sortieren, damit jedes Mesh mit einem einzigen Draw-Call
         // (Instancing) gezeichnet wird.
-        let mut visible: Vec<_> = ctx.scene.iter().filter(|e| e.visible).collect();
-        visible.sort_by_key(|e| e.mesh);
+        let mut visible: Vec<_> = ctx.scene.iter_world().filter(|(e, _)| e.visible).collect();
+        visible.sort_by_key(|(e, _)| e.mesh);
         let instances: Vec<Instance> = visible
             .iter()
-            .map(|e| {
-                let model = e.transform.matrix();
+            .map(|&(e, model)| {
                 Instance {
                     model: model.to_cols_array_2d(),
                     normal: Mat3::from_mat4(model).inverse().transpose().to_cols_array_2d(),
@@ -357,8 +356,8 @@ impl Renderer {
 
             let mut start = 0;
             while start < visible.len() {
-                let mesh_id = visible[start].mesh;
-                let end = start + visible[start..].iter().take_while(|e| e.mesh == mesh_id).count();
+                let mesh_id = visible[start].0.mesh;
+                let end = start + visible[start..].iter().take_while(|(e, _)| e.mesh == mesh_id).count();
                 let mesh = &self.meshes[mesh_id.0 as usize];
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);

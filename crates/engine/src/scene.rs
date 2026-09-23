@@ -43,11 +43,13 @@ pub struct Entity {
     /// Grundfarbe in linearem RGB, Alpha derzeit ungenutzt.
     pub color: Vec4,
     pub visible: bool,
+    /// Hängt das Objekt an ein anderes: `transform` ist dann relativ zum Elternobjekt.
+    pub parent: Option<EntityId>,
 }
 
 impl Entity {
     pub fn new(name: impl Into<String>, mesh: MeshId) -> Self {
-        Entity { name: name.into(), transform: Transform::default(), mesh, color: Vec4::ONE, visible: true }
+        Entity { name: name.into(), transform: Transform::default(), mesh, color: Vec4::ONE, visible: true, parent: None }
     }
 
     pub fn with_transform(mut self, transform: Transform) -> Self {
@@ -59,10 +61,25 @@ impl Entity {
         self.color = color;
         self
     }
+
+    pub fn with_parent(mut self, parent: EntityId) -> Self {
+        self.parent = Some(parent);
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EntityId(usize);
+
+impl EntityId {
+    pub(crate) fn index(self) -> usize {
+        self.0
+    }
+
+    pub(crate) fn from_index(index: usize) -> Self {
+        EntityId(index)
+    }
+}
 
 /// Alle Objekte der Spielwelt.
 #[derive(Default)]
@@ -86,6 +103,20 @@ impl Scene {
 
     pub fn iter(&self) -> impl Iterator<Item = &Entity> {
         self.entities.iter()
+    }
+
+    /// Transformation in Weltkoordinaten, inklusive aller Elternobjekte.
+    pub fn world_matrix(&self, id: EntityId) -> Mat4 {
+        let entity = &self.entities[id.0];
+        match entity.parent {
+            Some(parent) => self.world_matrix(parent) * entity.transform.matrix(),
+            None => entity.transform.matrix(),
+        }
+    }
+
+    /// Alle Objekte zusammen mit ihrer Weltmatrix.
+    pub fn iter_world(&self) -> impl Iterator<Item = (&Entity, Mat4)> {
+        self.entities.iter().enumerate().map(|(i, e)| (e, self.world_matrix(EntityId(i))))
     }
 
     pub fn len(&self) -> usize {
