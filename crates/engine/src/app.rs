@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use glam::{UVec2, Vec3};
 use winit::application::ApplicationHandler;
@@ -95,11 +95,42 @@ pub struct Context {
     pub time: Time,
     /// Mauszeiger ausblenden und im Fenster festhalten (z. B. zum Umschauen).
     pub cursor_locked: bool,
+    /// Kurzer Text für den Fenstertitel (z. B. Verbindungsstatus).
+    pub status: String,
     window_size: UVec2,
     exit_requested: bool,
+    headless: bool,
 }
 
 impl Context {
+    /// Kontext ohne Fenster, z. B. für Tests. Die Takte treibt man selbst mit
+    /// [`fixed_tick`](Self::fixed_tick) an.
+    pub fn headless() -> Self {
+        Context { headless: true, ..Self::new() }
+    }
+
+    /// Läuft das Spiel ohne Fenster (dedizierter Server, Tests)?
+    pub fn is_headless(&self) -> bool {
+        self.headless
+    }
+
+    /// Ein fester Takt: Spiellogik, dann Physik.
+    pub fn fixed_tick(&mut self, game: &mut dyn Game) {
+        self.physics.begin_tick();
+        game.fixed_update(self);
+        self.physics.step();
+        self.time.tick += 1;
+    }
+
+    /// Überträgt die Physik-Positionen in die Szene (sonst macht das die Engine pro Frame).
+    pub fn sync_scene(&mut self) {
+        self.physics.sync_to_scene(&mut self.scene, 1.0);
+    }
+
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested
+    }
+
     fn new() -> Self {
         Context {
             scene: Scene::default(),
@@ -110,8 +141,10 @@ impl Context {
             env: Environment::default(),
             time: Time::default(),
             cursor_locked: false,
+            status: String::new(),
             window_size: UVec2::ONE,
             exit_requested: false,
+            headless: false,
         }
     }
 
@@ -131,7 +164,7 @@ impl Context {
 /// - `--screenshot <datei.png>`: nach einigen Frames ein Bild speichern und beenden
 /// - `--frames <n>`: Anzahl Frames vor dem Screenshot (Standard 30)
 pub fn run(config: EngineConfig, game: impl Game) {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,wgpu_hal=error,engine=info,game=info")).init();
+    init_logging();
 
     let mut app = App {
         config,
@@ -152,6 +185,38 @@ pub fn run(config: EngineConfig, game: impl Game) {
     let event_loop = EventLoop::new().expect("Ereignisschleife konnte nicht erstellt werden");
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app).expect("Engine ist abgestürzt");
+}
+
+/// Startet das Spiel ohne Fenster, z. B. als dedizierter Server. Ruft nur `init` und
+/// `fixed_update` auf (60-mal pro Sekunde), nie `update`. Läuft, bis `ctx.exit()` kommt.
+pub fn run_headless(mut game: impl Game) {
+    init_logging();
+    let mut ctx = Context::headless();
+    game.init(&mut ctx);
+
+    let tick = Duration::from_secs_f32(Physics::FIXED_DT);
+    let start = Instant::now();
+    let mut next = Instant::now();
+    while !ctx.exit_requested {
+        ctx.time.delta = Physics::FIXED_DT;
+        ctx.time.elapsed = (Instant::now() - start).as_secs_f32();
+        ctx.fixed_tick(&mut game);
+        ctx.time.frame += 1;
+
+        next += tick;
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > Duration::from_secs(1) {
+            log::warn!("Server kommt nicht hinterher, überspringe {:.1} s", (now - next).as_secs_f32());
+            next = now;
+        }
+    }
+}
+
+fn init_logging() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,wgpu_hal=error,engine=info,game=info"))
+        .try_init();
 }
 
 struct AutoScreenshot {
@@ -200,9 +265,7 @@ impl App {
         self.accumulator += self.ctx.time.delta;
         let mut steps = 0;
         while self.accumulator >= Physics::FIXED_DT && steps < 5 {
-            self.game.fixed_update(&mut self.ctx);
-            self.ctx.physics.step();
-            self.ctx.time.tick += 1;
+            self.ctx.fixed_tick(self.game.as_mut());
             self.accumulator -= Physics::FIXED_DT;
             steps += 1;
         }
@@ -241,7 +304,8 @@ impl App {
         self.fps_frames += 1;
         if self.fps_timer >= 0.5 {
             let fps = self.fps_frames as f32 / self.fps_timer;
-            window.set_title(&format!("{} – {fps:.0} FPS – {}", self.config.title, renderer.adapter_name()));
+            let status = if self.ctx.status.is_empty() { String::new() } else { format!(" – {}", self.ctx.status) };
+            window.set_title(&format!("{}{status} – {fps:.0} FPS – {}", self.config.title, renderer.adapter_name()));
             self.fps_timer = 0.0;
             self.fps_frames = 0;
         }

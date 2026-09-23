@@ -82,32 +82,67 @@ impl EntityId {
 }
 
 /// Alle Objekte der Spielwelt.
+///
+/// Gelöschte Objekte hinterlassen eine Lücke, damit die IDs der anderen gültig bleiben.
 #[derive(Default)]
 pub struct Scene {
-    entities: Vec<Entity>,
+    entities: Vec<Option<Entity>>,
+    count: usize,
 }
 
 impl Scene {
     pub fn spawn(&mut self, entity: Entity) -> EntityId {
-        self.entities.push(entity);
+        self.entities.push(Some(entity));
+        self.count += 1;
         EntityId(self.entities.len() - 1)
     }
 
+    /// Löscht ein Objekt samt allen Objekten, die daran hängen.
+    pub fn despawn(&mut self, id: EntityId) {
+        if self.entities.get_mut(id.0).and_then(Option::take).is_none() {
+            return;
+        }
+        self.count -= 1;
+        let children: Vec<_> = self
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.as_ref().is_some_and(|e| e.parent == Some(id)))
+            .map(|(i, _)| EntityId(i))
+            .collect();
+        for child in children {
+            self.despawn(child);
+        }
+    }
+
+    pub fn contains(&self, id: EntityId) -> bool {
+        self.entities.get(id.0).is_some_and(Option::is_some)
+    }
+
+    /// Panics, wenn das Objekt gelöscht wurde; siehe [`try_get`](Self::try_get).
     pub fn get(&self, id: EntityId) -> &Entity {
-        &self.entities[id.0]
+        self.try_get(id).expect("Objekt wurde gelöscht")
     }
 
     pub fn get_mut(&mut self, id: EntityId) -> &mut Entity {
-        &mut self.entities[id.0]
+        self.try_get_mut(id).expect("Objekt wurde gelöscht")
+    }
+
+    pub fn try_get(&self, id: EntityId) -> Option<&Entity> {
+        self.entities.get(id.0)?.as_ref()
+    }
+
+    pub fn try_get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
+        self.entities.get_mut(id.0)?.as_mut()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Entity> {
-        self.entities.iter()
+        self.entities.iter().flatten()
     }
 
     /// Transformation in Weltkoordinaten, inklusive aller Elternobjekte.
     pub fn world_matrix(&self, id: EntityId) -> Mat4 {
-        let entity = &self.entities[id.0];
+        let Some(entity) = self.try_get(id) else { return Mat4::IDENTITY };
         match entity.parent {
             Some(parent) => self.world_matrix(parent) * entity.transform.matrix(),
             None => entity.transform.matrix(),
@@ -116,14 +151,17 @@ impl Scene {
 
     /// Alle Objekte zusammen mit ihrer Weltmatrix.
     pub fn iter_world(&self) -> impl Iterator<Item = (&Entity, Mat4)> {
-        self.entities.iter().enumerate().map(|(i, e)| (e, self.world_matrix(EntityId(i))))
+        self.entities
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.as_ref().map(|e| (e, self.world_matrix(EntityId(i)))))
     }
 
     pub fn len(&self) -> usize {
-        self.entities.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entities.is_empty()
+        self.count == 0
     }
 }

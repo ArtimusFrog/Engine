@@ -22,6 +22,33 @@ Eigene Spiele-Engine in Rust, nativ für Windows (DirectX 12 / Vulkan über wgpu
 
 Die fertige Datei liegt danach unter `target/release/game.exe`.
 
+## Multiplayer
+
+Zum Doppelklicken (nutzen den Release-Build):
+
+| Datei | Was passiert |
+|---|---|
+| `Allein spielen.bat` | Einzelspieler |
+| `Spiel hosten.bat` | Selbst spielen und gleichzeitig Server für andere sein |
+| `Beitreten.bat` | Fragt nach der Adresse und verbindet sich |
+
+Oder über die Kommandozeile:
+
+    game.exe --host [--port 7777]      # spielen und hosten
+    game.exe --join 100.64.1.2[:7777]  # beitreten
+    game.exe --server [--port 7777]    # nur Server, ohne Fenster (z. B. auf dem VPS)
+
+Das Spiel nutzt **UDP-Port 7777**. Beim ersten Hosten fragt die Windows-Firewall, ob
+`game.exe` Verbindungen annehmen darf – mit „Zulassen“ bestätigen.
+
+Übers Internet ohne eigenen Server: beide installieren [Tailscale](https://tailscale.com),
+der Host startet `Spiel hosten.bat`, der andere `Beitreten.bat` mit der Tailscale-IP des Hosts.
+
+**So funktioniert es:** Der Server rechnet die Physik für alle; Clients schicken nur ihre
+Eingaben. Die eigene Figur bewegt sich trotzdem sofort (Vorhersage) und wird korrigiert,
+falls der Server etwas anderes berechnet. Mitspieler und Objekte werden ~130 ms verzögert
+zwischen zwei Server-Ständen interpoliert, damit sie flüssig laufen.
+
 ## Steuerung (Spielplatz)
 
 | Eingabe | Aktion |
@@ -39,9 +66,11 @@ Die fertige Datei liegt danach unter `target/release/game.exe`.
 
 ## Tests
 
-    cargo test -p engine
+    cargo test --workspace
 
-Prüft die Physik ohne Fenster (Fallen, Landen, Laufen, Treppen, Springen, Sichtstrahlen).
+Prüft ohne Fenster: Physik (Fallen, Landen, Laufen, Treppen, Springen, Sichtstrahlen,
+Nachspielen von Eingaben), Netzwerk und Multiplayer (Server und Client im selben
+Prozess: Verbinden, Bewegung, Vorhersage ohne Korrekturen, synchrone Kisten).
 
 ## Automatischer Screenshot
 

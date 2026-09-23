@@ -8,20 +8,22 @@ pub mod assets;
 pub mod camera;
 pub mod input;
 pub mod mesh;
+pub mod net;
 pub mod physics;
 mod renderer;
 pub mod scene;
 
-pub use app::{run, Context, EngineConfig, Environment, Game, Time};
+pub use app::{run, run_headless, Context, EngineConfig, Environment, Game, Time};
 
 /// Alles, was ein Spiel typischerweise braucht, mit einem einzigen `use`.
 pub mod prelude {
-    pub use crate::app::{run, Context, EngineConfig, Environment, Game, Time};
+    pub use crate::app::{run, run_headless, Context, EngineConfig, Environment, Game, Time};
     pub use crate::assets::{Assets, MeshId};
     pub use crate::camera::{Camera, FlyController, OrbitController};
     pub use crate::input::{Input, KeyCode, MouseButton};
     pub use crate::mesh::MeshData;
-    pub use crate::physics::{BodyDesc, CharacterId, CharacterSettings, Physics, Shape};
+    pub use crate::net::{Channel, ClientId, NetClient, NetServer, ServerEvent};
+    pub use crate::physics::{BodyDesc, CharacterId, CharacterSettings, CharacterState, Physics, RigidBodyHandle, Shape};
     pub use crate::scene::{Entity, EntityId, Scene, Transform};
     pub use glam::{vec2, vec3, vec4, Mat4, Quat, Vec2, Vec3, Vec4};
 }

@@ -1,0 +1,91 @@
+//! Was zwischen Server und Clients über das Netzwerk geht.
+
+use glam::{Quat, Vec2, Vec3};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+pub const DEFAULT_PORT: u16 = 7777;
+
+/// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
+/// mit unterschiedlicher ID können sich nicht verbinden.
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0001;
+
+pub type PlayerId = u64;
+pub type NetId = u32;
+
+/// Spieler-ID des Hosts (spielt selbst auf dem Server-Rechner).
+pub const HOST_PLAYER: PlayerId = 0;
+
+/// Eingaben eines Spielers für einen Takt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlayerInput {
+    /// Fortlaufende Nummer, damit der Server bestätigen kann, was er verarbeitet hat.
+    pub seq: u32,
+    /// Gewünschte Laufrichtung in der XZ-Ebene, Länge 0..1.
+    pub wish: Vec2,
+    pub sprint: bool,
+    pub jump: bool,
+    /// Blickrichtung, falls in diesem Takt geworfen wird.
+    pub throw: Option<Vec3>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObjectKind {
+    Ball,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerState {
+    pub id: PlayerId,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub grounded: bool,
+    pub facing: f32,
+    /// Letzte Eingabe dieses Spielers, die im Zustand schon enthalten ist.
+    pub last_input: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObjectState {
+    pub id: NetId,
+    pub position: Vec3,
+    pub rotation: Quat,
+}
+
+/// Zustand der Welt zu einem Server-Takt. Ruhende Objekte fehlen meist, um Bandbreite
+/// zu sparen; der Client behält dann ihre letzte bekannte Lage.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub tick: u32,
+    pub players: Vec<PlayerState>,
+    pub objects: Vec<ObjectState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ServerMessage {
+    Welcome { player_id: PlayerId, tick: u32 },
+    PlayerJoined { player_id: PlayerId },
+    PlayerLeft { player_id: PlayerId },
+    Spawn { id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3 },
+    Despawn { id: NetId },
+    Snapshot(Snapshot),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ClientMessage {
+    /// Die letzten paar Eingaben (älteste zuerst). Mehrfach senden gleicht Paketverlust aus.
+    Inputs(Vec<PlayerInput>),
+}
+
+pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
+    postcard::to_allocvec(message).expect("Nachricht lässt sich nicht kodieren")
+}
+
+pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    match postcard::from_bytes(bytes) {
+        Ok(message) => Some(message),
+        Err(e) => {
+            log::warn!("Ungültige Nachricht verworfen: {e}");
+            None
+        }
+    }
+}
