@@ -2,7 +2,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat3;
+use glam::camera::rh;
+use glam::{Mat3, Mat4, Vec3};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -10,6 +11,7 @@ use crate::app::Context;
 use crate::mesh::{MeshData, Vertex};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const SHADOW_MAP_SIZE: u32 = 2048;
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
@@ -22,12 +24,14 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array!
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Globals {
     view_proj: [[f32; 4]; 4],
+    light_view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 4],
     sun_dir: [f32; 4],
     sun_color: [f32; 4],
     sky_ambient: [f32; 4],
     ground_ambient: [f32; 4],
     fog: [f32; 4],
+    shadow_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -51,8 +55,11 @@ pub(crate) struct Renderer {
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
+    shadow_pipeline: wgpu::RenderPipeline,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    shadow_bind_group: wgpu::BindGroup,
+    shadow_map: wgpu::TextureView,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
     meshes: Vec<GpuMesh>,
@@ -97,29 +104,124 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/basic.wgsl").into()),
         });
 
+        let globals_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                globals_entry,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
+        // Der Schatten-Durchgang schreibt in die Schattenkarte und darf sie deshalb
+        // nicht gleichzeitig gebunden haben.
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow globals"),
+            entries: &[globals_entry],
+        });
+
         let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: size_of::<Globals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let shadow_map = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("shadow map"),
+                size: wgpu::Extent3d { width: SHADOW_MAP_SIZE, height: SHADOW_MAP_SIZE, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: globals_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&shadow_map) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
+            ],
+        });
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow globals"),
+            layout: &shadow_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals_buffer.as_entire_binding() }],
+        });
+
+        let vertex_buffers = [
+            Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<Vertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &VERTEX_ATTRIBUTES,
+            }),
+            Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<Instance>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &INSTANCE_ATTRIBUTES,
+            }),
+        ];
+
+        let shadow_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow"),
+            bind_group_layouts: &[Some(&shadow_layout)],
+            immediate_size: 0,
+        });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_shadow"),
+                compilation_options: Default::default(),
+                buffers: &vertex_buffers,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -134,18 +236,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &VERTEX_ATTRIBUTES,
-                    }),
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &INSTANCE_ATTRIBUTES,
-                    }),
-                ],
+                buffers: &vertex_buffers,
             },
             primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -177,8 +268,11 @@ impl Renderer {
             config,
             depth,
             pipeline,
+            shadow_pipeline,
             globals_buffer,
             globals_bind_group,
+            shadow_bind_group,
+            shadow_map,
             instance_buffer,
             instance_capacity,
             meshes: Vec::new(),
@@ -296,14 +390,17 @@ impl Renderer {
 
         let env = &ctx.env;
         let aspect = self.config.width as f32 / self.config.height as f32;
+        let texel_world = 2.0 * env.shadow_range / SHADOW_MAP_SIZE as f32;
         let globals = Globals {
             view_proj: ctx.camera.view_projection(aspect).to_cols_array_2d(),
+            light_view_proj: sun_view_projection(ctx).to_cols_array_2d(),
             camera_pos: ctx.camera.position.extend(1.0).into(),
             sun_dir: env.sun_direction.normalize().extend(0.0).into(),
             sun_color: env.sun_color.extend(0.0).into(),
             sky_ambient: env.sky_ambient.extend(0.0).into(),
             ground_ambient: env.ground_ambient.extend(0.0).into(),
             fog: env.sky_color.extend(env.fog_density).into(),
+            shadow_params: [1.0 / SHADOW_MAP_SIZE as f32, texel_world * 1.5, 0.0, 0.0],
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
@@ -327,8 +424,36 @@ impl Renderer {
         }
         self.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
+        // Zusammenhängende Bereiche mit gleichem Mesh
+        let mut batches = Vec::new();
+        let mut start = 0;
+        while start < visible.len() {
+            let mesh_id = visible[start].0.mesh;
+            let end = start + visible[start..].iter().take_while(|(e, _)| e.mesh == mesh_id).count();
+            batches.push((mesh_id.0 as usize, start as u32..end as u32));
+            start = end;
+        }
+
         let sky = env.sky_color;
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_map,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.shadow_bind_group, &[]);
+            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            self.draw_batches(&mut pass, &batches);
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
@@ -353,19 +478,18 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-
-            let mut start = 0;
-            while start < visible.len() {
-                let mesh_id = visible[start].0.mesh;
-                let end = start + visible[start..].iter().take_while(|(e, _)| e.mesh == mesh_id).count();
-                let mesh = &self.meshes[mesh_id.0 as usize];
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
-                start = end;
-            }
+            self.draw_batches(&mut pass, &batches);
         }
         self.queue.submit([encoder.finish()]);
+    }
+
+    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)]) {
+        for (mesh, instances) in batches {
+            let mesh = &self.meshes[*mesh];
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, instances.clone());
+        }
     }
 
     fn upload_new_meshes(&mut self, meshes: &[MeshData]) {
@@ -409,4 +533,21 @@ impl Renderer {
             })
             .create_view(&Default::default())
     }
+}
+
+/// Orthografische Sicht der Sonne auf den Bereich vor der Kamera. Der Mittelpunkt rastet
+/// auf Texel der Schattenkarte ein, sonst flimmern Schattenkanten beim Bewegen.
+fn sun_view_projection(ctx: &Context) -> Mat4 {
+    let range = ctx.env.shadow_range;
+    let to_sun = ctx.env.sun_direction.normalize();
+    let up = if to_sun.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let view = rh::view::look_to_mat4(Vec3::ZERO, -to_sun, up);
+
+    let focus = ctx.camera.position + ctx.camera.forward() * range * 0.5;
+    let center = view.transform_point3(focus);
+    let texel = 2.0 * range / SHADOW_MAP_SIZE as f32;
+    let (x, y) = ((center.x / texel).round() * texel, (center.y / texel).round() * texel);
+    let depth = -center.z;
+    let proj = rh::proj::directx::orthographic(x - range, x + range, y - range, y + range, depth - 200.0, depth + 200.0);
+    proj * view
 }

@@ -65,17 +65,21 @@ pub struct Environment {
     pub sky_ambient: Vec3,
     pub ground_ambient: Vec3,
     pub fog_density: f32,
+    /// Halbe Kantenlänge des Bereichs mit Schatten in Metern. Größer = mehr Schatten
+    /// sichtbar, aber unschärfer.
+    pub shadow_range: f32,
 }
 
 impl Default for Environment {
     fn default() -> Self {
         Environment {
             sky_color: Vec3::new(0.45, 0.65, 0.95),
-            sun_direction: Vec3::new(0.4, 0.8, 0.3),
+            sun_direction: Vec3::new(0.6, 0.55, 0.35),
             sun_color: Vec3::new(1.0, 0.95, 0.85),
             sky_ambient: Vec3::new(0.22, 0.28, 0.38),
             ground_ambient: Vec3::new(0.12, 0.1, 0.08),
             fog_density: 0.006,
+            shadow_range: 35.0,
         }
     }
 }
