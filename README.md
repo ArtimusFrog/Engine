@@ -26,7 +26,7 @@ Die fertige Datei liegt danach unter `target/release/game.exe`.
 
 Am einfachsten über das Hauptmenü: „Spiel hosten“ bzw. „Beitreten“ mit Adresse.
 Einstellungen (Name, Maus, Sichtfeld, Vollbild, VSync) werden unter
-`%APPDATA%ngineJNeinstellungen.json` gespeichert.
+`%APPDATA%/EngineJN/einstellungen.json` gespeichert.
 
 Alternativ zum Doppelklicken (nutzen den Release-Build):
 
