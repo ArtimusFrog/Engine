@@ -12,7 +12,9 @@ use std::time::Duration;
 use engine::prelude::*;
 
 use crate::protocol::*;
-use crate::world::{World, SPAWN_POINT};
+use std::collections::HashMap;
+
+use crate::world::World;
 
 /// Verzögerung der Darstellung von Mitspielern und Objekten in Takten (8 ≈ 133 ms).
 const INTERPOLATION_DELAY: f64 = 8.0;
@@ -38,6 +40,8 @@ pub struct Replica {
     last_reconciled: u32,
     pub corrections: u32,
     name: String,
+    /// Rohstoffe, deren Treffer schon vorab gezeigt wurden (Takt der Vorschau).
+    previewed: HashMap<u32, u64>,
 }
 
 impl Replica {
@@ -45,6 +49,7 @@ impl Replica {
         Ok(Replica {
             net: NetClient::connect(address, PROTOCOL_ID, name.as_bytes())?,
             name: name.to_string(),
+            previewed: HashMap::new(),
             local_id: None,
             next_seq: 1,
             pending: VecDeque::new(),
@@ -65,6 +70,11 @@ impl Replica {
 
     pub fn ping_ms(&self) -> f64 {
         self.net.ping() * 1000.0
+    }
+
+    /// Merkt sich, dass ein Treffer schon vorab gezeigt wurde.
+    pub fn note_preview(&mut self, id: u32, tick: u64) {
+        self.previewed.insert(id, tick);
     }
 
     /// Ein Takt. Liefert einen Fehlertext, wenn die Verbindung weg ist.
@@ -104,9 +114,13 @@ impl Replica {
                 log::info!("Mit dem Server verbunden, meine Spieler-ID: {player_id}");
                 self.local_id = Some(player_id);
                 self.server_tick = Some(tick as f64);
-                world.spawn_player(ctx, player_id, &self.name, SPAWN_POINT);
+                let spawn = world.spawn;
+                world.spawn_player(ctx, player_id, &self.name, spawn);
             }
-            ServerMessage::PlayerJoined { player_id, name } => world.spawn_player(ctx, player_id, &name, SPAWN_POINT),
+            ServerMessage::PlayerJoined { player_id, name } => {
+                let spawn = world.spawn;
+                world.spawn_player(ctx, player_id, &name, spawn);
+            }
             ServerMessage::PlayerLeft { player_id } => world.remove_player(ctx, player_id),
             ServerMessage::Spawn { id, kind, position, velocity } => {
                 if !world.objects.contains_key(&id) {
@@ -115,6 +129,29 @@ impl Replica {
             }
             ServerMessage::Despawn { id } => world.remove_object(ctx, id),
             ServerMessage::Snapshot(snapshot) => self.receive_snapshot(ctx, world, snapshot),
+            ServerMessage::ResourceHit { id, health } => {
+                // Eigene Schläge wurden schon vorab gezeigt – nicht doppelt.
+                let shown = self.previewed.remove(&id).is_some_and(|tick| ctx.time.tick < tick + 60);
+                world.resource_hit(ctx, id, health, !shown);
+            }
+            ServerMessage::ResourceGone { id } => {
+                self.previewed.remove(&id);
+                world.resource_hit(ctx, id, 0, true);
+            }
+            ServerMessage::ResourceBack { id } => world.resource_back(ctx, id),
+            ServerMessage::ResourceStates { gone, damaged } => {
+                for id in gone {
+                    world.resource_hit(ctx, id, 0, false);
+                }
+                for (id, health) in damaged {
+                    world.resource_hit(ctx, id, health, false);
+                }
+            }
+            ServerMessage::Inventory(inventory) => {
+                if let Some(local) = self.local_id {
+                    world.inventories.insert(local, inventory);
+                }
+            }
         }
     }
 

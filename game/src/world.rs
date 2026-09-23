@@ -4,15 +4,21 @@ use std::collections::{BTreeMap, HashMap};
 
 use engine::prelude::*;
 
-use crate::protocol::{NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
+use crate::island::{self, ResourceKind, ResourceSpec};
+use crate::protocol::{Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
 
-pub const SPAWN_POINT: Vec3 = vec3(0.0, 1.5, 8.0);
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_SPEED: f32 = 9.0;
 pub const THROW_SPEED: f32 = 18.0;
 /// Takte zwischen zwei Würfen desselben Spielers.
 pub const THROW_COOLDOWN_TICKS: u64 = 15;
-/// Objekte aus dem Level bekommen feste IDs ab 0, zur Laufzeit erzeugte ab hier.
+/// Takte zwischen zwei Schlägen auf einen Rohstoff.
+pub const HARVEST_COOLDOWN_TICKS: u64 = 22;
+/// Wie nah man einem Rohstoff sein muss (Meter vom Rand).
+pub const HARVEST_REACH: f32 = 2.2;
+/// Nach dieser Zeit wachsen Bäume nach und Felsen tauchen wieder auf (2 Minuten).
+pub const RESPAWN_TICKS: u64 = 60 * 120;
+/// Zur Laufzeit erzeugte Objekte (geworfene Bälle) bekommen IDs ab hier.
 pub const FIRST_RUNTIME_ID: NetId = 10_000;
 
 pub struct Avatar {
@@ -21,31 +27,81 @@ pub struct Avatar {
     /// Blickrichtung (Yaw in Radiant), folgt der Laufrichtung.
     pub facing: f32,
     pub last_throw_tick: u64,
+    pub last_harvest_tick: u64,
     pub name: String,
 }
 
 pub struct NetObject {
     pub entity: EntityId,
     pub body: RigidBodyHandle,
-    pub kind: Option<ObjectKind>,
+    pub kind: ObjectKind,
+}
+
+/// Ein Baum oder Fels, der abgebaut werden kann.
+pub struct Resource {
+    pub spec: ResourceSpec,
+    pub health: u8,
+    entity: Option<EntityId>,
+    body: Option<RigidBodyHandle>,
+    /// Seit welchem Takt der Rohstoff abgebaut ist.
+    pub gone_since: Option<u64>,
+    /// Restzeit des Wackelns nach einem Treffer (Sekunden).
+    shake: f32,
+}
+
+impl Resource {
+    pub fn is_present(&self) -> bool {
+        self.gone_since.is_none()
+    }
+
+    /// Ungefährer Radius am Boden (für die Reichweite).
+    fn radius(&self) -> f32 {
+        match self.spec.collider {
+            Shape::Capsule { radius, .. } => radius,
+            Shape::Box { size } => size.x.max(size.z) * 0.5,
+            Shape::Sphere { radius } => radius,
+        }
+    }
 }
 
 pub struct World {
     pub players: HashMap<PlayerId, Avatar>,
-    /// Alle beweglichen Objekte, die übers Netzwerk abgeglichen werden.
+    /// Geworfene Bälle, die übers Netzwerk abgeglichen werden.
     pub objects: BTreeMap<NetId, NetObject>,
+    pub resources: BTreeMap<u32, Resource>,
+    by_entity: HashMap<EntityId, u32>,
+    pub inventories: HashMap<PlayerId, Inventory>,
+    /// Startpunkt für neue Spieler.
+    pub spawn: Vec3,
+    pub terrain: Terrain,
     capsule: MeshId,
 }
 
 impl World {
-    /// Baut das Level. Auf allen Rechnern in derselben Reihenfolge, damit die IDs passen.
+    /// Baut die Insel. Auf allen Rechnern identisch, damit die IDs passen.
     pub fn new(ctx: &mut Context) -> Self {
         let settings = CharacterSettings::default();
-        let capsule = ctx.assets.add_mesh(MeshData::capsule(settings.radius, settings.height, 24, 8));
-        let mut world = World { players: HashMap::new(), objects: BTreeMap::new(), capsule };
-        world.build_level(ctx);
+        let capsule = ctx.assets.named_mesh("spielfigur", || MeshData::capsule(settings.radius, settings.height, 24, 8));
+        let island = island::build(ctx);
+        let mut world = World {
+            players: HashMap::new(),
+            objects: BTreeMap::new(),
+            resources: BTreeMap::new(),
+            by_entity: HashMap::new(),
+            inventories: HashMap::new(),
+            spawn: island.spawn + Vec3::Y * 1.2,
+            terrain: island.terrain,
+            capsule,
+        };
+        for (id, spec) in island.resources {
+            let health = spec.max_health;
+            world.resources.insert(id, Resource { spec, health, entity: None, body: None, gone_since: None, shake: 0.0 });
+            world.place_resource(ctx, id);
+        }
         world
     }
+
+    // ---------- Spieler ----------
 
     pub fn spawn_player(&mut self, ctx: &mut Context, id: PlayerId, name: &str, position: Vec3) {
         if self.players.contains_key(&id) {
@@ -64,7 +120,11 @@ impl World {
                 .with_color(vec4(0.02, 0.02, 0.03, 1.0)),
         );
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
-        self.players.insert(id, Avatar { entity, character, facing: 0.0, last_throw_tick: 0, name: name.to_string() });
+        self.players.insert(
+            id,
+            Avatar { entity, character, facing: 0.0, last_throw_tick: 0, last_harvest_tick: 0, name: name.to_string() },
+        );
+        self.inventories.entry(id).or_default();
         log::info!("{name} ({id}) ist da");
     }
 
@@ -72,31 +132,8 @@ impl World {
         if let Some(avatar) = self.players.remove(&id) {
             ctx.physics.remove_character(avatar.character);
             ctx.scene.despawn(avatar.entity);
+            self.inventories.remove(&id);
             log::info!("{} ({id}) ist weg", avatar.name);
-        }
-    }
-
-    pub fn spawn_object(&mut self, ctx: &mut Context, id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3) {
-        match kind {
-            ObjectKind::Ball => {
-                let transform = Transform::from_position(position).with_scale(Vec3::splat(0.4));
-                let entity = ctx.scene.spawn(
-                    Entity::new("Ball", ctx.assets.sphere()).with_transform(transform).with_color(vec4(1.0, 0.45, 0.05, 1.0)),
-                );
-                let body = ctx.physics.add_body(
-                    entity,
-                    &transform,
-                    BodyDesc::dynamic(Shape::Sphere { radius: 0.2 }).with_density(3.0).with_restitution(0.4).with_velocity(velocity),
-                );
-                self.objects.insert(id, NetObject { entity, body, kind: Some(kind) });
-            }
-        }
-    }
-
-    pub fn remove_object(&mut self, ctx: &mut Context, id: NetId) {
-        if let Some(object) = self.objects.remove(&id) {
-            ctx.physics.remove_body(object.body);
-            ctx.scene.despawn(object.entity);
         }
     }
 
@@ -112,113 +149,175 @@ impl World {
         }
     }
 
-    /// Dreht die Figuren weich in ihre Blickrichtung. Einmal pro Bild.
-    pub fn update_visuals(&self, ctx: &mut Context) {
-        let blend = (ctx.time.delta * 12.0).min(1.0);
+    pub fn player_position(&self, ctx: &Context, id: PlayerId) -> Option<Vec3> {
+        self.players.get(&id).map(|a| ctx.physics.character_position(a.character))
+    }
+
+    // ---------- Geworfene Objekte ----------
+
+    pub fn spawn_object(&mut self, ctx: &mut Context, id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3) {
+        match kind {
+            ObjectKind::Ball => {
+                let transform = Transform::from_position(position).with_scale(Vec3::splat(0.4));
+                let entity = ctx.scene.spawn(
+                    Entity::new("Ball", ctx.assets.sphere()).with_transform(transform).with_color(vec4(1.0, 0.45, 0.05, 1.0)),
+                );
+                let body = ctx.physics.add_body(
+                    entity,
+                    &transform,
+                    BodyDesc::dynamic(Shape::Sphere { radius: 0.2 }).with_density(3.0).with_restitution(0.4).with_velocity(velocity),
+                );
+                self.objects.insert(id, NetObject { entity, body, kind });
+            }
+        }
+    }
+
+    pub fn remove_object(&mut self, ctx: &mut Context, id: NetId) {
+        if let Some(object) = self.objects.remove(&id) {
+            ctx.physics.remove_body(object.body);
+            ctx.scene.despawn(object.entity);
+        }
+    }
+
+    // ---------- Rohstoffe ----------
+
+    fn place_resource(&mut self, ctx: &mut Context, id: u32) {
+        let Some(resource) = self.resources.get_mut(&id) else { return };
+        let spec = &resource.spec;
+        let entity = ctx.scene.spawn(
+            Entity::new(spec.name, spec.mesh).with_transform(spec.transform).with_color(spec.color).with_material(spec.material),
+        );
+        if let Some(glow) = spec.glow_part {
+            ctx.scene.spawn(Entity::new("Leuchtfrüchte", glow).with_parent(entity).with_material(Material::Emissive { glow: 2.2 }));
+        }
+        let collider = Transform::from_position(spec.transform.position + spec.collider_offset).with_rotation(spec.transform.rotation);
+        resource.body = Some(ctx.physics.add_body(entity, &collider, BodyDesc::fixed(spec.collider)));
+        resource.entity = Some(entity);
+        self.by_entity.insert(entity, id);
+    }
+
+    fn remove_resource_visual(&mut self, ctx: &mut Context, id: u32) {
+        let Some(resource) = self.resources.get_mut(&id) else { return };
+        if let Some(body) = resource.body.take() {
+            ctx.physics.remove_body(body);
+        }
+        if let Some(entity) = resource.entity.take() {
+            ctx.scene.despawn(entity);
+            self.by_entity.remove(&entity);
+        }
+    }
+
+    /// Welcher Rohstoff gehört zu diesem Objekt der Szene?
+    pub fn resource_at(&self, entity: EntityId) -> Option<u32> {
+        self.by_entity.get(&entity).copied()
+    }
+
+    /// Ist der Spieler nah genug, um den Rohstoff zu bearbeiten? `slack` gibt dem Server
+    /// etwas Spielraum, weil Client und Server die Figur leicht versetzt sehen.
+    pub fn in_reach(&self, ctx: &Context, player: PlayerId, id: u32, slack: f32) -> bool {
+        let (Some(position), Some(resource)) = (self.player_position(ctx, player), self.resources.get(&id)) else { return false };
+        let base = resource.spec.transform.position;
+        let horizontal = vec2(position.x - base.x, position.z - base.z).length();
+        resource.is_present() && horizontal <= resource.radius() + HARVEST_REACH + slack && (position.y - base.y).abs() < 4.0
+    }
+
+    /// Ein Treffer ist angekommen: Zustand übernehmen und – falls gewünscht – Effekte zeigen.
+    pub fn resource_hit(&mut self, ctx: &mut Context, id: u32, health: u8, effects: bool) {
+        let Some(resource) = self.resources.get_mut(&id) else { return };
+        if !resource.is_present() {
+            return;
+        }
+        resource.health = health;
+        if effects {
+            resource.shake = 0.35;
+            hit_particles(ctx, &resource.spec, health == 0);
+        }
+        if health == 0 {
+            resource.gone_since = Some(ctx.time.tick);
+            self.remove_resource_visual(ctx, id);
+        }
+    }
+
+    /// Nur Optik: Wackeln und Splitter sofort zeigen, bevor der Server antwortet.
+    pub fn preview_hit(&mut self, ctx: &mut Context, id: u32) {
+        if let Some(resource) = self.resources.get_mut(&id).filter(|r| r.is_present()) {
+            resource.shake = 0.35;
+            hit_particles(ctx, &resource.spec, false);
+        }
+    }
+
+    /// Rohstoff ist nachgewachsen.
+    pub fn resource_back(&mut self, ctx: &mut Context, id: u32) {
+        let Some(resource) = self.resources.get_mut(&id) else { return };
+        if resource.is_present() {
+            return;
+        }
+        resource.gone_since = None;
+        resource.health = resource.spec.max_health;
+        self.place_resource(ctx, id);
+    }
+
+    /// Dreht Figuren weich in ihre Blickrichtung und lässt getroffene Rohstoffe wackeln.
+    pub fn update_visuals(&mut self, ctx: &mut Context) {
+        let dt = ctx.time.delta;
+        let blend = (dt * 12.0).min(1.0);
         for avatar in self.players.values() {
             if let Some(entity) = ctx.scene.try_get_mut(avatar.entity) {
                 let target = Quat::from_rotation_y(-avatar.facing);
                 entity.transform.rotation = entity.transform.rotation.slerp(target, blend);
             }
         }
+        for resource in self.resources.values_mut().filter(|r| r.shake > 0.0) {
+            resource.shake = (resource.shake - dt).max(0.0);
+            let Some(entity) = resource.entity.and_then(|e| ctx.scene.try_get_mut(e)) else { continue };
+            let wobble = (ctx.time.elapsed * 45.0).sin() * resource.shake * 0.12;
+            entity.transform.rotation = resource.spec.transform.rotation * Quat::from_rotation_x(wobble) * Quat::from_rotation_z(wobble * 0.6);
+        }
     }
+}
 
-    #[cfg(test)]
-    pub fn player_position(&self, ctx: &Context, id: PlayerId) -> Option<Vec3> {
-        self.players.get(&id).map(|a| ctx.physics.character_position(a.character))
-    }
-
-    fn build_level(&mut self, ctx: &mut Context) {
-        let cube = ctx.assets.cube();
-        let stone = vec4(0.45, 0.45, 0.48, 1.0);
-
-        let solid = |ctx: &mut Context, name: &str, transform: Transform, color: Vec4| {
-            let id = ctx.scene.spawn(Entity::new(name, cube).with_transform(transform).with_color(color));
-            ctx.physics.add_body(id, &transform, BodyDesc::fixed(Shape::Box { size: transform.scale }));
-        };
-
-        solid(
-            ctx,
-            "Boden",
-            Transform::from_position(vec3(0.0, -0.5, 0.0)).with_scale(vec3(400.0, 1.0, 400.0)),
-            vec4(0.25, 0.5, 0.2, 1.0),
-        );
-
-        // Säulenring als Begrenzung
-        let count = 16;
-        for i in 0..count {
-            let angle = i as f32 / count as f32 * std::f32::consts::TAU;
-            let height = 2.0 + (i % 4) as f32;
-            solid(
-                ctx,
-                "Säule",
-                Transform::from_position(vec3(angle.cos() * 22.0, height / 2.0, angle.sin() * 22.0))
-                    .with_scale(vec3(1.5, height, 1.5))
-                    .with_rotation(Quat::from_rotation_y(-angle)),
-                hue(i as f32 / count as f32).extend(1.0),
-            );
+/// Splitter, Blätter und Brocken beim Abbauen.
+fn hit_particles(ctx: &mut Context, spec: &ResourceSpec, finished: bool) {
+    let base = spec.transform.position;
+    let scale = spec.transform.scale.y;
+    let many = if finished { 3 } else { 1 };
+    match spec.kind {
+        ResourceKind::Wood => {
+            ctx.particles.burst(Burst {
+                position: base + Vec3::Y * 1.2 * scale,
+                count: 10 * many,
+                color: vec3(0.35, 0.22, 0.1),
+                speed: 5.0,
+                direction: Vec3::Y * 0.6,
+                size: 0.12,
+                ..Default::default()
+            });
+            let magic = spec.name == "Zauberbaum";
+            ctx.particles.burst(Burst {
+                position: base + Vec3::Y * 4.0 * scale,
+                count: 8 * many,
+                color: if magic { vec3(0.55, 0.2, 0.9) } else { vec3(0.15, 0.38, 0.08) },
+                color_variation: 0.3,
+                speed: 2.5,
+                direction: Vec3::ZERO,
+                size: 0.16,
+                life: 2.2,
+                gravity: 1.5,
+                glow: if magic { 1.5 } else { 0.0 },
+            });
         }
-
-        // Treppe nach links mit Plattform
-        for step in 0..6 {
-            let height = 0.3 * (step + 1) as f32;
-            solid(
-                ctx,
-                "Stufe",
-                Transform::from_position(vec3(-6.0 - step as f32 * 0.8, height / 2.0, -2.0)).with_scale(vec3(0.8, height, 3.0)),
-                stone,
-            );
-        }
-        solid(ctx, "Plattform", Transform::from_position(vec3(-12.8, 0.9, -2.0)).with_scale(vec3(4.0, 1.8, 6.0)), stone);
-
-        // Rampe nach rechts hinten mit Plattform
-        let tilt = 17f32.to_radians();
-        solid(
-            ctx,
-            "Rampe",
-            Transform::from_position(vec3(7.0, 4.0 * tilt.sin(), -4.0))
-                .with_scale(vec3(3.0, 0.3, 8.0))
-                .with_rotation(Quat::from_rotation_x(tilt)),
-            vec4(0.6, 0.5, 0.35, 1.0),
-        );
-        let top = 8.0 * tilt.sin();
-        solid(ctx, "Rampenplattform", Transform::from_position(vec3(7.0, top / 2.0, -9.3)).with_scale(vec3(3.0, top, 3.0)), stone);
-
-        let mut next_id: NetId = 0;
-        let mut dynamic = |ctx: &mut Context, world: &mut World, entity: Entity, desc: BodyDesc| {
-            let transform = entity.transform;
-            let entity = ctx.scene.spawn(entity);
-            let body = ctx.physics.add_body(entity, &transform, desc);
-            world.objects.insert(next_id, NetObject { entity, body, kind: None });
-            next_id += 1;
-        };
-
-        // Kistenpyramide
-        let crate_color = vec4(0.5, 0.3, 0.12, 1.0);
-        for layer in 0..4 {
-            for i in 0..(4 - layer) {
-                let x = (i as f32 - (3 - layer) as f32 / 2.0) * 1.05;
-                dynamic(
-                    ctx,
-                    self,
-                    Entity::new("Kiste", cube)
-                        .with_transform(Transform::from_position(vec3(x, 0.5 + layer as f32, -3.0)))
-                        .with_color(crate_color),
-                    BodyDesc::dynamic(Shape::Box { size: Vec3::ONE }).with_density(0.5),
-                );
-            }
-        }
-
-        // Ein paar Bälle zum Wegkicken
-        for i in 0..5 {
-            dynamic(
-                ctx,
-                self,
-                Entity::new("Ball", ctx.assets.sphere())
-                    .with_transform(Transform::from_position(vec3(3.0 + i as f32 * 0.9, 3.0 + i as f32, 3.0)).with_scale(Vec3::splat(0.8)))
-                    .with_color(hue(i as f32 / 5.0 + 0.1).extend(1.0)),
-                BodyDesc::dynamic(Shape::Sphere { radius: 0.4 }).with_restitution(0.6).with_density(0.3),
-            );
+        ResourceKind::Stone => {
+            ctx.particles.burst(Burst {
+                position: base + Vec3::Y * spec.transform.scale.y * 0.5,
+                count: 14 * many,
+                color: vec3(0.3, 0.29, 0.28),
+                color_variation: 0.25,
+                speed: 6.0,
+                direction: Vec3::Y * 0.8,
+                size: 0.15,
+                life: 1.0,
+                ..Default::default()
+            });
         }
     }
 }

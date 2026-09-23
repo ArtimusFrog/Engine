@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0002;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0003;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -26,6 +26,8 @@ pub struct PlayerInput {
     pub jump: bool,
     /// Blickrichtung, falls in diesem Takt geworfen wird.
     pub throw: Option<Vec3>,
+    /// ID eines Rohstoffs, auf den in diesem Takt geschlagen wird.
+    pub harvest: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +70,14 @@ pub enum ServerMessage {
     Spawn { id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3 },
     Despawn { id: NetId },
     Snapshot(Snapshot),
+    /// Ein Rohstoff wurde getroffen und hat noch `health` Schläge übrig.
+    ResourceHit { id: u32, health: u8 },
+    ResourceGone { id: u32 },
+    ResourceBack { id: u32 },
+    /// Für neue Spieler: welche Rohstoffe fehlen oder beschädigt sind.
+    ResourceStates { gone: Vec<u32>, damaged: Vec<(u32, u8)> },
+    /// Das eigene Inventar hat sich geändert.
+    Inventory(Inventory),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,4 +107,20 @@ pub fn clean_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(MAX_NAME_CHARS).collect();
     let name = name.trim();
     if name.is_empty() { "Spieler".to_string() } else { name.to_string() }
+}
+
+/// Gesammelte Rohstoffe eines Spielers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Inventory {
+    pub wood: u32,
+    pub stone: u32,
+}
+
+impl Inventory {
+    pub fn add(&mut self, kind: crate::island::ResourceKind, amount: u32) {
+        match kind {
+            crate::island::ResourceKind::Wood => self.wood += amount,
+            crate::island::ResourceKind::Stone => self.stone += amount,
+        }
+    }
 }

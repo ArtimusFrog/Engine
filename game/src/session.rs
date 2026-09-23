@@ -3,9 +3,9 @@
 use engine::prelude::*;
 
 use crate::client::Replica;
-use crate::protocol::{PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
+use crate::protocol::{Inventory, PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
 use crate::server::Authority;
-use crate::world::{World, SPAWN_POINT};
+use crate::world::World;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -52,13 +52,32 @@ impl Session {
 
         let mut world = World::new(ctx);
         if matches!(mode, Mode::Offline | Mode::Host { .. }) {
-            world.spawn_player(ctx, HOST_PLAYER, name, SPAWN_POINT);
+            let spawn = world.spawn;
+            world.spawn_player(ctx, HOST_PLAYER, name, spawn);
         }
         Ok(Session { mode, world, authority, replica })
     }
 
     pub fn mode(&self) -> &Mode {
         &self.mode
+    }
+
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    /// Eigenes Inventar (auf dem Client so, wie der Server es zuletzt gemeldet hat).
+    pub fn local_inventory(&self) -> Inventory {
+        self.local_player().and_then(|id| self.world.inventories.get(&id).copied()).unwrap_or_default()
+    }
+
+    /// Zeigt einen eigenen Schlag sofort an. Beim Host passiert das ohnehin im selben Takt,
+    /// beim Client würde man sonst auf die Antwort des Servers warten.
+    pub fn preview_harvest(&mut self, ctx: &mut Context, id: u32) {
+        if let Some(replica) = &mut self.replica {
+            self.world.preview_hit(ctx, id);
+            replica.note_preview(id, ctx.time.tick);
+        }
     }
 
     pub fn world(&self) -> &World {
@@ -111,11 +130,14 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::island::ResourceKind;
 
-    /// Minimales Spiel für Tests: eine Runde, deren Figur optional geradeaus läuft.
+    /// Minimales Spiel für Tests: eine Runde, deren Figur optional geradeaus läuft
+    /// oder auf einen Rohstoff einschlägt.
     struct TestGame {
         session: Session,
         autopilot: bool,
+        harvest: Option<u32>,
     }
 
     impl Game for TestGame {
@@ -125,6 +147,7 @@ mod tests {
             let input = PlayerInput {
                 wish: if self.autopilot { vec2(0.0, -1.0) } else { Vec2::ZERO },
                 jump: self.autopilot && ctx.time.tick % 120 == 60,
+                harvest: self.harvest,
                 ..Default::default()
             };
             self.session.fixed_update(ctx, input).expect("Verbindung verloren");
@@ -133,64 +156,133 @@ mod tests {
         fn update(&mut self, _ctx: &mut Context) {}
     }
 
-    /// Startet einen Server und einen Client im selben Prozess und lässt beide laufen.
-    fn run_pair(ticks: u32, client_autopilot: bool) -> (TestGame, Context, TestGame, Context) {
-        let mut server_ctx = Context::headless();
-        let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, "Server").unwrap();
-        let port = session.port().expect("Server hat keinen Port");
-        let mut server = TestGame { session, autopilot: false };
+    /// Server und Client im selben Prozess.
+    struct Pair {
+        server: TestGame,
+        server_ctx: Context,
+        client: TestGame,
+        client_ctx: Context,
+    }
 
-        let mut client_ctx = Context::headless();
-        let session = Session::start(&mut client_ctx, Mode::Join { address: format!("127.0.0.1:{port}") }, "Testerin").unwrap();
-        let mut client = TestGame { session, autopilot: client_autopilot };
+    impl Pair {
+        fn start(client_autopilot: bool) -> Pair {
+            let mut server_ctx = Context::headless();
+            let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, "Server").unwrap();
+            let port = session.port().expect("Server hat keinen Port");
+            let server = TestGame { session, autopilot: false, harvest: None };
 
-        for _ in 0..ticks {
-            server_ctx.fixed_tick(&mut server);
-            client_ctx.fixed_tick(&mut client);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            let mut client_ctx = Context::headless();
+            let address = format!("127.0.0.1:{port}");
+            let session = Session::start(&mut client_ctx, Mode::Join { address }, "Testerin").unwrap();
+            let client = TestGame { session, autopilot: client_autopilot, harvest: None };
+            Pair { server, server_ctx, client, client_ctx }
         }
-        server_ctx.sync_scene();
-        client_ctx.sync_scene();
-        (server, server_ctx, client, client_ctx)
+
+        fn run(&mut self, ticks: u32) {
+            for _ in 0..ticks {
+                self.server_ctx.fixed_tick(&mut self.server);
+                self.client_ctx.fixed_tick(&mut self.client);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            self.server_ctx.sync_scene();
+            self.client_ctx.sync_scene();
+        }
     }
 
     #[test]
     fn client_verbindet_sich_mit_namen() {
-        let (server, _, client, _) = run_pair(120, false);
-        let id = client.session.local_player().expect("Client hat keine Spieler-ID bekommen");
-        assert!(!client.session.is_connecting());
-        assert_eq!(server.session.world().players[&id].name, "Testerin", "Server kennt den Namen nicht");
-        assert_eq!(client.session.world().players[&id].name, "Testerin");
+        let mut pair = Pair::start(false);
+        pair.run(120);
+        let id = pair.client.session.local_player().expect("Client hat keine Spieler-ID bekommen");
+        assert!(!pair.client.session.is_connecting());
+        assert_eq!(pair.server.session.world().players[&id].name, "Testerin", "Server kennt den Namen nicht");
+        assert_eq!(pair.client.session.world().players[&id].name, "Testerin");
+    }
+
+    #[test]
+    fn server_und_client_bauen_dieselbe_insel() {
+        let mut pair = Pair::start(false);
+        pair.run(5);
+        let (server, client) = (pair.server.session.world(), pair.client.session.world());
+        assert!(server.resources.len() > 200, "Zu wenige Rohstoffe: {}", server.resources.len());
+        assert_eq!(server.resources.len(), client.resources.len());
+        assert_eq!(server.spawn, client.spawn);
+        for (id, resource) in &server.resources {
+            assert_eq!(resource.spec.transform.position, client.resources[id].spec.transform.position, "Rohstoff {id}");
+        }
     }
 
     #[test]
     fn bewegung_kommt_beim_server_an_und_vorhersage_stimmt() {
-        // 2 s geradeaus inkl. Sprung, noch bevor die Figur die Kisten erreicht.
-        let (server, server_ctx, client, client_ctx) = run_pair(120, true);
-        let id = client.session.local_player().unwrap();
-        let on_server = server.session.world().player_position(&server_ctx, id).unwrap();
-        let on_client = client.session.world().player_position(&client_ctx, id).unwrap();
+        // 2 s geradeaus inkl. Sprung über die Lichtung am Startpunkt.
+        let mut pair = Pair::start(true);
+        pair.run(120);
+        let id = pair.client.session.local_player().unwrap();
+        let spawn = pair.server.session.world().spawn;
+        let on_server = pair.server.session.world().player_position(&pair.server_ctx, id).unwrap();
+        let on_client = pair.client.session.world().player_position(&pair.client_ctx, id).unwrap();
 
-        assert!(on_server.z < SPAWN_POINT.z - 5.0, "Spieler hat sich auf dem Server nicht bewegt: {on_server}");
+        let moved = vec2(on_server.x - spawn.x, on_server.z - spawn.z).length();
+        assert!(moved > 5.0, "Spieler hat sich auf dem Server kaum bewegt: {moved} m");
         // Der Client ist dem Server um die Netzwerk-Laufzeit voraus.
         assert!(on_server.distance(on_client) < 1.5, "Server {on_server} und Client {on_client} liegen zu weit auseinander");
-        assert_eq!(client.session.corrections(), 0, "Vorhersage weicht vom Server ab");
+        assert_eq!(pair.client.session.corrections(), 0, "Vorhersage weicht vom Server ab");
     }
 
     #[test]
-    fn kisten_bewegen_sich_auf_dem_client_mit() {
-        // Autopilot läuft vom Startpunkt geradeaus in die Kistenpyramide.
-        let (server, server_ctx, client, client_ctx) = run_pair(420, true);
-        let mut moved = 0;
-        for (id, object) in &server.session.world().objects {
-            let (on_server, _) = server_ctx.physics.body_pose(object.body).unwrap();
-            let (on_client, _) = client_ctx.physics.body_pose(client.session.world().objects[id].body).unwrap();
-            assert!(on_server.distance(on_client) < 1.0, "Objekt {id}: Server {on_server}, Client {on_client}");
-            if on_server.distance(Vec3::new(0.0, 0.0, -3.0)) > 2.5 {
-                moved += 1;
-            }
-        }
-        assert!(moved > 0, "Keine Kiste wurde umgestoßen");
+    fn baum_faellen_im_multiplayer() {
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let player = pair.client.session.local_player().unwrap();
+
+        // Nächsten Baum zum Startpunkt suchen und die Figur auf dem Server daneben stellen.
+        let world = pair.server.session.world();
+        let (&tree, resource) = world
+            .resources
+            .iter()
+            .filter(|(_, r)| r.spec.kind == ResourceKind::Wood)
+            .min_by(|a, b| {
+                let da = a.1.spec.transform.position.distance(world.spawn);
+                let db = b.1.spec.transform.position.distance(world.spawn);
+                da.total_cmp(&db)
+            })
+            .expect("Kein Baum auf der Insel");
+        let base = resource.spec.transform.position;
+        let hits = resource.spec.max_health as u32;
+        let stand = base + vec3(1.2, 0.0, 0.0);
+        let stand = vec3(stand.x, world.terrain.height_at(stand.x, stand.z) + 1.0, stand.z);
+        let character = world.players[&player].character;
+        pair.server_ctx.physics.teleport_character(character, stand);
+
+        pair.client.harvest = Some(tree);
+        pair.run(hits * 30 + 60);
+
+        assert!(!pair.server.session.world().resources[&tree].is_present(), "Baum steht auf dem Server noch");
+        assert!(!pair.client.session.world().resources[&tree].is_present(), "Baum steht beim Client noch");
+        let inventory = pair.client.session.local_inventory();
+        assert_eq!(inventory.wood, hits - 1 + 4, "Holz im Inventar");
+        assert_eq!(inventory.stone, 0);
+    }
+
+    #[test]
+    fn abbauen_aus_der_ferne_wird_abgelehnt() {
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let world = pair.server.session.world();
+        let far = world
+            .resources
+            .iter()
+            .max_by(|a, b| {
+                let da = a.1.spec.transform.position.distance(world.spawn);
+                let db = b.1.spec.transform.position.distance(world.spawn);
+                da.total_cmp(&db)
+            })
+            .map(|(&id, _)| id)
+            .unwrap();
+        pair.client.harvest = Some(far);
+        pair.run(120);
+        let resource = &pair.server.session.world().resources[&far];
+        assert_eq!(resource.health, resource.spec.max_health, "Server hat einen Schlag aus der Ferne angenommen");
     }
 
     #[test]

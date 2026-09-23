@@ -1,0 +1,356 @@
+//! Die Insel: Landschaft, Biome, Wasser und Bewuchs.
+//!
+//! Alles entsteht aus einem Startwert. Server und Clients bauen die Insel unabhängig
+//! voneinander und erhalten exakt dieselbe Welt – übertragen werden nur Änderungen.
+
+use engine::noise::{fbm, hash01, ridged, Rng};
+use engine::prelude::*;
+
+use crate::models;
+
+pub const SEED: u32 = 20_260_924;
+/// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
+const ISLAND_RADIUS: f32 = 170.0;
+const TERRAIN_SIZE: f32 = 460.0;
+const TERRAIN_CELLS: usize = 230;
+/// Um den Startpunkt bleibt eine Lichtung frei.
+const SPAWN_CLEARING: f32 = 12.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ResourceKind {
+    Wood,
+    Stone,
+}
+
+/// Ein abbaubarer Rohstoff, so wie er beim Aufbau der Insel entsteht.
+#[derive(Clone, Debug)]
+pub struct ResourceSpec {
+    pub kind: ResourceKind,
+    pub name: &'static str,
+    pub mesh: MeshId,
+    pub transform: Transform,
+    pub color: Vec4,
+    pub material: Material,
+    /// Zusätzliches leuchtendes Teil (Früchte des Zauberbaums).
+    pub glow_part: Option<MeshId>,
+    pub collider: Shape,
+    /// Mittelpunkt des Kollisionskörpers relativ zum Fuß.
+    pub collider_offset: Vec3,
+    pub max_health: u8,
+}
+
+pub struct Island {
+    pub terrain: Terrain,
+    /// Rohstoffe mit ihrer ID (= Nummer der Rasterzelle, siehe `build`).
+    pub resources: Vec<(u32, ResourceSpec)>,
+    pub spawn: Vec3,
+}
+
+/// Wie weit Wind Laub bewegt.
+const LEAVES: Material = Material::Foliage { sway: 0.035 };
+const GRASS: Material = Material::Foliage { sway: 0.25 };
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Höhe der Landschaft an (x, z).
+pub fn height(p: Vec2) -> f32 {
+    let distance = p.length() / ISLAND_RADIUS;
+    let coast = fbm(p * 0.006, 3, SEED) * 0.35;
+    let land = 1.0 - smoothstep(0.55, 1.05, distance + coast);
+
+    let hills = fbm(p * 0.011, 4, SEED + 1) * 5.0 + 4.5;
+    // Gebirge im Norden (negatives z), zur Küste hin auslaufend.
+    let north = smoothstep(-15.0, -95.0, p.y + fbm(p * 0.01, 2, SEED + 2) * 40.0);
+    // r·√r statt powf: Wurzeln rechnen auf jedem System bitgenau gleich.
+    let ridge = ridged(p * 0.012, 5, SEED + 3);
+    let peaks = ridge * ridge.sqrt() * 46.0 * north * (1.0 - smoothstep(0.7, 0.95, distance));
+    let inland = hills + peaks;
+
+    // Flacher Strand: nahe der Küstenlinie wird die Höhe zusammengedrückt.
+    let shaped = -9.0 + (inland + 9.0) * land.sqrt() * land.sqrt().sqrt();
+    if shaped > 0.0 && shaped < 3.0 { shaped * (0.55 + shaped * 0.15) } else { shaped }
+}
+
+fn moisture(p: Vec2) -> f32 {
+    fbm(p * 0.008 + vec2(40.0, -13.0), 3, SEED + 5) * 0.5 + 0.5
+}
+
+fn magic(p: Vec2) -> f32 {
+    fbm(p * 0.009 + vec2(-71.0, 22.0), 3, SEED + 7) * 0.5 + 0.5
+}
+
+/// Farbe des Bodens (linear) für ein Dreieck mit Mittelpunkt `c` und Normale `n`.
+fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
+    let p = vec2(c.x, c.z);
+    let slope = 1.0 - n.y;
+    let meadow = vec3(0.11, 0.30, 0.04);
+    let forest = vec3(0.045, 0.16, 0.025);
+    let enchanted = vec3(0.03, 0.2, 0.2);
+    let alpine = vec3(0.22, 0.30, 0.11);
+    let sand = vec3(0.56, 0.43, 0.22);
+    let wet_sand = vec3(0.30, 0.25, 0.15);
+    let rock = vec3(0.21, 0.20, 0.19);
+    let snow = vec3(0.86, 0.89, 0.94);
+
+    let mut color = meadow.lerp(forest, smoothstep(0.45, 0.6, moisture(p)));
+    color = color.lerp(enchanted, smoothstep(0.58, 0.66, magic(p)));
+    color = color.lerp(alpine, smoothstep(15.0, 24.0, c.y));
+    color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
+    color = wet_sand.lerp(color, smoothstep(-0.8, 0.6, c.y));
+    color = color.lerp(rock, smoothstep(0.42, 0.58, slope));
+    color = color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)));
+    // Jedes Dreieck leicht anders – das macht den facettierten Look lebendig.
+    let jitter = hash01((c.x * 5.0).floor() as i32, (c.z * 5.0).floor() as i32, SEED) - 0.5;
+    color * (1.0 + jitter * 0.14)
+}
+
+/// Sucht einen flachen Platz auf einer Wiese im Süden der Insel.
+fn find_spawn(terrain: &Terrain) -> Vec3 {
+    for distance in (20..140).rev().step_by(4) {
+        for step in 0..24 {
+            let angle = std::f32::consts::FRAC_PI_2 + (step as f32 - 12.0) * 0.08;
+            let p = vec2(angle.cos(), angle.sin()) * distance as f32;
+            let h = terrain.height_at(p.x, p.y);
+            if (3.0..9.0).contains(&h) && terrain.normal_at(p.x, p.y).y > 0.93 && magic(p) < 0.55 {
+                return vec3(p.x, h, p.y);
+            }
+        }
+    }
+    vec3(0.0, height(Vec2::ZERO), 0.0)
+}
+
+struct Library {
+    oaks: Vec<MeshId>,
+    pines: Vec<MeshId>,
+    snowy_pines: Vec<MeshId>,
+    palms: Vec<MeshId>,
+    magic_trees: Vec<(MeshId, MeshId)>,
+    rocks: Vec<MeshId>,
+    bushes: Vec<MeshId>,
+    grass: Vec<MeshId>,
+    teal_grass: MeshId,
+    flowers: Vec<MeshId>,
+    magic_flowers: Vec<MeshId>,
+    red_mushroom: MeshId,
+    glow_mushroom: MeshId,
+    crystals: Vec<MeshId>,
+}
+
+impl Library {
+    fn load(ctx: &mut Context) -> Self {
+        let a = &mut ctx.assets;
+        let many = |a: &mut Assets, name: &str, count: u32, build: &dyn Fn(u32) -> MeshData| {
+            (0..count).map(|i| a.named_mesh(&format!("{name}{i}"), || build(i + 1))).collect::<Vec<_>>()
+        };
+        Library {
+            oaks: many(a, "eiche", 3, &|s| models::oak(s * 17)),
+            pines: many(a, "tanne", 3, &|s| models::pine(s * 29, false)),
+            snowy_pines: many(a, "schneetanne", 2, &|s| models::pine(s * 31, true)),
+            palms: many(a, "palme", 2, &|s| models::palm(s * 13)),
+            magic_trees: (0..2)
+                .map(|i| {
+                    let tree = models::magic_tree(i * 11 + 3);
+                    let fruits = models::glow_fruits(i * 5 + 1, &tree);
+                    (a.named_mesh(&format!("zauberbaum{i}"), || tree), a.named_mesh(&format!("zauberfrucht{i}"), || fruits))
+                })
+                .collect(),
+            rocks: many(a, "fels", 5, &|s| models::rock(s * 7)),
+            bushes: many(a, "busch", 3, &|s| models::bush(s * 3)),
+            grass: many(a, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
+            teal_grass: a.named_mesh("zaubergras", || models::grass(99, vec3(0.05, 0.35, 0.3))),
+            flowers: [vec3(0.9, 0.75, 0.1), vec3(0.95, 0.95, 0.9), vec3(0.8, 0.12, 0.1), vec3(0.3, 0.35, 0.95)]
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| a.named_mesh(&format!("blume{i}"), || models::flower(c)))
+                .collect(),
+            magic_flowers: [vec3(0.7, 0.2, 0.95), vec3(0.2, 0.8, 0.95)]
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| a.named_mesh(&format!("zauberblume{i}"), || models::flower(c)))
+                .collect(),
+            red_mushroom: a.named_mesh("fliegenpilz", || models::mushroom(vec3(0.7, 0.06, 0.04), 1.0)),
+            glow_mushroom: a.named_mesh("leuchtpilz", || models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
+            crystals: many(a, "kristall", 2, &|s| models::crystals(s * 41)),
+        }
+    }
+}
+
+/// Baut die Insel in die Szene: Landschaft, Wasser und Deko. Die abbaubaren Rohstoffe
+/// werden nur beschrieben – die Welt erzeugt sie, damit sie verschwinden und
+/// nachwachsen können.
+pub fn build(ctx: &mut Context) -> Island {
+    // Stimmung: warme Nachmittagssonne, leicht dunstiger Horizont.
+    ctx.env.sun_direction = vec3(0.55, 0.45, 0.4);
+    ctx.env.sun_color = vec3(1.3, 1.08, 0.82);
+    ctx.env.sky_color = vec3(0.5, 0.64, 0.84);
+    ctx.env.zenith_color = vec3(0.09, 0.23, 0.62);
+    ctx.env.exposure = 1.0;
+    ctx.env.sky_ambient = vec3(0.2, 0.26, 0.4);
+    ctx.env.ground_ambient = vec3(0.13, 0.11, 0.07);
+    ctx.env.fog_density = 0.0018;
+    ctx.env.shadow_range = 45.0;
+
+    let terrain = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, height);
+    let terrain_mesh = ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(ground_color));
+    let ground = ctx.scene.spawn(Entity::new("Insel", terrain_mesh));
+    let (vertices, triangles) = terrain.collision_mesh();
+    ctx.physics.add_static_mesh(Some(ground), vertices, triangles);
+
+    let water = ctx.assets.named_mesh("wasser", || MeshData::grid(96));
+    ctx.scene.spawn(
+        Entity::new("Meer", water)
+            .with_transform(Transform::default().with_scale(vec3(1600.0, 1.0, 1600.0)))
+            .with_material(Material::Water),
+    );
+
+    let lib = Library::load(ctx);
+    let spawn = find_spawn(&terrain);
+    let mut resources = Vec::new();
+
+
+    let spacing = 3.2;
+    let cells = ((ISLAND_RADIUS * 2.3) / spacing) as i32;
+    let half = cells as f32 * spacing / 2.0;
+    for iz in 0..cells {
+        for ix in 0..cells {
+
+            // Die Zellnummer ist die ID des Rohstoffs: stabil, auch wenn ein anderer Rechner
+            // an einer einzelnen Stelle minimal anders rechnet.
+            let id = (iz * cells + ix) as u32;
+            let mut rng = Rng::new(((SEED as u64) << 32) | id as u64);
+            let (x, z) = (-half + ix as f32 * spacing, -half + iz as f32 * spacing);
+            let p = vec2(x + rng.range(-1.4, 1.4), z + rng.range(-1.4, 1.4));
+
+            let h = terrain.height_at(p.x, p.y);
+            if h < 0.9 {
+                continue;
+            }
+            let normal = terrain.normal_at(p.x, p.y);
+            let slope = 1.0 - normal.y;
+            let base = vec3(p.x, h, p.y);
+            let clearing = base.distance(spawn) < SPAWN_CLEARING;
+            let roll = rng.next_f32();
+            let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
+            let size = rng.range(0.8, 1.25);
+            let pick = |list: &[MeshId], rng: &mut Rng| list[(rng.next_u32() as usize) % list.len()];
+
+            let wet = moisture(p);
+            let enchanted = magic(p) > 0.62 && h < 18.0;
+
+            // Bäume und Felsen (abbaubar)
+            let tree = |name: &'static str, mesh: MeshId, size: f32, health: u8| ResourceSpec {
+                kind: ResourceKind::Wood,
+                name,
+                mesh,
+                transform: Transform::from_position(base - Vec3::Y * 0.15).with_rotation(yaw).with_scale(Vec3::splat(size)),
+                color: Vec4::ONE,
+                material: LEAVES,
+                glow_part: None,
+                collider: Shape::Capsule { radius: 0.4 * size, height: 4.0 * size },
+                collider_offset: Vec3::Y * 2.0 * size,
+                max_health: health,
+            };
+            let rock = |mesh: MeshId, rng: &mut Rng| {
+                let scale = vec3(rng.range(1.4, 2.6), rng.range(1.0, 1.8), rng.range(1.4, 2.6));
+                ResourceSpec {
+                    kind: ResourceKind::Stone,
+                    name: "Fels",
+                    mesh,
+                    transform: Transform::from_position(base + Vec3::Y * scale.y * 0.12).with_rotation(yaw).with_scale(scale),
+                    color: Vec4::ONE,
+                    material: Material::Standard,
+                    glow_part: None,
+                    collider: Shape::Box { size: scale * vec3(0.9, 0.7, 0.9) },
+                    collider_offset: Vec3::ZERO,
+                    max_health: 6,
+                }
+            };
+
+            let mut found: Option<ResourceSpec> = None;
+            if !clearing {
+                if slope > 0.55 {
+                    if roll < 0.08 {
+                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    }
+                } else if h < 2.4 {
+                    if roll < 0.035 {
+                        found = Some(tree("Palme", pick(&lib.palms, &mut rng), size, 4));
+                    } else if roll < 0.05 {
+                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    }
+                } else if h > 28.0 {
+                    if roll < 0.04 {
+                        found = Some(tree("Tanne", pick(&lib.snowy_pines, &mut rng), size, 5));
+                    } else if roll < 0.10 {
+                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    }
+                } else if h > 17.0 {
+                    if roll < 0.14 {
+                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), size, 5));
+                    } else if roll < 0.21 {
+                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    }
+                } else if enchanted {
+                    if roll < 0.13 {
+                        let (tree_mesh, fruits) = lib.magic_trees[(rng.next_u32() % 2) as usize];
+                        let mut spec = tree("Zauberbaum", tree_mesh, size, 6);
+                        spec.glow_part = Some(fruits);
+                        found = Some(spec);
+                    } else if roll < 0.16 {
+                        decor(ctx, pick(&lib.crystals, &mut rng), base, yaw, size, vec4(0.55, 0.25, 1.0, 1.0), Material::Emissive { glow: 1.6 });
+                    } else if roll < 0.28 {
+                        decor(ctx, lib.glow_mushroom, base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.9 });
+                    } else if roll < 0.42 {
+                        decor(ctx, pick(&lib.magic_flowers, &mut rng), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.5 });
+                    }
+                } else if wet > 0.52 {
+                    if roll < 0.2 {
+                        found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
+                    } else if roll < 0.29 {
+                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), size, 5));
+                    } else if roll < 0.40 {
+                        decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
+                    } else if roll < 0.45 {
+                        decor(ctx, lib.red_mushroom, base, yaw, size, Vec4::ONE, Material::Standard);
+                    } else if roll < 0.47 {
+                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    }
+                } else if roll < 0.03 {
+                    found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
+                } else if roll < 0.07 {
+                    decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
+                } else if roll < 0.09 {
+                    found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                } else if roll < 0.28 {
+                    decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, GRASS);
+                }
+            }
+
+            if let Some(spec) = found {
+                resources.push((id, spec));
+            }
+
+            // Gras fast überall, wo es grün ist
+            if h > 2.2 && h < 26.0 && slope < 0.45 && rng.chance(if wet > 0.52 { 0.35 } else { 0.55 }) {
+                let mesh = if enchanted { lib.teal_grass } else { pick(&lib.grass, &mut rng) };
+                decor(ctx, mesh, base, yaw, rng.range(0.8, 1.4), Vec4::ONE, GRASS);
+            }
+        }
+
+    }
+
+    log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
+    Island { terrain, resources, spawn }
+}
+
+fn decor(ctx: &mut Context, mesh: MeshId, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
+    ctx.scene.spawn(
+        Entity::new("Deko", mesh)
+            .with_transform(Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size)))
+            .with_color(color)
+            .with_material(material),
+    );
+}

@@ -7,6 +7,7 @@ pub struct MeshId(pub(crate) u32);
 /// damit später auch ein Server ohne Fenster dieselben Daten laden kann.
 pub struct Assets {
     meshes: Vec<MeshData>,
+    named: std::collections::HashMap<String, MeshId>,
     cube: MeshId,
     plane: MeshId,
     sphere: MeshId,
@@ -14,7 +15,7 @@ pub struct Assets {
 
 impl Assets {
     pub(crate) fn new() -> Self {
-        let mut assets = Assets { meshes: Vec::new(), cube: MeshId(0), plane: MeshId(0), sphere: MeshId(0) };
+        let mut assets = Assets { meshes: Vec::new(), named: Default::default(), cube: MeshId(0), plane: MeshId(0), sphere: MeshId(0) };
         assets.cube = assets.add_mesh(MeshData::cube());
         assets.plane = assets.add_mesh(MeshData::plane());
         assets.sphere = assets.add_mesh(MeshData::sphere(32, 16));
@@ -24,6 +25,17 @@ impl Assets {
     pub fn add_mesh(&mut self, mesh: MeshData) -> MeshId {
         self.meshes.push(mesh);
         MeshId(self.meshes.len() as u32 - 1)
+    }
+
+    /// Liefert das Mesh mit diesem Namen; beim ersten Mal wird es mit `build` erzeugt.
+    /// So entstehen aufwendige Modelle nur einmal, auch wenn die Welt neu aufgebaut wird.
+    pub fn named_mesh(&mut self, name: &str, build: impl FnOnce() -> MeshData) -> MeshId {
+        if let Some(&id) = self.named.get(name) {
+            return id;
+        }
+        let id = self.add_mesh(build());
+        self.named.insert(name.to_string(), id);
+        id
     }
 
     pub fn cube(&self) -> MeshId {

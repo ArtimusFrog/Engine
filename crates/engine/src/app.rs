@@ -12,6 +12,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use crate::assets::Assets;
 use crate::camera::Camera;
 use crate::input::{Input, KeyCode};
+use crate::particles::Particles;
 use crate::physics::Physics;
 use crate::renderer::{RenderStats, Renderer, UiFrame};
 use crate::scene::Scene;
@@ -61,7 +62,10 @@ pub struct Time {
 /// Licht und Atmosphäre der Welt. Alle Farben in linearem RGB.
 #[derive(Clone, Copy, Debug)]
 pub struct Environment {
+    /// Himmelsfarbe am Horizont (auch Farbe des Nebels).
     pub sky_color: Vec3,
+    /// Himmelsfarbe senkrecht nach oben.
+    pub zenith_color: Vec3,
     /// Richtung *zur* Sonne.
     pub sun_direction: Vec3,
     pub sun_color: Vec3,
@@ -71,18 +75,22 @@ pub struct Environment {
     /// Halbe Kantenlänge des Bereichs mit Schatten in Metern. Größer = mehr Schatten
     /// sichtbar, aber unschärfer.
     pub shadow_range: f32,
+    /// Gesamthelligkeit vor dem Tone-Mapping.
+    pub exposure: f32,
 }
 
 impl Default for Environment {
     fn default() -> Self {
         Environment {
-            sky_color: Vec3::new(0.45, 0.65, 0.95),
+            sky_color: Vec3::new(0.62, 0.74, 0.9),
+            zenith_color: Vec3::new(0.16, 0.34, 0.78),
             sun_direction: Vec3::new(0.6, 0.55, 0.35),
             sun_color: Vec3::new(1.0, 0.95, 0.85),
             sky_ambient: Vec3::new(0.22, 0.28, 0.38),
             ground_ambient: Vec3::new(0.12, 0.1, 0.08),
             fog_density: 0.006,
             shadow_range: 35.0,
+            exposure: 1.2,
         }
     }
 }
@@ -127,6 +135,8 @@ pub struct Context {
     /// Zusätzliche Zeilen für die Debug-Anzeige; werden nach jedem Frame geleert.
     pub debug_lines: Vec<String>,
     pub stats: FrameStats,
+    /// Optische Effekte ohne Physik (Splitter, Funken, Blätter).
+    pub particles: Particles,
     /// Name der Grafikkarte und Grafikschnittstelle.
     pub gpu: String,
     window_size: UVec2,
@@ -151,6 +161,7 @@ impl Context {
             show_debug: false,
             debug_lines: Vec::new(),
             stats: FrameStats::default(),
+            particles: Particles::default(),
             gpu: String::new(),
             window_size: UVec2::ONE,
             pixels_per_point: 1.0,
@@ -341,6 +352,7 @@ impl App {
         self.accumulator = self.accumulator.min(Physics::FIXED_DT);
         let alpha = self.accumulator / Physics::FIXED_DT;
         self.ctx.physics.sync_to_scene(&mut self.ctx.scene, alpha);
+        self.ctx.particles.update(self.ctx.time.delta);
 
         if self.ctx.input.key_pressed(KeyCode::F3) {
             self.ctx.show_debug = !self.ctx.show_debug;

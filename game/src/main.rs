@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client;
+mod island;
+mod models;
 mod playground;
 mod protocol;
 mod server;

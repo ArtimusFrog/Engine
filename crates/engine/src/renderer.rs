@@ -13,11 +13,11 @@ use crate::mesh::{MeshData, Vertex};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_MAP_SIZE: u32 = 2048;
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
-    2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-    6 => Float32x3, 7 => Float32x3, 8 => Float32x3,
-    9 => Float32x4,
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
+    7 => Float32x3, 8 => Float32x3, 9 => Float32x3,
+    10 => Float32x4, 11 => Float32x4,
 ];
 
 #[repr(C)]
@@ -25,6 +25,7 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array!
 struct Globals {
     view_proj: [[f32; 4]; 4],
     light_view_proj: [[f32; 4]; 4],
+    inv_view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 4],
     sun_dir: [f32; 4],
     sun_color: [f32; 4],
@@ -32,6 +33,7 @@ struct Globals {
     ground_ambient: [f32; 4],
     fog: [f32; 4],
     shadow_params: [f32; 4],
+    zenith: [f32; 4],
 }
 
 #[repr(C)]
@@ -40,6 +42,7 @@ struct Instance {
     model: [[f32; 4]; 4],
     normal: [[f32; 3]; 3],
     color: [f32; 4],
+    material: [f32; 4],
 }
 
 /// Fertig vorbereitete Benutzeroberfläche für einen Frame.
@@ -69,6 +72,7 @@ pub(crate) struct Renderer {
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
@@ -273,6 +277,35 @@ impl Renderer {
             cache: None,
         });
 
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_sky"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            // Der Himmel liegt hinter allem: nie verdecken, nie in den Tiefenpuffer schreiben.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_sky"),
+                compilation_options: Default::default(),
+                targets: &[Some(config.format.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let ui = egui_wgpu::Renderer::new(&device, config.format, egui_wgpu::RendererOptions::default());
 
         let instance_capacity = 256;
@@ -286,6 +319,7 @@ impl Renderer {
             config,
             depth,
             pipeline,
+            sky_pipeline,
             shadow_pipeline,
             globals_buffer,
             globals_bind_group,
@@ -411,16 +445,19 @@ impl Renderer {
         let env = &ctx.env;
         let aspect = self.config.width as f32 / self.config.height as f32;
         let texel_world = 2.0 * env.shadow_range / SHADOW_MAP_SIZE as f32;
+        let view_proj = ctx.camera.view_projection(aspect);
         let globals = Globals {
-            view_proj: ctx.camera.view_projection(aspect).to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
             light_view_proj: sun_view_projection(ctx).to_cols_array_2d(),
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             camera_pos: ctx.camera.position.extend(1.0).into(),
             sun_dir: env.sun_direction.normalize().extend(0.0).into(),
             sun_color: env.sun_color.extend(0.0).into(),
             sky_ambient: env.sky_ambient.extend(0.0).into(),
             ground_ambient: env.ground_ambient.extend(0.0).into(),
             fog: env.sky_color.extend(env.fog_density).into(),
-            shadow_params: [1.0 / SHADOW_MAP_SIZE as f32, texel_world * 1.5, 0.0, 0.0],
+            shadow_params: [1.0 / SHADOW_MAP_SIZE as f32, texel_world * 1.5, ctx.time.elapsed, 0.0],
+            zenith: env.zenith_color.extend(env.exposure).into(),
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
@@ -428,21 +465,10 @@ impl Renderer {
         // (Instancing) gezeichnet wird.
         let mut visible: Vec<_> = ctx.scene.iter_world().filter(|(e, _)| e.visible).collect();
         visible.sort_by_key(|(e, _)| e.mesh);
-        let instances: Vec<Instance> = visible
+        let mut instances: Vec<Instance> = visible
             .iter()
-            .map(|&(e, model)| {
-                Instance {
-                    model: model.to_cols_array_2d(),
-                    normal: Mat3::from_mat4(model).inverse().transpose().to_cols_array_2d(),
-                    color: e.color.into(),
-                }
-            })
+            .map(|&(e, model)| instance(model, e.color, e.material.shader_params()))
             .collect();
-        if instances.len() > self.instance_capacity {
-            self.instance_capacity = instances.len().next_power_of_two();
-            self.instance_buffer = Self::create_instance_buffer(&self.device, self.instance_capacity);
-        }
-        self.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         // Zusammenhängende Bereiche mit gleichem Mesh
         let mut batches = Vec::new();
@@ -453,6 +479,21 @@ impl Renderer {
             batches.push((mesh_id.0 as usize, start as u32..end as u32));
             start = end;
         }
+
+        // Partikel als eigener Stapel kleiner Würfel
+        let first_particle = instances.len() as u32;
+        instances.extend(ctx.particles.instances().map(|(model, color, glow)| {
+            let material = if glow > 0.0 { crate::scene::Material::Emissive { glow } } else { crate::scene::Material::Standard };
+            instance(model, color, material.shader_params())
+        }));
+        if instances.len() as u32 > first_particle {
+            batches.push((ctx.assets.cube().0 as usize, first_particle..instances.len() as u32));
+        }
+        if instances.len() > self.instance_capacity {
+            self.instance_capacity = instances.len().next_power_of_two();
+            self.instance_buffer = Self::create_instance_buffer(&self.device, self.instance_capacity);
+        }
+        self.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         let sky = env.sky_color;
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -495,8 +536,10 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.draw(0..3, 0..1);
+            pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &batches);
         }
@@ -618,4 +661,13 @@ fn sun_view_projection(ctx: &Context) -> Mat4 {
     let depth = -center.z;
     let proj = rh::proj::directx::orthographic(x - range, x + range, y - range, y + range, depth - 200.0, depth + 200.0);
     proj * view
+}
+
+fn instance(model: Mat4, color: glam::Vec4, material: [f32; 4]) -> Instance {
+    Instance {
+        model: model.to_cols_array_2d(),
+        normal: Mat3::from_mat4(model).inverse().transpose().to_cols_array_2d(),
+        color: color.into(),
+        material,
+    }
 }

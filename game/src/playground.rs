@@ -41,6 +41,10 @@ pub struct Playground {
     // Eingaben, die zwischen zwei Takten fallen, bis zum nächsten Takt merken.
     jump_requested: bool,
     throw_requested: bool,
+    harvest_requested: Option<u32>,
+    /// Rohstoff unter dem Fadenkreuz, der in Reichweite ist.
+    aim: Option<u32>,
+    last_harvest: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -66,6 +70,9 @@ impl Playground {
             free_camera: false,
             jump_requested: false,
             throw_requested: false,
+            harvest_requested: None,
+            aim: None,
+            last_harvest: 0.0,
             autopilot,
             themed: false,
             local_ip: None,
@@ -132,6 +139,7 @@ impl Playground {
             sprint: playing && ctx.input.key(KeyCode::ShiftLeft),
             jump: self.jump_requested,
             throw: self.throw_requested.then(|| ctx.camera.forward()),
+            harvest: self.harvest_requested.take(),
         };
         self.jump_requested = false;
         self.throw_requested = false;
@@ -153,6 +161,17 @@ impl Playground {
                     self.throw_requested = true;
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
+                // Rechte Maustaste halten: im Takt der Abklingzeit zuschlagen.
+                let cooldown = crate::world::HARVEST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT;
+                if let (true, true, Some(id)) = (ctx.cursor_locked, ctx.input.mouse(MouseButton::Right), self.aim) {
+                    if ctx.time.elapsed - self.last_harvest >= cooldown {
+                        self.last_harvest = ctx.time.elapsed;
+                        self.harvest_requested = Some(id);
+                        if let Some(session) = &mut self.session {
+                            session.preview_harvest(ctx, id);
+                        }
+                    }
+                }
                 if ctx.input.key_pressed(KeyCode::F1) {
                     self.free_camera = !self.free_camera;
                     ctx.cursor_locked = false;
@@ -177,10 +196,10 @@ impl Playground {
 
     fn update_camera(&mut self, ctx: &mut Context) {
         let Some(session) = &self.session else {
-            // Hauptmenü: Kamera kreist langsam über den Spielplatz.
-            let t = ctx.time.elapsed * 0.06;
-            ctx.camera.position = vec3(t.sin() * 20.0, 7.0, t.cos() * 20.0);
-            ctx.camera.look_at(vec3(0.0, 1.0, 0.0));
+            // Hauptmenü: Kamera kreist langsam um die Insel.
+            let t = ctx.time.elapsed * 0.03 + 0.8;
+            ctx.camera.position = vec3(t.sin() * 210.0, 70.0, t.cos() * 210.0);
+            ctx.camera.look_at(vec3(0.0, 6.0, 0.0));
             return;
         };
         if self.free_camera {
@@ -192,6 +211,78 @@ impl Playground {
         let target = entity.transform.position + Vec3::Y * 0.6;
         let character = avatar.character;
         self.orbit.update(ctx, target, Some(character));
+    }
+
+    /// Welcher Rohstoff liegt unter dem Fadenkreuz und ist nah genug?
+    fn update_aim(&mut self, ctx: &Context) {
+        self.aim = None;
+        if self.screen != Screen::Playing || self.free_camera {
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        let Some(local) = session.local_player() else { return };
+        let Some(avatar) = session.world().players.get(&local) else { return };
+        let hit = ctx.physics.raycast(ctx.camera.position, ctx.camera.forward(), 60.0, Some(avatar.character));
+        if let Some((Some(entity), _)) = hit {
+            self.aim = session.world().resource_at(entity).filter(|&id| session.world().in_reach(ctx, local, id, 0.0));
+        }
+    }
+
+    fn inventory_hud(&self, egui_ctx: &egui::Context) {
+        let Some(session) = &self.session else { return };
+        let inventory = session.local_inventory();
+        egui::Area::new(egui::Id::new("inventar"))
+            .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+            .interactable(false)
+            .show(egui_ctx, |ui| {
+                egui::Frame::new().fill(Color32::from_black_alpha(160)).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (label, count, color) in [
+                            ("Holz", inventory.wood, Color32::from_rgb(150, 98, 52)),
+                            ("Stein", inventory.stone, Color32::from_rgb(140, 142, 150)),
+                        ] {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+                            if label == "Holz" {
+                                ui.painter().rect_filled(rect.shrink2(egui::vec2(1.0, 6.0)), 4.0, color);
+                                ui.painter().circle_stroke(
+                                    rect.right_center() - egui::vec2(4.0, 0.0),
+                                    5.0,
+                                    egui::Stroke::new(2.0, Color32::from_rgb(90, 55, 25)),
+                                );
+                            } else {
+                                ui.painter().circle_filled(rect.center(), 11.0, color);
+                                ui.painter().circle_filled(rect.center() + egui::vec2(-3.0, -3.0), 4.0, Color32::from_rgb(175, 177, 185));
+                            }
+                            ui.label(RichText::new(format!("{count}")).size(22.0).strong().color(Color32::WHITE));
+                            ui.label(RichText::new(label).size(14.0).color(ui::TEXT.gamma_multiply(0.8)));
+                            ui.add_space(10.0);
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff anvisiert ist.
+    fn aim_hud(&self, egui_ctx: &egui::Context) {
+        let (Some(id), Some(session)) = (self.aim, &self.session) else { return };
+        let Some(resource) = session.world().resources.get(&id) else { return };
+        let center = egui_ctx.content_rect().center();
+        let painter = egui_ctx.layer_painter(egui::LayerId::background());
+        let action = match resource.spec.kind {
+            crate::island::ResourceKind::Wood => "Rechtsklick: Holz hacken",
+            crate::island::ResourceKind::Stone => "Rechtsklick: Stein abbauen",
+        };
+        let big = egui::FontId::proportional(18.0);
+        painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, resource.spec.name, big, Color32::WHITE);
+        let small = egui::FontId::proportional(14.0);
+        painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, action, small, Color32::from_white_alpha(200));
+        // Lebensbalken
+        let fraction = resource.health as f32 / resource.spec.max_health as f32;
+        let bar = egui::Rect::from_center_size(center + egui::vec2(0.0, 76.0), egui::vec2(110.0, 7.0));
+        painter.rect_filled(bar, 3.0, Color32::from_black_alpha(150));
+        let mut fill = bar;
+        fill.set_width(bar.width() * fraction);
+        painter.rect_filled(fill, 3.0, ui::ACCENT);
     }
 
     fn status_text(&self) -> String {
@@ -400,6 +491,8 @@ impl Playground {
         if ctx.cursor_locked {
             ui::crosshair(egui_ctx);
         }
+        self.aim_hud(egui_ctx);
+        self.inventory_hud(egui_ctx);
 
         // Status oben rechts
         egui::Area::new(egui::Id::new("status"))
@@ -430,7 +523,7 @@ impl Playground {
         }
 
         let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · Linksklick Werfen · Tab Spieler · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · Rechtsklick Abbauen · Linksklick Werfen · Tab Spieler · Esc Menü"
         } else {
             "Klicken zum Spielen"
         };
@@ -438,6 +531,7 @@ impl Playground {
             .anchor(Align2::CENTER_BOTTOM, [0.0, -16.0])
             .interactable(false)
             .show(egui_ctx, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 let size = if ctx.cursor_locked { 14.0 } else { 22.0 };
                 ui.label(RichText::new(hint).size(size).color(Color32::from_white_alpha(200)));
             });
@@ -509,10 +603,13 @@ impl Game for Playground {
             }
         }
 
-        if let Some(world) = self.session.as_ref().map(Session::world).or(self.menu_world.as_ref()) {
+        if let Some(session) = &mut self.session {
+            session.world_mut().update_visuals(ctx);
+        } else if let Some(world) = &mut self.menu_world {
             world.update_visuals(ctx);
         }
         self.update_camera(ctx);
+        self.update_aim(ctx);
         ctx.status = self.status_text();
         if let Some(session) = &self.session {
             ctx.debug_lines.push(format!("Spieler: {}  Objekte: {}", session.world().players.len(), session.world().objects.len()));

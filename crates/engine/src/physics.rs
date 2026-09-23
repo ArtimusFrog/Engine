@@ -221,6 +221,15 @@ impl Physics {
         }
     }
 
+    /// Festes Dreiecksnetz, z. B. eine Landschaft (siehe `Terrain::collision_mesh`).
+    pub fn add_static_mesh(&mut self, entity: Option<EntityId>, vertices: Vec<Vec3>, triangles: Vec<[u32; 3]>) {
+        let collider = ColliderBuilder::trimesh(vertices, triangles)
+            .expect("Ungültiges Dreiecksnetz für die Kollision")
+            .friction(0.8)
+            .user_data(entity.map_or(0, entity_user_data));
+        self.world.insert_collider(collider, None);
+    }
+
     /// Unsichtbares, festes Hindernis ohne Objekt in der Szene (z. B. Weltgrenzen).
     pub fn add_static_collider(&mut self, transform: &Transform, shape: Shape) {
         let collider = shape.collider().position(Pose::from_parts(transform.position, transform.rotation));

@@ -7,7 +7,7 @@ use std::time::Duration;
 use engine::prelude::*;
 
 use crate::protocol::*;
-use crate::world::{World, FIRST_RUNTIME_ID, SPAWN_POINT, THROW_COOLDOWN_TICKS, THROW_SPEED};
+use crate::world::{World, FIRST_RUNTIME_ID, HARVEST_COOLDOWN_TICKS, RESPAWN_TICKS, THROW_COOLDOWN_TICKS, THROW_SPEED};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -81,10 +81,27 @@ impl Authority {
             self.play_input(ctx, world, HOST_PLAYER, &input);
         }
 
-        // Wer vom Rand fällt, fängt am Startpunkt neu an.
+        // Nachwachsen: abgebaute Rohstoffe kommen nach einer Weile zurück.
+        let regrown: Vec<u32> = world
+            .resources
+            .iter()
+            .filter(|(_, r)| r.gone_since.is_some_and(|t| ctx.time.tick >= t + RESPAWN_TICKS))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in regrown {
+            world.resource_back(ctx, id);
+            self.broadcast(ServerMessage::ResourceBack { id });
+        }
+
+        // Wer vom Rand fällt, fängt am Startpunkt neu an; wer durch den Boden rutscht,
+        // wird wieder auf die Oberfläche gesetzt.
         for avatar in world.players.values() {
-            if ctx.physics.character_position(avatar.character).y < -30.0 {
-                ctx.physics.teleport_character(avatar.character, SPAWN_POINT);
+            let position = ctx.physics.character_position(avatar.character);
+            let ground = world.terrain.height_at(position.x, position.z);
+            if position.y < -30.0 {
+                ctx.physics.teleport_character(avatar.character, world.spawn);
+            } else if position.y < ground - 2.0 {
+                ctx.physics.teleport_character(avatar.character, vec3(position.x, ground + 1.2, position.z));
             }
         }
 
@@ -95,8 +112,39 @@ impl Authority {
 
     fn play_input(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, input: &PlayerInput) {
         world.apply_input(ctx, player, input);
+        if let Some(id) = input.harvest {
+            self.harvest(ctx, world, player, id);
+        }
         if let Some(aim) = input.throw {
             self.throw_ball(ctx, world, player, aim);
+        }
+    }
+
+    /// Ein Schlag auf einen Rohstoff. Der Server prüft Reichweite und Tempo selbst,
+    /// damit niemand aus der Ferne oder zu schnell abbauen kann.
+    fn harvest(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) {
+        let Some(avatar) = world.players.get(&player) else { return };
+        if ctx.time.tick < avatar.last_harvest_tick + HARVEST_COOLDOWN_TICKS || !world.in_reach(ctx, player, id, 1.0) {
+            return;
+        }
+        if let Some(avatar) = world.players.get_mut(&player) {
+            avatar.last_harvest_tick = ctx.time.tick;
+        }
+        let Some(resource) = world.resources.get(&id) else { return };
+        let kind = resource.spec.kind;
+        let health = resource.health.saturating_sub(1);
+
+        world.resource_hit(ctx, id, health, true);
+        self.broadcast(if health == 0 { ServerMessage::ResourceGone { id } } else { ServerMessage::ResourceHit { id, health } });
+
+        // Jeder Schlag bringt etwas, der letzte einen Bonus.
+        let inventory = world.inventories.entry(player).or_default();
+        inventory.add(kind, if health == 0 { 4 } else { 1 });
+        let inventory = *inventory;
+        if player != HOST_PLAYER {
+            if let Some(net) = &mut self.net {
+                net.send(player, Channel::Reliable, encode(&ServerMessage::Inventory(inventory)));
+            }
         }
     }
 
@@ -130,7 +178,7 @@ impl Authority {
         for event in net.receive(dt) {
             match event {
                 ServerEvent::Connected(id) => {
-                    let spawn = SPAWN_POINT + vec3((id % 5) as f32 - 2.0, 0.0, 0.0);
+                    let spawn = world.spawn + vec3((id % 5) as f32 - 2.0, 0.0, 0.0);
                     let name = clean_name(&String::from_utf8_lossy(&net.hello(id)));
                     world.spawn_player(ctx, id, &name, spawn);
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
@@ -139,10 +187,18 @@ impl Authority {
                         world.players.iter().filter(|&(&p, _)| p != id).map(|(&p, a)| ServerMessage::PlayerJoined { player_id: p, name: a.name.clone() }),
                     );
                     for (&object_id, object) in &world.objects {
-                        if let (Some(kind), Some((position, _))) = (object.kind, ctx.physics.body_pose(object.body)) {
-                            intro.push(ServerMessage::Spawn { id: object_id, kind, position, velocity: Vec3::ZERO });
+                        if let Some((position, _)) = ctx.physics.body_pose(object.body) {
+                            intro.push(ServerMessage::Spawn { id: object_id, kind: object.kind, position, velocity: Vec3::ZERO });
                         }
                     }
+                    let gone = world.resources.iter().filter(|(_, r)| !r.is_present()).map(|(&id, _)| id).collect();
+                    let damaged = world
+                        .resources
+                        .iter()
+                        .filter(|(_, r)| r.is_present() && r.health < r.spec.max_health)
+                        .map(|(&id, r)| (id, r.health))
+                        .collect();
+                    intro.push(ServerMessage::ResourceStates { gone, damaged });
                     for message in intro {
                         net.send(id, Channel::Reliable, encode(&message));
                     }

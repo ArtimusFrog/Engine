@@ -35,6 +35,32 @@ impl Transform {
     }
 }
 
+/// Wie ein Objekt aussieht, zusätzlich zu Farbe und Form.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Material {
+    /// Normal beleuchtet, mit Schatten.
+    #[default]
+    Standard,
+    /// Wasseroberfläche mit Wellen und Glanz (am besten mit `MeshData::grid`).
+    Water,
+    /// Blätter und Gras, die sich im Wind wiegen. `sway` = Stärke (≈ 0.05–0.3).
+    Foliage { sway: f32 },
+    /// Leuchtet von selbst (Kristalle, magische Pilze). `glow` = Helligkeit (≈ 0.5–3).
+    Emissive { glow: f32 },
+}
+
+impl Material {
+    /// Kodierung für den Shader: (Art, Parameter).
+    pub(crate) fn shader_params(self) -> [f32; 4] {
+        match self {
+            Material::Standard => [0.0, 0.0, 0.0, 0.0],
+            Material::Water => [1.0, 0.0, 0.0, 0.0],
+            Material::Foliage { sway } => [2.0, sway, 0.0, 0.0],
+            Material::Emissive { glow } => [3.0, glow, 0.0, 0.0],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Entity {
     pub name: String,
@@ -43,13 +69,14 @@ pub struct Entity {
     /// Grundfarbe in linearem RGB, Alpha derzeit ungenutzt.
     pub color: Vec4,
     pub visible: bool,
+    pub material: Material,
     /// Hängt das Objekt an ein anderes: `transform` ist dann relativ zum Elternobjekt.
     pub parent: Option<EntityId>,
 }
 
 impl Entity {
     pub fn new(name: impl Into<String>, mesh: MeshId) -> Self {
-        Entity { name: name.into(), transform: Transform::default(), mesh, color: Vec4::ONE, visible: true, parent: None }
+        Entity { name: name.into(), transform: Transform::default(), mesh, color: Vec4::ONE, visible: true, material: Material::Standard, parent: None }
     }
 
     pub fn with_transform(mut self, transform: Transform) -> Self {
@@ -59,6 +86,11 @@ impl Entity {
 
     pub fn with_color(mut self, color: Vec4) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn with_material(mut self, material: Material) -> Self {
+        self.material = material;
         self
     }
 

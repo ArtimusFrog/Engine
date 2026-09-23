@@ -9,10 +9,13 @@ pub mod camera;
 pub mod input;
 pub mod mesh;
 pub mod net;
+pub mod noise;
+pub mod particles;
 pub mod physics;
 mod renderer;
 pub mod scene;
 pub mod storage;
+pub mod terrain;
 
 pub use egui;
 
@@ -28,6 +31,9 @@ pub mod prelude {
     pub use crate::mesh::MeshData;
     pub use crate::net::{Channel, ClientId, NetClient, NetServer, ServerEvent};
     pub use crate::physics::{BodyDesc, CharacterId, CharacterSettings, CharacterState, Physics, RigidBodyHandle, Shape};
-    pub use crate::scene::{Entity, EntityId, Scene, Transform};
+    pub use crate::scene::{Entity, EntityId, Material, Scene, Transform};
+    pub use crate::noise::Rng;
+    pub use crate::particles::Burst;
+    pub use crate::terrain::Terrain;
     pub use glam::{vec2, vec3, vec4, Mat4, Quat, Vec2, Vec3, Vec4};
 }
