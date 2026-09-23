@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine", "game"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.dev]
+# Engine-Code bleibt debugbar, Abhängigkeiten (wgpu, rapier, ...) werden optimiert,
+# sonst läuft das Spiel im Debug-Build unbrauchbar langsam.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
