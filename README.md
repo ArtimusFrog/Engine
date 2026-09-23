@@ -24,7 +24,11 @@ Die fertige Datei liegt danach unter `target/release/game.exe`.
 
 ## Multiplayer
 
-Zum Doppelklicken (nutzen den Release-Build):
+Am einfachsten über das Hauptmenü: „Spiel hosten“ bzw. „Beitreten“ mit Adresse.
+Einstellungen (Name, Maus, Sichtfeld, Vollbild, VSync) werden unter
+`%APPDATA%ngineJNeinstellungen.json` gespeichert.
+
+Alternativ zum Doppelklicken (nutzen den Release-Build):
 
 | Datei | Was passiert |
 |---|---|
@@ -60,7 +64,9 @@ zwischen zwei Server-Ständen interpoliert, damit sie flüssig laufen.
 | Shift | Rennen |
 | Leertaste | Springen |
 | Linksklick (Maus gefangen) | Ball werfen |
-| Esc | Maus freigeben |
+| Esc | Menü (Weiter, Einstellungen, Hauptmenü, Beenden) |
+| Tab (halten) | Spielerliste |
+| F3 | Debug-Anzeige (FPS, Objekte, Draw-Calls) |
 | F1 | Freie Kamera an/aus (rechte Maustaste + WASD/QE) |
 | F12 | Screenshot nach `screenshots/` |
 

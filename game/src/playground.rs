@@ -1,29 +1,40 @@
-//! Der Spielplatz: verbindet Welt, Netzwerk-Rolle, Eingabe und Kamera.
+//! Das Spiel als Ganzes: Menüs, Wechsel zwischen Menü und Runde, Eingabe, Kamera und HUD.
 
+use engine::egui::{self, Align2, Color32, RichText};
 use engine::prelude::*;
 
-use crate::client::Replica;
-use crate::protocol::{PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
-use crate::server::Authority;
-use crate::world::{World, SPAWN_POINT};
+use crate::protocol::{PlayerInput, DEFAULT_PORT, MAX_NAME_CHARS};
+use crate::session::{Mode, Session};
+use crate::settings::Settings;
+use crate::ui;
+use crate::world::World;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Mode {
-    /// Allein spielen, kein Netzwerk.
-    Offline,
-    /// Selbst spielen und gleichzeitig Server für andere sein.
-    Host { port: u16 },
-    /// Nur Server, ohne Fenster und ohne eigene Figur.
-    Server { port: u16 },
-    /// Mit einem Server verbinden.
-    Join { address: String },
+/// Nach so vielen Sekunden ohne Antwort gibt der Verbindungsaufbau auf.
+const CONNECT_TIMEOUT: f32 = 10.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Screen {
+    MainMenu,
+    Join,
+    Settings,
+    Connecting,
+    Playing,
+    Paused,
 }
 
 pub struct Playground {
-    mode: Mode,
-    world: Option<World>,
-    authority: Option<Authority>,
-    replica: Option<Replica>,
+    /// Direkt in eine Runde starten (Kommandozeile), statt ins Hauptmenü.
+    start: Option<Mode>,
+    settings: Settings,
+    session: Option<Session>,
+    /// Kulisse hinter dem Hauptmenü.
+    menu_world: Option<World>,
+    screen: Screen,
+    /// Wohin „Zurück“ aus den Einstellungen führt.
+    settings_return: Screen,
+    join_address: String,
+    error: Option<String>,
+    connect_started: f32,
     orbit: OrbitController,
     fly: FlyController,
     free_camera: bool,
@@ -32,53 +43,79 @@ pub struct Playground {
     throw_requested: bool,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
+    themed: bool,
+    /// Eigene Adresse im Heimnetz, damit Mitspieler wissen, wohin sie sich verbinden.
+    local_ip: Option<std::net::IpAddr>,
 }
 
 impl Playground {
-    pub fn new(mode: Mode, autopilot: bool) -> Self {
+    pub fn new(start: Option<Mode>, autopilot: bool) -> Self {
+        let settings = Settings::load();
         Playground {
-            mode,
-            world: None,
-            authority: None,
-            replica: None,
+            start,
+            join_address: settings.last_address.clone(),
+            settings,
+            session: None,
+            menu_world: None,
+            screen: Screen::MainMenu,
+            settings_return: Screen::MainMenu,
+            error: None,
+            connect_started: 0.0,
             orbit: OrbitController::default(),
             fly: FlyController::default(),
             free_camera: false,
             jump_requested: false,
             throw_requested: false,
             autopilot,
+            themed: false,
+            local_ip: None,
         }
     }
 
-    /// ID der eigenen Figur, sobald es eine gibt.
-    pub fn local_player(&self) -> Option<PlayerId> {
-        match (&self.mode, &self.replica) {
-            (Mode::Server { .. }, _) => None,
-            (_, Some(replica)) => replica.local_id(),
-            _ => Some(HOST_PLAYER),
+    fn apply_settings(&mut self, ctx: &mut Context) {
+        self.settings.apply(ctx);
+        self.orbit.sensitivity = 0.0025 * self.settings.mouse_sensitivity;
+        self.orbit.invert_y = self.settings.invert_y;
+        self.fly.sensitivity = self.orbit.sensitivity;
+    }
+
+    fn start_session(&mut self, ctx: &mut Context, mode: Mode) {
+        match Session::start(ctx, mode, &self.settings.name) {
+            Ok(session) => {
+                self.screen = if session.is_connecting() { Screen::Connecting } else { Screen::Playing };
+                self.session = Some(session);
+                self.menu_world = None;
+                self.error = None;
+                self.connect_started = ctx.time.elapsed;
+                self.local_ip = ui::local_ip();
+                self.orbit.distance = 6.0;
+                ctx.camera.pitch = -0.35;
+                ctx.cursor_locked = self.screen == Screen::Playing && !ctx.is_headless();
+            }
+            Err(message) => {
+                log::error!("{message}");
+                self.show_menu(ctx, Some(message));
+            }
         }
     }
 
-    #[cfg(test)]
-    pub fn world(&self) -> &World {
-        self.world.as_ref().expect("Welt ist noch nicht aufgebaut")
-    }
-
-    #[cfg(test)]
-    pub fn server_port(&self) -> Option<u16> {
-        self.authority.as_ref().and_then(Authority::port)
-    }
-
-    #[cfg(test)]
-    pub fn corrections(&self) -> u32 {
-        self.replica.as_ref().map_or(0, |r| r.corrections)
+    /// Beendet die laufende Runde (falls vorhanden) und zeigt das Hauptmenü.
+    fn show_menu(&mut self, ctx: &mut Context, error: Option<String>) {
+        self.session = None;
+        ctx.reset_world();
+        self.menu_world = Some(World::new(ctx));
+        self.screen = Screen::MainMenu;
+        self.error = error;
+        self.free_camera = false;
+        ctx.cursor_locked = false;
     }
 
     fn build_input(&mut self, ctx: &Context) -> PlayerInput {
+        let playing = self.screen == Screen::Playing && !self.free_camera;
         let yaw = ctx.camera.yaw;
         let (forward, right) = (vec2(yaw.sin(), -yaw.cos()), vec2(yaw.cos(), yaw.sin()));
         let mut wish = Vec2::ZERO;
-        if !self.free_camera {
+        if playing {
             for (key, dir) in [(KeyCode::KeyW, forward), (KeyCode::KeyS, -forward), (KeyCode::KeyD, right), (KeyCode::KeyA, -right)] {
                 if ctx.input.key(key) {
                     wish += dir;
@@ -92,7 +129,7 @@ impl Playground {
         let input = PlayerInput {
             seq: 0,
             wish: wish.normalize_or_zero(),
-            sprint: ctx.input.key(KeyCode::ShiftLeft),
+            sprint: playing && ctx.input.key(KeyCode::ShiftLeft),
             jump: self.jump_requested,
             throw: self.throw_requested.then(|| ctx.camera.forward()),
         };
@@ -101,182 +138,400 @@ impl Playground {
         input
     }
 
-    fn update_status(&self, ctx: &mut Context) {
-        ctx.status = match (&self.mode, &self.authority, &self.replica) {
-            (Mode::Offline, ..) => "Einzelspieler".into(),
-            (_, Some(authority), _) => format!(
-                "Host · Port {} · {} Mitspieler",
-                authority.port().unwrap_or(0),
-                authority.player_count()
-            ),
-            (Mode::Join { address }, _, Some(replica)) if replica.is_connected() => {
-                format!("Verbunden mit {address} · Ping {:.0} ms", replica.ping_ms())
+    fn handle_game_keys(&mut self, ctx: &mut Context) {
+        let escape = ctx.input.key_pressed(KeyCode::Escape);
+        match self.screen {
+            Screen::Playing => {
+                if escape {
+                    self.screen = Screen::Paused;
+                    ctx.cursor_locked = false;
+                    return;
+                }
+                if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera {
+                    ctx.cursor_locked = true;
+                } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
+                    self.throw_requested = true;
+                }
+                self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
+                if ctx.input.key_pressed(KeyCode::F1) {
+                    self.free_camera = !self.free_camera;
+                    ctx.cursor_locked = false;
+                }
             }
-            (Mode::Join { address }, ..) => format!("Verbinde mit {address} …"),
+            Screen::Paused if escape => {
+                self.screen = Screen::Playing;
+                ctx.cursor_locked = true;
+            }
+            Screen::Settings if escape => self.close_settings(ctx),
+            Screen::Join if escape => self.screen = Screen::MainMenu,
+            _ => {}
+        }
+    }
+
+    fn close_settings(&mut self, ctx: &mut Context) {
+        self.settings.name = crate::protocol::clean_name(&self.settings.name);
+        self.settings.save();
+        self.apply_settings(ctx);
+        self.screen = self.settings_return;
+    }
+
+    fn update_camera(&mut self, ctx: &mut Context) {
+        let Some(session) = &self.session else {
+            // Hauptmenü: Kamera kreist langsam über den Spielplatz.
+            let t = ctx.time.elapsed * 0.06;
+            ctx.camera.position = vec3(t.sin() * 20.0, 7.0, t.cos() * 20.0);
+            ctx.camera.look_at(vec3(0.0, 1.0, 0.0));
+            return;
+        };
+        if self.free_camera {
+            self.fly.update(ctx);
+            return;
+        }
+        let Some(avatar) = session.local_player().and_then(|id| session.world().players.get(&id)) else { return };
+        let Some(entity) = ctx.scene.try_get(avatar.entity) else { return };
+        let target = entity.transform.position + Vec3::Y * 0.6;
+        let character = avatar.character;
+        self.orbit.update(ctx, target, Some(character));
+    }
+
+    fn status_text(&self) -> String {
+        match self.session.as_ref().map(|s| (s.mode(), s)) {
+            None => "Hauptmenü".into(),
+            Some((Mode::Offline, _)) => "Einzelspieler".into(),
+            Some((Mode::Host { .. } | Mode::Server { .. }, s)) => {
+                format!("Host · Port {} · {} Spieler", s.port().unwrap_or(0), s.world().players.len())
+            }
+            Some((Mode::Join { address }, s)) => match s.ping_ms() {
+                Some(ping) => format!("{address} · {ping:.0} ms · {} Spieler", s.world().players.len()),
+                None => format!("Verbinde mit {address} …"),
+            },
+        }
+    }
+
+    // ---------- Bildschirme ----------
+
+    fn main_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let mut action = None;
+        ui::left_shade(egui_ctx);
+        egui::Area::new(egui::Id::new("hauptmenue")).anchor(Align2::LEFT_CENTER, [70.0, 0.0]).show(egui_ctx, |ui| {
+            ui.label(RichText::new("SPIELPLATZ").size(64.0).strong().color(Color32::WHITE));
+            ui.label(RichText::new("Engine JN · Multiplayer-Prototyp").size(18.0).color(ui::TEXT));
+            ui.add_space(24.0);
+            ui::panel_frame().show(ui, |ui| {
+                ui.set_width(300.0);
+                if ui::big_button(ui, "Einzelspieler").clicked() {
+                    action = Some(Mode::Offline);
+                }
+                if ui::big_button(ui, "Spiel hosten").clicked() {
+                    action = Some(Mode::Host { port: DEFAULT_PORT });
+                }
+                if ui::big_button(ui, "Beitreten").clicked() {
+                    self.screen = Screen::Join;
+                }
+                if ui::big_button(ui, "Einstellungen").clicked() {
+                    self.settings_return = Screen::MainMenu;
+                    self.screen = Screen::Settings;
+                }
+                if ui::big_button(ui, "Beenden").clicked() {
+                    ctx.exit();
+                }
+                if let Some(error) = &self.error {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(error).color(ui::ERROR));
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new(format!("Spielername: {}", self.settings.name)).size(15.0).color(ui::TEXT));
+        });
+        if let Some(mode) = action {
+            self.start_session(ctx, mode);
+        }
+    }
+
+    fn join_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let mut connect = false;
+        ui::dim_background(egui_ctx, 90);
+        ui::center_panel(egui_ctx, "beitreten", 420.0, |ui| {
+            ui::heading(ui, "Beitreten");
+            ui.label(RichText::new("Adresse des Hosts oder Servers").color(ui::MUTED));
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.join_address)
+                    .hint_text("z. B. 100.64.1.2 oder spiel.example.com")
+                    .desired_width(f32::INFINITY),
+            );
+            if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                connect = true;
+            }
+            ui.label(
+                RichText::new(format!("Ohne Angabe wird Port {DEFAULT_PORT} benutzt. Du spielst als „{}“.", self.settings.name))
+                    .size(14.0)
+                    .color(ui::MUTED),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add_sized([180.0, 42.0], egui::Button::new("Verbinden")).clicked() {
+                    connect = true;
+                }
+                if ui.add_sized([180.0, 42.0], egui::Button::new("Zurück")).clicked() {
+                    self.screen = Screen::MainMenu;
+                }
+            });
+        });
+
+        let address = self.join_address.trim().to_string();
+        if connect && !address.is_empty() {
+            self.settings.last_address = address.clone();
+            self.settings.save();
+            let address = if address.contains(':') { address } else { format!("{address}:{DEFAULT_PORT}") };
+            self.start_session(ctx, Mode::Join { address });
+        }
+    }
+
+    fn settings_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let mut close = false;
+        ui::dim_background(egui_ctx, 120);
+        ui::center_panel(egui_ctx, "einstellungen", 470.0, |ui| {
+            ui::heading(ui, "Einstellungen");
+            egui::Grid::new("einstellungen_raster").num_columns(2).spacing([24.0, 14.0]).show(ui, |ui| {
+                let s = &mut self.settings;
+                ui.label("Name");
+                ui.add(egui::TextEdit::singleline(&mut s.name).char_limit(MAX_NAME_CHARS).desired_width(220.0));
+                ui.end_row();
+
+                ui.label("Mausempfindlichkeit");
+                ui.add(egui::Slider::new(&mut s.mouse_sensitivity, 0.2..=3.0).fixed_decimals(1).suffix("×"));
+                ui.end_row();
+
+                ui.label("Maus-Y umkehren");
+                ui.checkbox(&mut s.invert_y, "");
+                ui.end_row();
+
+                ui.label("Sichtfeld");
+                ui.add(egui::Slider::new(&mut s.fov_degrees, 60.0..=110.0).fixed_decimals(0).suffix("°"));
+                ui.end_row();
+
+                ui.label("Vollbild");
+                ui.checkbox(&mut s.fullscreen, "");
+                ui.end_row();
+
+                ui.label("VSync");
+                ui.checkbox(&mut s.vsync, "");
+                ui.end_row();
+            });
+            ui.add_space(10.0);
+            if ui::big_button(ui, "Zurück").clicked() {
+                close = true;
+            }
+        });
+        // Änderungen sofort sichtbar machen, gespeichert wird beim Schließen.
+        self.apply_settings(ctx);
+        if close {
+            self.close_settings(ctx);
+        }
+    }
+
+    fn connecting_screen(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let mut cancel = false;
+        let address = match self.session.as_ref().map(Session::mode) {
+            Some(Mode::Join { address }) => address.clone(),
             _ => String::new(),
         };
+        ui::dim_background(egui_ctx, 120);
+        ui::center_panel(egui_ctx, "verbinden", 380.0, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(26.0).color(ui::ACCENT));
+                ui.label(RichText::new(format!("Verbinde mit {address} …")).size(20.0));
+            });
+            ui.add_space(8.0);
+            if ui::big_button(ui, "Abbrechen").clicked() {
+                cancel = true;
+            }
+        });
+        if cancel {
+            self.show_menu(ctx, None);
+        }
+    }
+
+    fn pause_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        ui::dim_background(egui_ctx, 140);
+        let online = !matches!(self.session.as_ref().map(Session::mode), Some(Mode::Offline) | None);
+        let mut leave = false;
+        ui::center_panel(egui_ctx, "pause", 320.0, |ui| {
+            ui::heading(ui, "Menü");
+            if online {
+                ui.label(RichText::new("Das Spiel läuft im Hintergrund weiter.").size(14.0).color(ui::MUTED));
+            }
+            if ui::big_button(ui, "Weiter").clicked() {
+                self.screen = Screen::Playing;
+                ctx.cursor_locked = true;
+            }
+            if ui::big_button(ui, "Einstellungen").clicked() {
+                self.settings_return = Screen::Paused;
+                self.screen = Screen::Settings;
+            }
+            if ui::big_button(ui, "Zum Hauptmenü").clicked() {
+                leave = true;
+            }
+            if ui::big_button(ui, "Spiel beenden").clicked() {
+                ctx.exit();
+            }
+        });
+        if leave {
+            self.show_menu(ctx, None);
+        }
+    }
+
+    fn hud(&mut self, ctx: &Context, egui_ctx: &egui::Context) {
+        let Some(session) = &self.session else { return };
+        let local = session.local_player();
+
+        for (&id, avatar) in &session.world().players {
+            if Some(id) == local {
+                continue;
+            }
+            if let Some(entity) = ctx.scene.try_get(avatar.entity) {
+                ui::name_tag(ctx, egui_ctx, entity.transform.position + Vec3::Y * 1.25, &avatar.name);
+            }
+        }
+
+        if self.screen != Screen::Playing {
+            return;
+        }
+        if ctx.cursor_locked {
+            ui::crosshair(egui_ctx);
+        }
+
+        // Status oben rechts
+        egui::Area::new(egui::Id::new("status"))
+            .anchor(Align2::RIGHT_TOP, [-14.0, 14.0])
+            .interactable(false)
+            .show(egui_ctx, |ui| {
+                egui::Frame::new().fill(Color32::from_black_alpha(175)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.label(RichText::new(self.status_text()).size(16.0));
+                    if let (Mode::Host { port }, Some(ip)) = (session.mode(), self.local_ip) {
+                        ui.label(RichText::new(format!("Im Heimnetz: {ip}:{port}")).size(14.0).color(ui::TEXT.gamma_multiply(0.8)));
+                    }
+                });
+            });
+
+        // Spielerliste mit Tab
+        if ctx.input.key(KeyCode::Tab) {
+            ui::center_panel(egui_ctx, "spielerliste", 340.0, |ui| {
+                ui::heading(ui, "Spieler");
+                let mut players: Vec<_> = session.world().players.iter().collect();
+                players.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()));
+                for (&id, avatar) in players {
+                    let me = if Some(id) == local { "  (du)" } else { "" };
+                    ui.label(RichText::new(format!("{}{me}", avatar.name)).size(19.0));
+                }
+            });
+        }
+
+        let hint = if ctx.cursor_locked || self.free_camera {
+            "WASD Laufen · Shift Rennen · Leertaste Springen · Linksklick Werfen · Tab Spieler · Esc Menü"
+        } else {
+            "Klicken zum Spielen"
+        };
+        egui::Area::new(egui::Id::new("hinweis"))
+            .anchor(Align2::CENTER_BOTTOM, [0.0, -16.0])
+            .interactable(false)
+            .show(egui_ctx, |ui| {
+                let size = if ctx.cursor_locked { 14.0 } else { 22.0 };
+                ui.label(RichText::new(hint).size(size).color(Color32::from_white_alpha(200)));
+            });
+    }
+}
+
+/// Übersetzt die technischen Trennungsgründe des Netzwerks in verständliche Sätze.
+fn explain_disconnect(reason: &str) -> String {
+    if reason.contains("terminated by server") || reason.contains("terminated by the server") {
+        "Der Host hat das Spiel beendet oder dich getrennt.".into()
+    } else if reason.contains("request step") {
+        "Keine Antwort. Stimmt die Adresse, läuft der Server, und habt ihr dieselbe Spielversion?".into()
+    } else if reason.contains("timed out") {
+        "Die Verbindung ist abgebrochen (keine Antwort mehr vom Server).".into()
+    } else if reason.contains("denied") {
+        "Der Server hat die Verbindung abgelehnt – vielleicht ist er voll.".into()
+    } else {
+        format!("Verbindung verloren ({reason}).")
     }
 }
 
 impl Game for Playground {
     fn init(&mut self, ctx: &mut Context) {
-        ctx.camera.pitch = -0.35;
-        if matches!(self.mode, Mode::Join { .. }) {
-            // Beim Client bewegt der Server die Objekte, nicht die eigene Physik.
-            ctx.physics.set_replica(true);
+        self.apply_settings(ctx);
+        match self.start.take() {
+            Some(mode) => self.start_session(ctx, mode),
+            None => self.show_menu(ctx, None),
         }
-        let mut world = World::new(ctx);
-
-        match self.mode.clone() {
-            Mode::Offline => {
-                self.authority = Some(Authority::new(None));
-                world.spawn_player(ctx, HOST_PLAYER, SPAWN_POINT);
+        // Nur für automatische Screenshots: direkt einen bestimmten Bildschirm zeigen.
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(screen) = args.iter().position(|a| a == "--screen").and_then(|i| args.get(i + 1)) {
+            match screen.as_str() {
+                "beitreten" => self.screen = Screen::Join,
+                "einstellungen" => self.screen = Screen::Settings,
+                "pause" => self.screen = Screen::Paused,
+                "fehler" => self.error = Some("Der Server antwortet nicht. Stimmt die Adresse, und läuft er?".into()),
+                _ => {}
             }
-            Mode::Host { port } => {
-                match NetServer::listen(port, PROTOCOL_ID, 16) {
-                    Ok(net) => {
-                        log::info!("Host: warte auf Mitspieler an Port {}", net.port());
-                        self.authority = Some(Authority::new(Some(net)));
-                    }
-                    Err(e) => {
-                        log::error!("Port {port} ist nicht verfügbar ({e}), spiele allein");
-                        self.mode = Mode::Offline;
-                        self.authority = Some(Authority::new(None));
-                    }
-                }
-                world.spawn_player(ctx, HOST_PLAYER, SPAWN_POINT);
-            }
-            Mode::Server { port } => {
-                let net = NetServer::listen(port, PROTOCOL_ID, 32)
-                    .unwrap_or_else(|e| panic!("Server kann Port {port} nicht öffnen: {e}"));
-                log::info!("Server läuft an Port {}", net.port());
-                self.authority = Some(Authority::new(Some(net)));
-            }
-            Mode::Join { address } => match Replica::connect(&address) {
-                Ok(replica) => {
-                    log::info!("Verbinde mit {address} …");
-                    self.replica = Some(replica);
-                }
-                Err(e) => {
-                    log::error!("Verbindung zu {address} nicht möglich: {e}");
-                    ctx.exit();
-                }
-            },
+            ctx.show_debug = args.iter().any(|a| a == "--debug");
         }
-        self.world = Some(world);
     }
 
     fn fixed_update(&mut self, ctx: &mut Context) {
-        let has_local_player = self.local_player().is_some();
         let input = self.build_input(ctx);
-        let Some(world) = &mut self.world else { return };
-
-        if let Some(authority) = &mut self.authority {
-            authority.tick(ctx, world, has_local_player.then_some(input));
-            if ctx.is_headless() && ctx.time.tick % (60 * 30) == 0 {
-                log::info!("{} Spieler verbunden", authority.player_count());
-            }
-        }
-        if let Some(replica) = &mut self.replica {
-            if let Err(reason) = replica.tick(ctx, world, input) {
-                log::error!("Verbindung zum Server verloren: {reason}");
+        let Some(session) = &mut self.session else { return };
+        if let Err(reason) = session.fixed_update(ctx, input) {
+            log::error!("Verbindung zum Server verloren: {reason}");
+            if ctx.is_headless() {
                 ctx.exit();
+            } else {
+                self.show_menu(ctx, Some(explain_disconnect(&reason)));
             }
         }
     }
 
     fn update(&mut self, ctx: &mut Context) {
-        // Maus einfangen: Klick ins Fenster. Freigeben: Esc.
-        if ctx.input.key_pressed(KeyCode::Escape) {
-            ctx.cursor_locked = false;
-        } else if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera {
-            ctx.cursor_locked = true;
-        } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
-            self.throw_requested = true;
-        }
-        self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
+        self.handle_game_keys(ctx);
 
-        if ctx.input.key_pressed(KeyCode::F1) {
-            self.free_camera = !self.free_camera;
-            ctx.cursor_locked = false;
-        }
-        self.update_status(ctx);
-
-        let local = self.local_player();
-        let Some(world) = &self.world else { return };
-        world.update_visuals(ctx);
-
-        if self.free_camera {
-            self.fly.update(ctx);
-            return;
-        }
-        let Some(avatar) = local.and_then(|id| world.players.get(&id)) else { return };
-        let Some(entity) = ctx.scene.try_get(avatar.entity) else { return };
-        let target = entity.transform.position + Vec3::Y * 0.6;
-        self.orbit.update(ctx, target, Some(avatar.character));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Startet einen Server und einen Client im selben Prozess und lässt beide laufen.
-    fn run_pair(ticks: u32, client_autopilot: bool) -> (Playground, Context, Playground, Context) {
-        let mut server = Playground::new(Mode::Server { port: 0 }, false);
-        let mut server_ctx = Context::headless();
-        server.init(&mut server_ctx);
-        let port = server.server_port().expect("Server hat keinen Port");
-
-        let mut client = Playground::new(Mode::Join { address: format!("127.0.0.1:{port}") }, client_autopilot);
-        let mut client_ctx = Context::headless();
-        client.init(&mut client_ctx);
-
-        for _ in 0..ticks {
-            server_ctx.fixed_tick(&mut server);
-            client_ctx.fixed_tick(&mut client);
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        server_ctx.sync_scene();
-        client_ctx.sync_scene();
-        (server, server_ctx, client, client_ctx)
-    }
-
-    #[test]
-    fn client_verbindet_sich_und_bekommt_eine_figur() {
-        let (server, _, client, _) = run_pair(120, false);
-        let id = client.local_player().expect("Client hat keine Spieler-ID bekommen");
-        assert!(server.world().players.contains_key(&id), "Server kennt den Spieler nicht");
-        assert!(client.world().players.contains_key(&id), "Client hat keine eigene Figur");
-    }
-
-    #[test]
-    fn bewegung_kommt_beim_server_an_und_vorhersage_stimmt() {
-        // 2 s geradeaus inkl. Sprung, noch bevor die Figur die Kisten erreicht.
-        let (server, server_ctx, client, client_ctx) = run_pair(120, true);
-        let id = client.local_player().unwrap();
-        let on_server = server.world().player_position(&server_ctx, id).unwrap();
-        let on_client = client.world().player_position(&client_ctx, id).unwrap();
-
-        assert!(on_server.z < SPAWN_POINT.z - 5.0, "Spieler hat sich auf dem Server nicht bewegt: {on_server}");
-        // Der Client ist dem Server um die Netzwerk-Laufzeit voraus.
-        assert!(on_server.distance(on_client) < 1.5, "Server {on_server} und Client {on_client} liegen zu weit auseinander");
-        assert_eq!(client.corrections(), 0, "Vorhersage weicht vom Server ab");
-    }
-
-    #[test]
-    fn kisten_bewegen_sich_auf_dem_client_mit() {
-        // Autopilot läuft vom Startpunkt geradeaus in die Kistenpyramide.
-        let (server, server_ctx, client, client_ctx) = run_pair(420, true);
-        let mut moved = 0;
-        for (id, object) in &server.world().objects {
-            let (on_server, _) = server_ctx.physics.body_pose(object.body).unwrap();
-            let (on_client, _) = client_ctx.physics.body_pose(client.world().objects[id].body).unwrap();
-            assert!(on_server.distance(on_client) < 1.0, "Objekt {id}: Server {on_server}, Client {on_client}");
-            if on_server.distance(Vec3::new(0.0, 0.0, -3.0)) > 2.5 {
-                moved += 1;
+        if self.screen == Screen::Connecting {
+            match &self.session {
+                Some(session) if !session.is_connecting() => {
+                    self.screen = Screen::Playing;
+                    ctx.cursor_locked = true;
+                }
+                Some(_) if ctx.time.elapsed - self.connect_started > CONNECT_TIMEOUT => {
+                    self.show_menu(ctx, Some("Der Server antwortet nicht. Stimmt die Adresse, und läuft er?".into()));
+                }
+                _ => {}
             }
         }
-        assert!(moved > 0, "Keine Kiste wurde umgestoßen");
+
+        if let Some(world) = self.session.as_ref().map(Session::world).or(self.menu_world.as_ref()) {
+            world.update_visuals(ctx);
+        }
+        self.update_camera(ctx);
+        ctx.status = self.status_text();
+        if let Some(session) = &self.session {
+            ctx.debug_lines.push(format!("Spieler: {}  Objekte: {}", session.world().players.len(), session.world().objects.len()));
+        }
+    }
+
+    fn ui(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        if !self.themed {
+            ui::apply_theme(egui_ctx);
+            self.themed = true;
+        }
+        self.hud(ctx, egui_ctx);
+        match self.screen {
+            Screen::MainMenu => self.main_menu(ctx, egui_ctx),
+            Screen::Join => self.join_menu(ctx, egui_ctx),
+            Screen::Settings => self.settings_menu(ctx, egui_ctx),
+            Screen::Connecting => self.connecting_screen(ctx, egui_ctx),
+            Screen::Paused => self.pause_menu(ctx, egui_ctx),
+            Screen::Playing => {}
+        }
     }
 }

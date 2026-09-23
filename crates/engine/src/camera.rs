@@ -54,11 +54,13 @@ pub struct OrbitController {
     pub sensitivity: f32,
     /// Die Kamera bleibt vor Wänden stehen, statt hindurchzusehen.
     pub avoid_walls: bool,
+    /// Maus nach oben = nach unten schauen (wie im Flugzeug).
+    pub invert_y: bool,
 }
 
 impl Default for OrbitController {
     fn default() -> Self {
-        OrbitController { distance: 6.0, min_distance: 2.0, max_distance: 20.0, sensitivity: 0.0025, avoid_walls: true }
+        OrbitController { distance: 6.0, min_distance: 2.0, max_distance: 20.0, sensitivity: 0.0025, avoid_walls: true, invert_y: false }
     }
 }
 
@@ -68,7 +70,8 @@ impl OrbitController {
         if ctx.cursor_locked {
             let delta = ctx.input.mouse_delta() * self.sensitivity;
             ctx.camera.yaw += delta.x;
-            ctx.camera.pitch = (ctx.camera.pitch - delta.y).clamp(-1.4, 1.2);
+            let dy = if self.invert_y { -delta.y } else { delta.y };
+            ctx.camera.pitch = (ctx.camera.pitch - dy).clamp(-1.4, 1.2);
         }
         self.distance = (self.distance * 0.9f32.powf(ctx.input.scroll())).clamp(self.min_distance, self.max_distance);
 

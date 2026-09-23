@@ -37,12 +37,14 @@ pub struct Replica {
     server_tick: Option<f64>,
     last_reconciled: u32,
     pub corrections: u32,
+    name: String,
 }
 
 impl Replica {
-    pub fn connect(address: &str) -> std::io::Result<Self> {
+    pub fn connect(address: &str, name: &str) -> std::io::Result<Self> {
         Ok(Replica {
-            net: NetClient::connect(address, PROTOCOL_ID)?,
+            net: NetClient::connect(address, PROTOCOL_ID, name.as_bytes())?,
+            name: name.to_string(),
             local_id: None,
             next_seq: 1,
             pending: VecDeque::new(),
@@ -102,9 +104,9 @@ impl Replica {
                 log::info!("Mit dem Server verbunden, meine Spieler-ID: {player_id}");
                 self.local_id = Some(player_id);
                 self.server_tick = Some(tick as f64);
-                world.spawn_player(ctx, player_id, SPAWN_POINT);
+                world.spawn_player(ctx, player_id, &self.name, SPAWN_POINT);
             }
-            ServerMessage::PlayerJoined { player_id } => world.spawn_player(ctx, player_id, SPAWN_POINT),
+            ServerMessage::PlayerJoined { player_id, name } => world.spawn_player(ctx, player_id, &name, SPAWN_POINT),
             ServerMessage::PlayerLeft { player_id } => world.remove_player(ctx, player_id),
             ServerMessage::Spawn { id, kind, position, velocity } => {
                 if !world.objects.contains_key(&id) {

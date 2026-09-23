@@ -131,10 +131,13 @@ impl Authority {
             match event {
                 ServerEvent::Connected(id) => {
                     let spawn = SPAWN_POINT + vec3((id % 5) as f32 - 2.0, 0.0, 0.0);
-                    world.spawn_player(ctx, id, spawn);
+                    let name = clean_name(&String::from_utf8_lossy(&net.hello(id)));
+                    world.spawn_player(ctx, id, &name, spawn);
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
                     let mut intro = vec![ServerMessage::Welcome { player_id: id, tick: ctx.time.tick as u32 }];
-                    intro.extend(world.players.keys().filter(|&&p| p != id).map(|&p| ServerMessage::PlayerJoined { player_id: p }));
+                    intro.extend(
+                        world.players.iter().filter(|&(&p, _)| p != id).map(|(&p, a)| ServerMessage::PlayerJoined { player_id: p, name: a.name.clone() }),
+                    );
                     for (&object_id, object) in &world.objects {
                         if let (Some(kind), Some((position, _))) = (object.kind, ctx.physics.body_pose(object.body)) {
                             intro.push(ServerMessage::Spawn { id: object_id, kind, position, velocity: Vec3::ZERO });
@@ -144,7 +147,7 @@ impl Authority {
                         net.send(id, Channel::Reliable, encode(&message));
                     }
                     for &other in self.clients.keys() {
-                        net.send(other, Channel::Reliable, encode(&ServerMessage::PlayerJoined { player_id: id }));
+                        net.send(other, Channel::Reliable, encode(&ServerMessage::PlayerJoined { player_id: id, name: name.clone() }));
                     }
                     self.clients.insert(
                         id,

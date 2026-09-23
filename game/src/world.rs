@@ -21,6 +21,7 @@ pub struct Avatar {
     /// Blickrichtung (Yaw in Radiant), folgt der Laufrichtung.
     pub facing: f32,
     pub last_throw_tick: u64,
+    pub name: String,
 }
 
 pub struct NetObject {
@@ -46,7 +47,7 @@ impl World {
         world
     }
 
-    pub fn spawn_player(&mut self, ctx: &mut Context, id: PlayerId, position: Vec3) {
+    pub fn spawn_player(&mut self, ctx: &mut Context, id: PlayerId, name: &str, position: Vec3) {
         if self.players.contains_key(&id) {
             return;
         }
@@ -63,15 +64,15 @@ impl World {
                 .with_color(vec4(0.02, 0.02, 0.03, 1.0)),
         );
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
-        self.players.insert(id, Avatar { entity, character, facing: 0.0, last_throw_tick: 0 });
-        log::info!("Spieler {id} ist da");
+        self.players.insert(id, Avatar { entity, character, facing: 0.0, last_throw_tick: 0, name: name.to_string() });
+        log::info!("{name} ({id}) ist da");
     }
 
     pub fn remove_player(&mut self, ctx: &mut Context, id: PlayerId) {
         if let Some(avatar) = self.players.remove(&id) {
             ctx.physics.remove_character(avatar.character);
             ctx.scene.despawn(avatar.entity);
-            log::info!("Spieler {id} ist weg");
+            log::info!("{} ({id}) ist weg", avatar.name);
         }
     }
 

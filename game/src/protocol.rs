@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0001;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0002;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -63,7 +63,7 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     Welcome { player_id: PlayerId, tick: u32 },
-    PlayerJoined { player_id: PlayerId },
+    PlayerJoined { player_id: PlayerId, name: String },
     PlayerLeft { player_id: PlayerId },
     Spawn { id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3 },
     Despawn { id: NetId },
@@ -88,4 +88,13 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
             None
         }
     }
+}
+
+pub const MAX_NAME_CHARS: usize = 16;
+
+/// Macht aus einer Eingabe einen gültigen Spielernamen (gekürzt, ohne Steuerzeichen).
+pub fn clean_name(name: &str) -> String {
+    let name: String = name.chars().filter(|c| !c.is_control()).take(MAX_NAME_CHARS).collect();
+    let name = name.trim();
+    if name.is_empty() { "Spieler".to_string() } else { name.to_string() }
 }

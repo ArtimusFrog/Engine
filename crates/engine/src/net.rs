@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use renet::{ConnectionConfig, DefaultChannel, RenetClient, RenetServer};
 use renet_netcode::{
     ClientAuthentication, NetcodeClientTransport, NetcodeServerTransport, ServerAuthentication, ServerConfig,
+    NETCODE_USER_DATA_BYTES,
 };
 
 pub type ClientId = u64;
@@ -105,6 +106,14 @@ impl NetServer {
         self.server.disconnect(client);
     }
 
+    /// Was der Client beim Verbinden mitgeschickt hat (siehe [`NetClient::connect`]),
+    /// ohne die auffüllenden Null-Bytes am Ende.
+    pub fn hello(&self, client: ClientId) -> Vec<u8> {
+        let data = self.transport.user_data(client).unwrap_or([0; NETCODE_USER_DATA_BYTES]);
+        let len = data.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        data[..len].to_vec()
+    }
+
     /// Round-Trip-Zeit zu einem Client in Sekunden.
     pub fn ping(&self, client: ClientId) -> f64 {
         self.server.rtt(client)
@@ -130,18 +139,23 @@ pub struct NetClient {
 impl NetClient {
     /// Baut eine Verbindung zu `address` auf (z. B. `"127.0.0.1:7777"` oder `"spiel.example.com:7777"`).
     /// Die Verbindung steht erst, wenn [`is_connected`](Self::is_connected) `true` liefert.
-    pub fn connect(address: &str, protocol_id: u64) -> std::io::Result<Self> {
+    /// `hello` (max. 256 Bytes) kommt beim Server sofort mit der Verbindung an, siehe
+    /// [`NetServer::hello`] – z. B. der Spielername.
+    pub fn connect(address: &str, protocol_id: u64, hello: &[u8]) -> std::io::Result<Self> {
         let server_addr: SocketAddr = address
             .to_socket_addrs()?
             .find(|a| a.is_ipv4())
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("Adresse nicht gefunden: {address}")))?;
         let socket = UdpSocket::bind(("0.0.0.0", 0))?;
+        let mut user_data = [0u8; NETCODE_USER_DATA_BYTES];
+        let len = hello.len().min(NETCODE_USER_DATA_BYTES);
+        user_data[..len].copy_from_slice(&hello[..len]);
         let time = now();
         let authentication = ClientAuthentication::Unsecure {
             protocol_id,
             client_id: time.as_nanos() as u64 ^ std::process::id() as u64,
             server_addr,
-            user_data: None,
+            user_data: Some(user_data),
         };
         let transport = NetcodeClientTransport::new(time, authentication, socket)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -204,7 +218,7 @@ mod tests {
     #[test]
     fn client_und_server_tauschen_nachrichten_aus() {
         let mut server = NetServer::listen(0, 42, 4).unwrap();
-        let mut client = NetClient::connect(&format!("127.0.0.1:{}", server.port()), 42).unwrap();
+        let mut client = NetClient::connect(&format!("127.0.0.1:{}", server.port()), 42, b"Tester").unwrap();
         let dt = Duration::from_millis(16);
 
         let mut connected = None;
@@ -224,6 +238,7 @@ mod tests {
         }
         let id = connected.expect("Client hat sich nicht verbunden");
         assert_eq!(id, client.id());
+        assert_eq!(server.hello(id), b"Tester");
 
         client.send(Channel::Reliable, b"hallo server".to_vec());
         server.send(id, Channel::Reliable, b"hallo client".to_vec());

@@ -42,6 +42,20 @@ struct Instance {
     color: [f32; 4],
 }
 
+/// Fertig vorbereitete Benutzeroberfläche für einen Frame.
+pub(crate) struct UiFrame {
+    pub primitives: Vec<egui::ClippedPrimitive>,
+    pub textures_delta: egui::TexturesDelta,
+    pub pixels_per_point: f32,
+}
+
+/// Was im letzten Frame gezeichnet wurde.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderStats {
+    pub instances: usize,
+    pub draw_calls: usize,
+}
+
 struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -64,6 +78,8 @@ pub(crate) struct Renderer {
     instance_capacity: usize,
     meshes: Vec<GpuMesh>,
     adapter_name: String,
+    ui: egui_wgpu::Renderer,
+    stats: RenderStats,
 }
 
 impl Renderer {
@@ -257,6 +273,8 @@ impl Renderer {
             cache: None,
         });
 
+        let ui = egui_wgpu::Renderer::new(&device, config.format, egui_wgpu::RendererOptions::default());
+
         let instance_capacity = 256;
         let instance_buffer = Self::create_instance_buffer(&device, instance_capacity);
         let depth = Self::create_depth(&device, config.width, config.height);
@@ -277,6 +295,8 @@ impl Renderer {
             instance_capacity,
             meshes: Vec::new(),
             adapter_name,
+            ui,
+            stats: RenderStats::default(),
         }
     }
 
@@ -295,7 +315,7 @@ impl Renderer {
     }
 
     /// Zeichnet einen Frame ins Fenster.
-    pub fn render(&mut self, ctx: &Context) {
+    pub fn render(&mut self, ctx: &Context, ui: Option<&UiFrame>) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -314,12 +334,12 @@ impl Renderer {
             }
         };
         let view = frame.texture.create_view(&Default::default());
-        self.draw(ctx, &view);
+        self.draw(ctx, &view, ui);
         self.queue.present(frame);
     }
 
     /// Zeichnet einen Frame in eine unsichtbare Textur und speichert ihn als PNG.
-    pub fn screenshot(&mut self, ctx: &Context, path: &Path) -> Result<(), String> {
+    pub fn screenshot(&mut self, ctx: &Context, ui: Option<&UiFrame>, path: &Path) -> Result<(), String> {
         let (width, height) = (self.config.width, self.config.height);
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -332,7 +352,7 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        self.draw(ctx, &texture.create_view(&Default::default()));
+        self.draw(ctx, &texture.create_view(&Default::default()), ui);
 
         let unpadded = width * 4;
         let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -385,7 +405,7 @@ impl Renderer {
         image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())
     }
 
-    fn draw(&mut self, ctx: &Context, target: &wgpu::TextureView) {
+    fn draw(&mut self, ctx: &Context, target: &wgpu::TextureView, ui: Option<&UiFrame>) {
         self.upload_new_meshes(ctx.assets.meshes());
 
         let env = &ctx.env;
@@ -480,7 +500,55 @@ impl Renderer {
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &batches);
         }
-        self.queue.submit([encoder.finish()]);
+        self.stats = RenderStats { instances: instances.len(), draw_calls: batches.len() * 2 };
+
+        // Benutzeroberfläche über die 3D-Szene legen.
+        if let Some(ui) = ui {
+            for (id, deltas) in &ui.textures_delta.set {
+                for delta in deltas {
+                    self.ui.update_texture(&self.device, &self.queue, *id, delta);
+                }
+            }
+            let screen = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [self.config.width, self.config.height],
+                pixels_per_point: ui.pixels_per_point,
+            };
+            let extra = self.ui.update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &screen);
+            {
+                let mut pass = encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("ui"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: target,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    })
+                    .forget_lifetime();
+                self.ui.render(&mut pass, &ui.primitives, &screen);
+            }
+            self.queue.submit(extra.into_iter().chain([encoder.finish()]));
+            for id in &ui.textures_delta.free {
+                self.ui.free_texture(id);
+            }
+        } else {
+            self.queue.submit([encoder.finish()]);
+        }
+    }
+
+    pub fn stats(&self) -> RenderStats {
+        self.stats
+    }
+
+    /// VSync an: Bildrate folgt dem Monitor, kein Tearing. Aus: so schnell wie möglich.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.config.present_mode = if vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
+        self.surface.configure(&self.device, &self.config);
     }
 
     fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)]) {
