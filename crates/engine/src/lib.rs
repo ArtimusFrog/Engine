@@ -1,0 +1,24 @@
+//! Engine JN – eigene Spiele-Engine.
+//!
+//! Ein Spiel implementiert [`Game`] und wird mit [`run`] gestartet. Alles, was das
+//! Spiel pro Frame braucht (Szene, Kamera, Eingabe, Zeit), steckt im [`Context`].
+
+mod app;
+pub mod assets;
+pub mod camera;
+pub mod input;
+pub mod mesh;
+mod renderer;
+pub mod scene;
+
+pub use app::{run, Context, EngineConfig, Environment, Game, Time};
+
+/// Alles, was ein Spiel typischerweise braucht, mit einem einzigen `use`.
+pub mod prelude {
+    pub use crate::app::{run, Context, EngineConfig, Environment, Game, Time};
+    pub use crate::assets::{Assets, MeshId};
+    pub use crate::camera::{Camera, FlyController};
+    pub use crate::input::{Input, KeyCode, MouseButton};
+    pub use crate::scene::{Entity, EntityId, Scene, Transform};
+    pub use glam::{vec2, vec3, vec4, Mat4, Quat, Vec2, Vec3, Vec4};
+}
