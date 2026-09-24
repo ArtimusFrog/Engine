@@ -324,8 +324,8 @@ impl Playground {
         let mut action = None;
         ui::left_shade(egui_ctx);
         egui::Area::new(egui::Id::new("hauptmenue")).anchor(Align2::LEFT_CENTER, [70.0, 0.0]).show(egui_ctx, |ui| {
-            ui.label(RichText::new("SPIELPLATZ").size(64.0).strong().color(Color32::WHITE));
-            ui.label(RichText::new("Engine JN · Multiplayer-Prototyp").size(18.0).color(ui::TEXT));
+            ui.label(RichText::new("ENGINE JN").size(64.0).strong().color(Color32::WHITE));
+            ui.label(RichText::new("Fantasy-Insel · Multiplayer").size(18.0).color(ui::TEXT));
             ui.add_space(24.0);
             ui::panel_frame().show(ui, |ui| {
                 ui.set_width(300.0);

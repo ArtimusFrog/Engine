@@ -446,6 +446,12 @@ impl Renderer {
 
     /// Zeichnet einen Frame ins Fenster.
     pub fn render(&mut self, ctx: &Context, ui: Option<&UiFrame>) {
+        // Neue UI-Texturen (Schrift!) sofort hochladen – egui schickt sie nur ein einziges Mal.
+        // Fällt dieses Bild gleich aus (auf dem Mac beim Start häufig), wären sie sonst für
+        // immer verloren und die ganze Oberfläche bliebe unsichtbar.
+        if let Some(ui) = ui {
+            self.upload_ui_textures(ui);
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -680,11 +686,6 @@ impl Renderer {
 
         // Benutzeroberfläche über die 3D-Szene legen.
         if let Some(ui) = ui {
-            for (id, deltas) in &ui.textures_delta.set {
-                for delta in deltas {
-                    self.ui.update_texture(&self.device, &self.queue, *id, delta);
-                }
-            }
             let screen = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
@@ -725,6 +726,15 @@ impl Renderer {
     pub fn set_vsync(&mut self, vsync: bool) {
         self.config.present_mode = if vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
         self.surface.configure(&self.device, &self.config);
+    }
+
+    /// Überträgt neue oder geänderte UI-Texturen (Schrift, Bilder) auf die Grafikkarte.
+    fn upload_ui_textures(&mut self, ui: &UiFrame) {
+        for (id, deltas) in &ui.textures_delta.set {
+            for delta in deltas {
+                self.ui.update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
     }
 
     /// Zeichnet die Stapel und wählt je Mesh die passende Pipeline: im Schatten-Durchgang
