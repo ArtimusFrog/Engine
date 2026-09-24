@@ -50,6 +50,8 @@ struct Part {
     positions: Vec<Vec3>,
     normals: Vec<Vec3>,
     uvs: Vec<[f32; 2]>,
+    /// Grundfarbe des Materials mal Vertex-Farbe (linear), je Eckpunkt.
+    colors: Vec<[f32; 3]>,
     joints: Vec<[u16; 4]>,
     weights: Vec<[f32; 4]>,
     indices: Vec<u32>,
@@ -142,6 +144,19 @@ impl Model {
             }
         }
 
+        // Material 0 ist der Standard für Teile ohne Material.
+        let materials: Vec<MaterialInfo> = std::iter::once(MaterialInfo::default())
+            .chain(document.materials().map(|m| {
+                let pbr = m.pbr_metallic_roughness();
+                MaterialInfo {
+                    image: pbr.base_color_texture().map(|t| t.texture().source().index()),
+                    base_color: pbr.base_color_factor(),
+                    alpha_cutout: m.alpha_mode() == gltf::material::AlphaMode::Mask,
+                    double_sided: m.double_sided(),
+                }
+            }))
+            .collect();
+
         let mut parts = Vec::new();
         for node in document.nodes() {
             let Some(mesh) = node.mesh() else { continue };
@@ -154,13 +169,20 @@ impl Model {
                 let joints: Vec<[u16; 4]> = reader.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
                 let weights = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
                 let indices = reader.read_indices().map(|i| i.into_u32().collect()).unwrap_or_else(|| (0..count as u32).collect());
+                let material = primitive.material().index().map_or(0, |i| i + 1);
+                let base = materials.get(material).map_or([1.0; 4], |m| m.base_color);
+                let colors = match reader.read_colors(0) {
+                    Some(c) => c.into_rgb_f32().map(|c| [c[0] * base[0], c[1] * base[1], c[2] * base[2]]).collect(),
+                    None => vec![[base[0], base[1], base[2]]; count],
+                };
                 parts.push(Part {
-                    material: primitive.material().index().map_or(0, |i| i + 1),
+                    material,
                     node: node.index(),
                     skinned: node.skin().is_some() && joints.len() == count,
                     positions,
                     normals,
                     uvs,
+                    colors,
                     joints,
                     weights,
                     indices,
@@ -228,19 +250,6 @@ impl Model {
                 }
             }
         }
-
-        // Material 0 ist der Standard für Teile ohne Material.
-        let materials = std::iter::once(MaterialInfo::default())
-            .chain(document.materials().map(|m| {
-                let pbr = m.pbr_metallic_roughness();
-                MaterialInfo {
-                    image: pbr.base_color_texture().map(|t| t.texture().source().index()),
-                    base_color: pbr.base_color_factor(),
-                    alpha_cutout: m.alpha_mode() == gltf::material::AlphaMode::Mask,
-                    double_sided: m.double_sided(),
-                }
-            }))
-            .collect();
 
         Ok(Model { nodes, parts, joints, clips, images, materials, order })
     }
@@ -347,10 +356,6 @@ impl Model {
                 let normal = Mat3::from_mat4(m).inverse().transpose();
                 append_part(mesh, part, |p| m.transform_point3(p), |n| (normal * n).normalize_or_zero());
             }
-            let color = [material.base_color[0], material.base_color[1], material.base_color[2]];
-            for v in &mut mesh.vertices[base..] {
-                v.color = color;
-            }
         }
         meshes.into_iter().map(|(_, mesh)| mesh).collect()
     }
@@ -416,7 +421,7 @@ fn append_part(mesh: &mut MeshData, part: &Part, position: impl Fn(Vec3) -> Vec3
         mesh.vertices.push(Vertex {
             position: position(part.positions[i]).into(),
             normal: normal(part.normals[i]).into(),
-            color: [1.0; 3],
+            color: part.colors[i],
             uv: part.uvs[i],
         });
     }
@@ -584,7 +589,7 @@ impl Animator {
                     mesh.vertices.push(Vertex {
                         position: m.transform_point3(part.positions[i]).into(),
                         normal: (Mat3::from_mat4(m) * part.normals[i]).normalize_or_zero().into(),
-                        color: [1.0; 3],
+                        color: part.colors[i],
                         uv: part.uvs[i],
                     });
                 }
@@ -666,5 +671,44 @@ mod file_tests {
         assert!(!meshes.is_empty());
         assert!(meshes.iter().all(|m| m.texture == Some(textures[0])));
         assert!(meshes.iter().map(|m| m.vertices.len()).sum::<usize>() > 20);
+    }
+
+    /// So exportiert Blender flach eingefärbte Modelle: Materialfarbe plus Vertex-Farben.
+    #[test]
+    fn materialfarbe_und_vertexfarben_uebernehmen() {
+        let dir = std::env::temp_dir().join(format!("engine_farbtest_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut bin = Vec::new();
+        for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.5, 0.25], [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]] {
+            for x in v {
+                bin.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        std::fs::write(dir.join("dreieck.bin"), &bin).unwrap();
+        let json = r#"{
+            "asset": {"version": "2.0"},
+            "scene": 0, "scenes": [{"nodes": [0]}],
+            "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "material": 0}]}],
+            "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.5, 1.0, 1.0, 1.0]}, "doubleSided": true}],
+            "buffers": [{"uri": "dreieck.bin", "byteLength": 72}],
+            "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+                {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+            ]
+        }"#;
+        std::fs::write(dir.join("dreieck.gltf"), json).unwrap();
+
+        let model = Model::from_file(dir.join("dreieck.gltf")).expect("Dreieck nicht lesbar");
+        let meshes = model.static_meshes(&[]);
+        assert_eq!(meshes.len(), 1);
+        assert!(meshes[0].double_sided);
+        assert_eq!(meshes[0].vertices[0].color, [0.5, 0.5, 0.25]);
+        assert_eq!(meshes[0].vertices[2].color, [0.0, 0.0, 1.0]);
+        // Animierte Modelle bekommen dieselben Farben.
+        let skinned = Animator::new(Arc::new(model)).skinned_mesh(None);
+        assert_eq!(skinned.vertices[1].color, [0.5, 1.0, 1.0]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

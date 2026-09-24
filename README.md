@@ -97,6 +97,12 @@ Die Engine lädt glTF-Modelle (`.glb`) mit Skelett, Textur und Animationen
 
 Test-Schalter für Screenshots: `--figur barbar`, `--kamera-vorne`, `--demo-hacken`.
 
+## Eigene Assets (Blender)
+
+Modelle entstehen in Blender, siehe [art/README.md](art/README.md). Zum Ansehen ein Modell oder
+eine Blender-Quelle auf `Asset ansehen.bat` ziehen: Der Betrachter zeigt es im Licht des Spiels
+neben einer 1,8-m-Figur und aktualisiert sich bei jeder Änderung selbst.
+
 ## Tag und Nacht
 
 Ein Spieltag dauert etwa 20 Minuten (eine Stunde pro Minute, nachts doppelt so schnell).

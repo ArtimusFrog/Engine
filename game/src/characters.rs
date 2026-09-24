@@ -52,6 +52,7 @@ pub enum Action {
 /// Die sichtbare, animierte Figur eines Spielers.
 pub struct Puppet {
     animator: Animator,
+    figure: EntityId,
     texture: TextureId,
     mesh: MeshId,
     axe: EntityId,
@@ -92,7 +93,15 @@ impl Puppet {
         axe.visible = false;
         let axe = ctx.scene.spawn(axe);
 
-        Puppet { animator, texture, mesh, axe, last_position: None, speed: 0.0, acting: false, axe_timer: 0.0 }
+        Puppet { animator, figure, texture, mesh, axe, last_position: None, speed: 0.0, acting: false, axe_timer: 0.0 }
+    }
+
+    /// Blendet die ganze Figur ein oder aus (z. B. Vergleichsfigur im Asset-Betrachter).
+    pub fn set_visible(&self, ctx: &mut Context, visible: bool) {
+        ctx.scene.get_mut(self.figure).visible = visible;
+        if !visible {
+            ctx.scene.get_mut(self.axe).visible = false;
+        }
     }
 
     /// Spielt eine einmalige Aktion ab (Hacken, Werfen).

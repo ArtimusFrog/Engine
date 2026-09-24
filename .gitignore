@@ -1,3 +1,5 @@
 /target
 *.pdb
 /screenshots
+*.blend1
+__pycache__/

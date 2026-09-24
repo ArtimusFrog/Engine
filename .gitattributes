@@ -4,3 +4,6 @@
 *.ogg binary
 *.wav binary
 *.bat text eol=crlf
+*.bin binary
+*.blend binary
+*.jpg binary

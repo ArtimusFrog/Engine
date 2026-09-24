@@ -1,6 +1,7 @@
 // Im Release-Build kein schwarzes Konsolenfenster neben dem Spiel öffnen.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod blender;
 mod characters;
 mod client;
 mod island;
@@ -11,6 +12,7 @@ mod server;
 mod session;
 mod settings;
 mod ui;
+mod viewer;
 mod world;
 
 use engine::prelude::*;
@@ -43,6 +45,11 @@ fn parse_mode(args: &[String]) -> Option<Mode> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // `--ansehen <datei.gltf>`: nur den Asset-Betrachter öffnen.
+    if let Some(path) = args.iter().position(|a| a == "--ansehen").and_then(|i| args.get(i + 1)) {
+        run(EngineConfig { title: "Asset-Betrachter".into(), ..Default::default() }, viewer::Viewer::new(path.into()));
+        return;
+    }
     let mode = parse_mode(&args);
     let headless = matches!(mode, Some(Mode::Server { .. }));
     let game = Playground::new(mode, args.iter().any(|a| a == "--autopilot"));
