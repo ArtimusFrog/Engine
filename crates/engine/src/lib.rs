@@ -28,7 +28,7 @@ pub mod prelude {
     pub use crate::app::{run, run_headless, Context, Display, EngineConfig, Environment, Game, PointLight, Time};
     pub use egui;
     pub use crate::assets::{Assets, Image, MeshId, TextureId};
-    pub use crate::model::{Animator, Model};
+    pub use crate::model::{Animator, MaterialInfo, Model};
     pub use crate::camera::{Camera, FlyController, OrbitController};
     pub use crate::daycycle::{DayCycle, DayPhase};
     pub use crate::input::{Input, KeyCode, MouseButton};

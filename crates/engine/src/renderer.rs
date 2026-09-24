@@ -72,6 +72,8 @@ struct GpuMesh {
     index_count: u32,
     version: u64,
     texture: Option<crate::assets::TextureId>,
+    double_sided: bool,
+    alpha_cutout: bool,
 }
 
 pub(crate) struct Renderer {
@@ -82,6 +84,8 @@ pub(crate) struct Renderer {
     depth: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
+    double_sided_pipeline: wgpu::RenderPipeline,
+    shadow_cutout_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
@@ -295,29 +299,68 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("basic"),
-            layout: Some(&pipeline_layout),
+        // Normal nur Vorderseiten; beidseitige Meshes (Blätter) ohne Rückseiten-Culling.
+        let main_pipeline = |cull_mode: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("basic"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_buffers,
+                },
+                primitive: wgpu::PrimitiveState { cull_mode, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(config.format.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = main_pipeline(Some(wgpu::Face::Back));
+        let double_sided_pipeline = main_pipeline(None);
+
+        // Schatten ausgeschnittener Flächen: Textur lesen und durchsichtige Pixel weglassen.
+        let shadow_cutout_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow cutout"),
+            bind_group_layouts: &[Some(&shadow_layout), Some(&texture_layout)],
+            immediate_size: 0,
+        });
+        let shadow_cutout_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow cutout"),
+            layout: Some(&shadow_cutout_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
+                entry_point: Some("vs_shadow_uv"),
                 compilation_options: Default::default(),
                 buffers: &vertex_buffers,
             },
-            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
-                bias: Default::default(),
+                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
             }),
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some("fs_shadow_cutout"),
                 compilation_options: Default::default(),
-                targets: &[Some(config.format.into())],
+                targets: &[],
             }),
             multiview_mask: None,
             cache: None,
@@ -366,6 +409,8 @@ impl Renderer {
             depth,
             pipeline,
             sky_pipeline,
+            double_sided_pipeline,
+            shadow_cutout_pipeline,
             shadow_pipeline,
             globals_buffer,
             globals_bind_group,
@@ -582,7 +627,7 @@ impl Renderer {
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches, false);
+            self.draw_batches(&mut pass, &batches, true);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -611,7 +656,7 @@ impl Renderer {
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches, true);
+            self.draw_batches(&mut pass, &batches, false);
         }
         self.stats = RenderStats { instances: instances.len(), draw_calls: batches.len() * 2 };
 
@@ -664,13 +709,24 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Zeichnet die Stapel. Mit `textured` wird pro Mesh die passende Textur gebunden
-    /// (nicht im Schatten-Durchgang, der nur Tiefe braucht).
-    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], textured: bool) {
+    /// Zeichnet die Stapel und wählt je Mesh die passende Pipeline: im Schatten-Durchgang
+    /// brauchen nur Ausschnitt-Meshes (Blätter) ihre Textur, im Hauptdurchgang alle.
+    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], shadow: bool) {
+        let mut current: Option<*const wgpu::RenderPipeline> = None;
         for (mesh, instances) in batches {
             let mesh = &self.meshes[*mesh];
             if mesh.index_count == 0 {
                 continue;
+            }
+            let (pipeline, textured) = match (shadow, mesh.alpha_cutout, mesh.double_sided) {
+                (true, true, _) => (&self.shadow_cutout_pipeline, true),
+                (true, false, _) => (&self.shadow_pipeline, false),
+                (false, _, true) => (&self.double_sided_pipeline, true),
+                (false, _, false) => (&self.pipeline, true),
+            };
+            if current != Some(pipeline as *const _) {
+                pass.set_pipeline(pipeline);
+                current = Some(pipeline as *const _);
             }
             if textured {
                 let texture = mesh.texture.and_then(|t| self.textures.get(t.0 as usize)).unwrap_or(&self.white_texture);
@@ -703,6 +759,8 @@ impl Renderer {
                     gpu.index_count = mesh.indices.len() as u32;
                     gpu.version = slot.version;
                     gpu.texture = mesh.texture;
+                    gpu.double_sided = mesh.double_sided;
+                    gpu.alpha_cutout = mesh.alpha_cutout;
                     continue;
                 }
             }
@@ -724,6 +782,8 @@ impl Renderer {
                 index_count: mesh.indices.len() as u32,
                 version: slot.version,
                 texture: mesh.texture,
+                double_sided: mesh.double_sided,
+                alpha_cutout: mesh.alpha_cutout,
             };
             if index < self.meshes.len() {
                 self.meshes[index] = gpu;

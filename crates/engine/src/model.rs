@@ -44,6 +44,7 @@ pub struct Node {
 /// Ein Stück Geometrie, das an einem Knoten hängt.
 #[derive(Clone, Debug)]
 struct Part {
+    material: usize,
     node: usize,
     skinned: bool,
     positions: Vec<Vec3>,
@@ -78,6 +79,23 @@ pub struct Clip {
     channels: Vec<Channel>,
 }
 
+/// Oberfläche eines Modellteils, wie sie in der glTF-Datei steht.
+#[derive(Clone, Copy, Debug)]
+pub struct MaterialInfo {
+    /// Index in [`Model::images`] für die Grundfarbe.
+    pub image: Option<usize>,
+    /// Grundfarbe (linear RGBA), wird mit der Textur multipliziert.
+    pub base_color: [f32; 4],
+    pub alpha_cutout: bool,
+    pub double_sided: bool,
+}
+
+impl Default for MaterialInfo {
+    fn default() -> Self {
+        MaterialInfo { image: None, base_color: [1.0; 4], alpha_cutout: false, double_sided: false }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Model {
     pub nodes: Vec<Node>,
@@ -86,6 +104,8 @@ pub struct Model {
     joints: Vec<(usize, Mat4)>,
     pub clips: Vec<Clip>,
     pub images: Vec<Image>,
+    /// Materialien (Index 0 = Standard, danach wie in der Datei).
+    pub materials: Vec<MaterialInfo>,
     /// Reihenfolge, in der Knoten ausgewertet werden (Eltern vor Kindern).
     order: Vec<usize>,
 }
@@ -94,7 +114,17 @@ impl Model {
     /// Lädt eine glTF-Datei aus dem Speicher (.glb mit eingebetteten Daten).
     pub fn from_glb(bytes: &[u8]) -> Result<Model, String> {
         let (document, buffers, images) = gltf::import_slice(bytes).map_err(|e| format!("glTF nicht lesbar: {e}"))?;
+        Self::from_import(document, buffers, images)
+    }
 
+    /// Lädt eine glTF-Datei von der Festplatte (.gltf mit .bin und Bildern daneben, oder .glb).
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Model, String> {
+        let path = path.as_ref();
+        let (document, buffers, images) = gltf::import(path).map_err(|e| format!("{} nicht lesbar: {e}", path.display()))?;
+        Self::from_import(document, buffers, images)
+    }
+
+    fn from_import(document: gltf::Document, buffers: Vec<gltf::buffer::Data>, images: Vec<gltf::image::Data>) -> Result<Model, String> {
         let mut nodes: Vec<Node> = document
             .nodes()
             .map(|n| {
@@ -125,6 +155,7 @@ impl Model {
                 let weights = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
                 let indices = reader.read_indices().map(|i| i.into_u32().collect()).unwrap_or_else(|| (0..count as u32).collect());
                 parts.push(Part {
+                    material: primitive.material().index().map_or(0, |i| i + 1),
                     node: node.index(),
                     skinned: node.skin().is_some() && joints.len() == count,
                     positions,
@@ -198,7 +229,20 @@ impl Model {
             }
         }
 
-        Ok(Model { nodes, parts, joints, clips, images, order })
+        // Material 0 ist der Standard für Teile ohne Material.
+        let materials = std::iter::once(MaterialInfo::default())
+            .chain(document.materials().map(|m| {
+                let pbr = m.pbr_metallic_roughness();
+                MaterialInfo {
+                    image: pbr.base_color_texture().map(|t| t.texture().source().index()),
+                    base_color: pbr.base_color_factor(),
+                    alpha_cutout: m.alpha_mode() == gltf::material::AlphaMode::Mask,
+                    double_sided: m.double_sided(),
+                }
+            }))
+            .collect();
+
+        Ok(Model { nodes, parts, joints, clips, images, materials, order })
     }
 
     pub fn node(&self, name: &str) -> Option<usize> {
@@ -248,6 +292,67 @@ impl Model {
             append_part(&mut mesh, part, |p| local.transform_point3(p), |n| (Mat3::from_mat4(local) * n).normalize_or_zero());
         }
         (!mesh.vertices.is_empty()).then_some(mesh)
+    }
+
+    /// Legt die Bilder des Modells als Texturen an (einmal pro `prefix`) und liefert
+    /// deren IDs in der Reihenfolge von [`images`](Self::images).
+    pub fn register_textures(&self, assets: &mut crate::assets::Assets, prefix: &str) -> Vec<TextureId> {
+        self.images.iter().enumerate().map(|(i, image)| assets.named_texture(&format!("{prefix}#{i}"), || image.clone())).collect()
+    }
+
+    /// Unbewegliches Modell (Baum, Fels, Gebäude) in Ruhehaltung – ein Mesh je Material,
+    /// damit jedes seine eigene Textur, Beidseitigkeit und Ausschnitt-Maske behält.
+    /// `textures` stammen aus [`register_textures`](Self::register_textures).
+    pub fn static_meshes(&self, textures: &[TextureId]) -> Vec<MeshData> {
+        let mut globals = Vec::new();
+        self.global_matrices(&self.rest_pose(), &mut globals);
+        let joint_matrices: Vec<Mat4> = self.joints.iter().map(|&(node, inverse)| globals[node] * inverse).collect();
+
+        let mut meshes: Vec<(usize, MeshData)> = Vec::new();
+        for part in &self.parts {
+            let material = self.materials.get(part.material).copied().unwrap_or_default();
+            let index = match meshes.iter().position(|(m, _)| *m == part.material) {
+                Some(index) => index,
+                None => {
+                    meshes.push((
+                        part.material,
+                        MeshData {
+                            texture: material.image.and_then(|i| textures.get(i).copied()),
+                            double_sided: material.double_sided,
+                            alpha_cutout: material.alpha_cutout,
+                            ..Default::default()
+                        },
+                    ));
+                    meshes.len() - 1
+                }
+            };
+            let mesh = &mut meshes[index].1;
+            let base = mesh.vertices.len();
+            if part.skinned {
+                // In Ruhehaltung genügt die Matrix des stärksten Gelenks je Eckpunkt.
+                let joint = |i: usize| {
+                    let (j, w) = (part.joints[i], part.weights[i]);
+                    let strongest = (0..4).max_by(|&a, &b| w[a].total_cmp(&w[b])).unwrap_or(0);
+                    joint_matrices.get(j[strongest] as usize).copied().unwrap_or(Mat4::IDENTITY)
+                };
+                append_part(mesh, part, |p| p, |n| n);
+                for i in 0..part.positions.len() {
+                    let m = joint(i);
+                    let v = &mut mesh.vertices[base + i];
+                    v.position = m.transform_point3(part.positions[i]).into();
+                    v.normal = (Mat3::from_mat4(m) * part.normals[i]).normalize_or_zero().into();
+                }
+            } else {
+                let m = globals[part.node];
+                let normal = Mat3::from_mat4(m).inverse().transpose();
+                append_part(mesh, part, |p| m.transform_point3(p), |n| (normal * n).normalize_or_zero());
+            }
+            let color = [material.base_color[0], material.base_color[1], material.base_color[2]];
+            for v in &mut mesh.vertices[base..] {
+                v.color = color;
+            }
+        }
+        meshes.into_iter().map(|(_, mesh)| mesh).collect()
     }
 
     /// Namen aller Knoten mit starrer Geometrie (Anbauteile wie Helm, Waffen, Schilde).
@@ -538,5 +643,28 @@ mod tests {
         let model = Model::from_glb(BARBARIAN).unwrap();
         let axe = model.extract_part("1H_Axe", None).expect("Keine Axt gefunden");
         assert!(axe.vertices.len() > 20);
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn gltf_mit_externen_dateien_laden_und_backen() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../game/assets/characters/axe_1handed.gltf");
+        let model = Model::from_file(path).expect("Axt nicht lesbar");
+        assert_eq!(model.images.len(), 1, "Textur aus der PNG-Datei fehlt");
+        assert!(model.materials.len() >= 2, "Material aus der Datei fehlt");
+
+        let mut assets = crate::assets::Assets::new();
+        let textures = model.register_textures(&mut assets, "axt");
+        let again = model.register_textures(&mut assets, "axt");
+        assert_eq!(textures, again, "Texturen dürfen nicht doppelt angelegt werden");
+
+        let meshes = model.static_meshes(&textures);
+        assert!(!meshes.is_empty());
+        assert!(meshes.iter().all(|m| m.texture == Some(textures[0])));
+        assert!(meshes.iter().map(|m| m.vertices.len()).sum::<usize>() > 20);
     }
 }

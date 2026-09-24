@@ -111,8 +111,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 }
 
 // Schatten-Durchgang: nur Tiefe aus Sicht der Sonne (Wind bewegt auch den Schatten).
-@vertex
-fn vs_shadow(in: VertexIn) -> @builtin(position) vec4<f32> {
+fn shadow_clip(in: VertexIn) -> vec4<f32> {
     let model = mat4x4<f32>(in.m0, in.m1, in.m2, in.m3);
     var world = (model * vec4<f32>(in.position, 1.0)).xyz;
     if (in.material.x == MAT_FOLIAGE) {
@@ -123,6 +122,32 @@ fn vs_shadow(in: VertexIn) -> @builtin(position) vec4<f32> {
         return vec4<f32>(0.0, 0.0, -1.0, 1.0);
     }
     return g.light_view_proj * vec4<f32>(world, 1.0);
+}
+
+@vertex
+fn vs_shadow(in: VertexIn) -> @builtin(position) vec4<f32> {
+    return shadow_clip(in);
+}
+
+struct ShadowOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+// Schatten für Ausschnitt-Meshes (Blätter mit Löchern): die Textur entscheidet, wo Schatten fällt.
+@vertex
+fn vs_shadow_uv(in: VertexIn) -> ShadowOut {
+    var out: ShadowOut;
+    out.clip = shadow_clip(in);
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_shadow_cutout(in: ShadowOut) {
+    if (textureSample(albedo_texture, albedo_sampler, in.uv).a < 0.5) {
+        discard;
+    }
 }
 
 // 1 = voll beleuchtet, 0 = im Schatten. Weiche Kanten durch 3×3-Mittelung (PCF).
@@ -256,11 +281,20 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Textur vor allen Verzweigungen lesen (WGSL verlangt einheitlichen Kontrollfluss).
-    let albedo = in.color * textureSample(albedo_texture, albedo_sampler, in.uv).rgb;
+    let texel = textureSample(albedo_texture, albedo_sampler, in.uv);
+    // Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
+    if (texel.a < 0.5) {
+        discard;
+    }
+    let albedo = in.color * texel.rgb;
     let kind = in.material.x;
     var n = normalize(in.normal);
+    // Beidseitige Flächen: von hinten gesehen zeigt die Normale zum Betrachter.
+    if (!front) {
+        n = -n;
+    }
     let view = normalize(g.camera_pos.xyz - in.world_pos);
 
     if (kind == MAT_WATER) {

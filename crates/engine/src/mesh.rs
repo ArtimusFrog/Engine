@@ -30,6 +30,10 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     /// Textur für das ganze Mesh; ohne Textur zählen nur die Farben.
     pub texture: Option<crate::assets::TextureId>,
+    /// Beide Seiten der Dreiecke zeichnen (Blätter, Gras, dünne Flächen).
+    pub double_sided: bool,
+    /// Pixel mit Textur-Alpha unter 0,5 weglassen (ausgeschnittene Blätter, Zäune).
+    pub alpha_cutout: bool,
 }
 
 impl MeshData {
