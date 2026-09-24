@@ -53,7 +53,7 @@ impl AnimalKind {
             AnimalKind::Fox => Traits { walk: 2.2, run: 9.5, flee: 10.0, calm: 26.0, height: 0.45, stride: (1.0, 1.0) },
             AnimalKind::Deer => Traits { walk: 1.8, run: 11.0, flee: 14.0, calm: 32.0, height: 1.1, stride: (1.0, 1.0) },
             // Bären sind gemächlich und lassen Spieler nah heran, bevor sie davontrotten.
-            AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (0.9, 1.5) },
+            AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (0.75, 1.55) },
         }
     }
 
@@ -63,7 +63,7 @@ impl AnimalKind {
             AnimalKind::Hare => "hase",
             AnimalKind::Fox => "fuchs",
             AnimalKind::Deer => "hirsch",
-            AnimalKind::Bear => "baer",
+            AnimalKind::Bear => "baer_realistisch",
         }
     }
 
