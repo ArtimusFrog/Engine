@@ -71,8 +71,9 @@ def neu_bauen():
             bpy.ops.object.mode_set(mode="OBJECT")
         werkstatt.neu()
         runpy.run_path(str(QUELLE), run_name="__main__")
-        ziel = (ZIEL / QUELLE.relative_to(MODELLE)).with_suffix(".gltf")
-        werkstatt.exportieren(ziel)
+        # Nur echte Modelle (art/modelle/) gehen ins Spiel; Vorschau-Skripte (art/vorschau/) nicht.
+        if MODELLE in QUELLE.parents:
+            werkstatt.exportieren((ZIEL / QUELLE.relative_to(MODELLE)).with_suffix(".gltf"))
     except Exception:
         fehler = traceback.format_exc()
         print(fehler)
@@ -99,7 +100,8 @@ def neu_bauen():
     _zustand["erstes_mal"] = False
 
     dauer = time.perf_counter() - beginn
-    _hinweis(f"LIVE: {QUELLE.name} – neu gebaut in {dauer:.1f} s, exportiert. Leertaste: Animation abspielen.")
+    exportiert = ", exportiert" if MODELLE in QUELLE.parents else " (nur Vorschau)"
+    _hinweis(f"LIVE: {QUELLE.name} – neu gebaut in {dauer:.1f} s{exportiert}. Leertaste: Animation abspielen.")
     print(f"LIVE neu gebaut: {QUELLE.name} ({dauer:.1f} s)")
 
 
@@ -117,8 +119,8 @@ def _pruefen():
 
 if QUELLE is None or not QUELLE.exists():
     print("Blender live: Welches Modell? Pfad nach -- angeben, z. B. art/modelle/tiere/baer.py")
-elif MODELLE not in QUELLE.parents:
-    print(f"Blender live: {QUELLE} liegt nicht unter art/modelle/")
+elif (REPO / "art") not in QUELLE.parents:
+    print(f"Blender live: {QUELLE} liegt nicht unter art/")
 else:
     # Erst bauen, wenn das Fenster steht.
     bpy.app.timers.register(_pruefen, first_interval=0.5, persistent=True)

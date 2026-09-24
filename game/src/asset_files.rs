@@ -121,7 +121,7 @@ struct Rules {
 fn rules_for(path: &Path) -> Option<Rules> {
     let folder = path.parent()?.file_name()?.to_str()?;
     match folder {
-        "natur" => Some(Rules { max_triangles: 2000, required_clips: &[] }),
+        "natur" => Some(Rules { max_triangles: 5000, required_clips: &[] }),
         "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"] }),
         "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
         _ => None,

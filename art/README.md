@@ -34,7 +34,7 @@ art/modelle/tiere/fuchs.blend → game/assets/tiere/fuchs.gltf
 | Richtung | Vorderseite schaut in Blender nach **-Y** (Ansicht „Vorne“, Ziffernblock 1). |
 | Stil | Low-Poly, flach schattiert, Farben nur aus der Palette in `werkstatt.py`. |
 | Materialien | Eine Grundfarbe je Material, keine Texturen nötig. Beidseitig nur für dünne Flächen (Blätter, Stoff). |
-| Größe | Bäume ≤ ~1500 Dreiecke, Deko ≤ ~300, Figuren/Tiere ≤ ~3000. |
+| Größe | Bäume ≤ 5000 Dreiecke (detaillierter Polygon-Stil), Deko ≤ ~500, Figuren/Tiere ≤ 3000. |
 | Animationen | Eine Aktion je Clip, Namen wie `Idle`, `Laufen`, `Rennen`, `Angriff`, `Tod`. Schleifen enden in der Startpose. 30 Bilder/s. |
 | Knochen | Ein Skelett je Modell, Befestigungspunkte heißen `handslot.r`, `handslot.l`, `kopf`. |
 | Namen | Dateien klein, mit Unterstrich: `eiche_gross.py`, `fuchs.blend`. |
