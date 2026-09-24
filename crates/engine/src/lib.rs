@@ -5,6 +5,7 @@
 
 mod app;
 pub mod assets;
+pub mod audio;
 pub mod camera;
 pub mod daycycle;
 pub mod input;
@@ -28,6 +29,7 @@ pub mod prelude {
     pub use crate::app::{run, run_headless, Context, Display, EngineConfig, Environment, Game, PointLight, Time};
     pub use egui;
     pub use crate::assets::{Assets, Image, Lod, MeshId, TextureId};
+    pub use crate::audio::{synth, Audio, Bus, LoopId, Play, SoundBuffer, SoundId};
     pub use crate::model::{Animator, MaterialInfo, Model};
     pub use crate::camera::{Camera, FlyController, OrbitController};
     pub use crate::daycycle::{DayCycle, DayPhase};

@@ -13,6 +13,7 @@ mod protocol;
 mod server;
 mod save;
 mod session;
+mod sounds;
 mod settings;
 mod ui;
 mod viewer;
@@ -52,6 +53,14 @@ fn parse_mode(args: &[String]) -> Option<Mode> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // `--klaenge-exportieren <ordner>`: erzeugte Klänge als WAV speichern (zum Anhören).
+    if let Some(dir) = args.iter().position(|a| a == "--klaenge-exportieren").and_then(|i| args.get(i + 1)) {
+        match sounds::export_all(std::path::Path::new(dir)) {
+            Ok(files) => println!("{} Klänge gespeichert in {dir}", files.len()),
+            Err(e) => eprintln!("Speichern fehlgeschlagen: {e}"),
+        }
+        return;
+    }
     // `--ansehen <datei.gltf>`: nur den Asset-Betrachter öffnen.
     if let Some(path) = args.iter().position(|a| a == "--ansehen").and_then(|i| args.get(i + 1)) {
         run(EngineConfig { title: "Asset-Betrachter".into(), ..Default::default() }, viewer::Viewer::new(path.into()));

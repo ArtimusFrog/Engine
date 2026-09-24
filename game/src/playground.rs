@@ -6,6 +6,7 @@ use engine::prelude::*;
 use crate::protocol::{PlayerInput, DEFAULT_PORT, MAX_NAME_CHARS};
 use crate::session::{Mode, Session};
 use crate::settings::Settings;
+use crate::sounds::Sounds;
 use crate::ui;
 use crate::world::World;
 
@@ -52,6 +53,8 @@ pub struct Playground {
     local_ip: Option<std::net::IpAddr>,
     /// Nur zum Testen: Figur hackt regelmäßig in die Luft.
     demo_chop: bool,
+    /// Geräusche und Klangkulisse (nur mit Fenster).
+    sounds: Option<Sounds>,
 }
 
 impl Playground {
@@ -79,6 +82,7 @@ impl Playground {
             themed: false,
             local_ip: None,
             demo_chop: false,
+            sounds: None,
         }
     }
 
@@ -434,6 +438,18 @@ impl Playground {
                 ui.label("VSync");
                 ui.checkbox(&mut s.vsync, "");
                 ui.end_row();
+
+                let percent = |value: f64, _: std::ops::RangeInclusive<usize>| format!("{:.0} %", value * 100.0);
+                for (label, value) in [
+                    ("Lautstärke", &mut s.volume_master),
+                    ("Effekte", &mut s.volume_effects),
+                    ("Umgebung", &mut s.volume_ambient),
+                    ("Musik", &mut s.volume_music),
+                ] {
+                    ui.label(label);
+                    ui.add(egui::Slider::new(value, 0.0..=1.0).custom_formatter(percent));
+                    ui.end_row();
+                }
             });
             ui.add_space(10.0);
             if ui::big_button(ui, "Zurück").clicked() {
@@ -582,6 +598,9 @@ fn explain_disconnect(reason: &str) -> String {
 
 impl Game for Playground {
     fn init(&mut self, ctx: &mut Context) {
+        if !ctx.is_headless() {
+            self.sounds = Some(Sounds::new(ctx));
+        }
         self.apply_settings(ctx);
         // Nur zum Testen: Figur für diesen Start festlegen (`--figur barbar`).
         let args: Vec<String> = std::env::args().collect();
@@ -671,6 +690,16 @@ impl Game for Playground {
             world.update_visuals(ctx);
         }
         self.update_camera(ctx);
+        if let Some(sounds) = &mut self.sounds {
+            if let Some(session) = &mut self.session {
+                let inventory = session.local_inventory();
+                let items = session.local_player().map(|_| inventory.wood + inventory.stone);
+                sounds.update(ctx, session.world_mut(), items);
+            } else if let Some(world) = &mut self.menu_world {
+                world.sound_events.clear();
+                sounds.menu(ctx);
+            }
+        }
         self.update_aim(ctx);
         ctx.status = self.status_text();
         if let Some(session) = &self.session {

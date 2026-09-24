@@ -67,6 +67,14 @@ impl Resource {
     }
 }
 
+/// Etwas Hörbares ist passiert (nur mit Fenster gesammelt, das Spiel spielt es ab).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SoundEvent {
+    Hit { kind: ResourceKind, at: Vec3, finished: bool },
+    Throw { player: PlayerId },
+    Step { at: Vec3, sand: bool, running: bool },
+}
+
 pub struct World {
     pub players: HashMap<PlayerId, Avatar>,
     /// Geworfene Bälle, die übers Netzwerk abgeglichen werden.
@@ -87,6 +95,10 @@ pub struct World {
     effects_rng: Rng,
     firefly_timer: f32,
     capsule: MeshId,
+    /// Geräusche seit dem letzten Bild (siehe `SoundEvent`).
+    pub sound_events: Vec<SoundEvent>,
+    /// Zurückgelegte Strecke seit dem letzten Schritt je Spieler.
+    stride: HashMap<PlayerId, (Vec3, f32)>,
 }
 
 impl World {
@@ -110,6 +122,8 @@ impl World {
             effects_rng: Rng::new(7),
             firefly_timer: 0.0,
             capsule,
+            sound_events: Vec::new(),
+            stride: HashMap::new(),
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -179,6 +193,9 @@ impl World {
     pub fn play_action(&mut self, player: PlayerId, action: Action) {
         if let Some(puppet) = self.puppets.get_mut(&player) {
             puppet.act(action);
+            if action == Action::Throw {
+                self.sound_events.push(SoundEvent::Throw { player });
+            }
         }
     }
 
@@ -264,6 +281,10 @@ impl World {
         if effects {
             resource.shake = 0.35;
             hit_particles(ctx, &resource.spec, health == 0);
+            if !ctx.is_headless() {
+                let (kind, at) = (resource.spec.kind, resource.spec.transform.position);
+                self.sound_events.push(SoundEvent::Hit { kind, at, finished: health == 0 });
+            }
         }
         if health == 0 {
             resource.regrows_at = Some(ctx.time.tick + RESPAWN_TICKS);
@@ -276,6 +297,9 @@ impl World {
         if let Some(resource) = self.resources.get_mut(&id).filter(|r| r.is_present()) {
             resource.shake = 0.35;
             hit_particles(ctx, &resource.spec, false);
+            if !ctx.is_headless() {
+                self.sound_events.push(SoundEvent::Hit { kind: resource.spec.kind, at: resource.spec.transform.position, finished: false });
+            }
         }
     }
 
@@ -340,7 +364,21 @@ impl World {
             entity.transform.rotation = entity.transform.rotation.slerp(target, blend);
             let position = entity.transform.position;
             if let Some(puppet) = self.puppets.get_mut(id) {
-                puppet.update(ctx, position, self.terrain.height_at(position.x, position.z));
+                let ground = self.terrain.height_at(position.x, position.z);
+                puppet.update(ctx, position, ground);
+                // Schritte: je nach Tempo alle gut ein bis zwei Meter, nur mit Bodenkontakt.
+                let (last, walked) = self.stride.entry(*id).or_insert((position, 0.0));
+                let moved = vec2(position.x - last.x, position.z - last.z).length();
+                *last = position;
+                let on_ground = position.y - 0.9 - ground < 0.3;
+                if on_ground && moved < 1.0 {
+                    *walked += moved;
+                }
+                let running = moved / dt.max(1e-4) > 6.5;
+                if *walked > if running { 1.7 } else { 1.05 } {
+                    *walked = 0.0;
+                    self.sound_events.push(SoundEvent::Step { at: vec3(position.x, ground, position.z), sand: ground < 2.4, running });
+                }
             }
         }
         for resource in self.resources.values_mut().filter(|r| r.shake > 0.0) {

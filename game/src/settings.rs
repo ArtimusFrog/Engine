@@ -22,6 +22,11 @@ pub struct Settings {
     pub vsync: bool,
     /// Zuletzt benutzte Server-Adresse.
     pub last_address: String,
+    /// Lautstärken 0..1.
+    pub volume_master: f32,
+    pub volume_effects: f32,
+    pub volume_ambient: f32,
+    pub volume_music: f32,
 }
 
 impl Default for Settings {
@@ -35,6 +40,10 @@ impl Default for Settings {
             fullscreen: false,
             vsync: true,
             last_address: "127.0.0.1".into(),
+            volume_master: 0.8,
+            volume_effects: 0.8,
+            volume_ambient: 0.7,
+            volume_music: 0.45,
         }
     }
 }
@@ -72,6 +81,10 @@ impl Settings {
     pub fn apply(&self, ctx: &mut Context) {
         ctx.camera.fov_y = self.fov_degrees.clamp(50.0, 120.0).to_radians();
         ctx.display = Display { fullscreen: self.fullscreen, vsync: self.vsync };
+        ctx.audio.set_master_volume(self.volume_master);
+        ctx.audio.set_volume(Bus::Effects, self.volume_effects);
+        ctx.audio.set_volume(Bus::Ambient, self.volume_ambient);
+        ctx.audio.set_volume(Bus::Music, self.volume_music);
     }
 }
 

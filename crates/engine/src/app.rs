@@ -182,6 +182,8 @@ pub struct Context {
     pub lights: Vec<PointLight>,
     /// Name der Grafikkarte und Grafikschnittstelle.
     pub gpu: String,
+    /// Ton (ohne Fenster stumm).
+    pub audio: crate::audio::Audio,
     window_size: UVec2,
     pixels_per_point: f32,
     exit_requested: bool,
@@ -207,6 +209,7 @@ impl Context {
             particles: Particles::default(),
             lights: Vec::new(),
             gpu: String::new(),
+            audio: crate::audio::Audio::disabled(),
             window_size: UVec2::ONE,
             pixels_per_point: 1.0,
             exit_requested: false,
@@ -287,7 +290,7 @@ pub fn run(config: EngineConfig, game: impl Game) {
     let mut app = App {
         config,
         game: Box::new(game),
-        ctx: Context::new(),
+        ctx: Context { audio: crate::audio::Audio::open(), ..Context::new() },
         window: None,
         renderer: None,
         ui: None,
@@ -402,6 +405,8 @@ impl App {
             self.ctx.show_debug = !self.ctx.show_debug;
         }
         self.game.update(&mut self.ctx);
+        let (listener, right) = (self.ctx.camera.position, self.ctx.camera.right());
+        self.ctx.audio.update(listener, right);
 
         // Benutzeroberfläche
         self.ctx.pixels_per_point = egui_winit::pixels_per_point(&ui.ctx, window);
