@@ -17,6 +17,10 @@ art/modelle/tiere/fuchs.blend → game/assets/tiere/fuchs.gltf
 - **Ansehen mit Live-Aktualisierung:** Quelle oder fertiges Modell auf `Asset ansehen.bat`
   ziehen (oder `game.exe --ansehen art/modelle/natur/fels_test.py`). Der Betrachter baut die
   Quelle mit Blender neu, sobald sie gespeichert wird, und lädt das Ergebnis automatisch.
+- **Live in Blender zuschauen:** Skript auf `Blender live.bat` ziehen. Blender öffnet sich mit
+  dem Modell und baut es bei jedem Speichern des Skripts (oder von `art/lib/*.py`) sofort neu –
+  inklusive Export, sodass Spiel-Betrachter und Asset-Galerie mitziehen. Leertaste spielt die
+  Animation ab. Fehler stehen oben im 3D-Fenster.
 - **Alles bauen:** `Assets bauen.bat` (oder einzelne Dateien daraufziehen).
 - Blender wird unter `C:\Program Files\Blender Foundation\` gesucht, oder per
   Umgebungsvariable `BLENDER=<Pfad zu blender.exe>`.
