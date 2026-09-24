@@ -10,6 +10,9 @@ use crate::protocol::{clean_name, CharacterClass, Hello};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Stand des Einstellungsformats (für einmalige Umstellungen alter Dateien).
+    #[serde(default)]
+    pub settings_version: u32,
     pub name: String,
     /// Gewählte Figur.
     pub character: CharacterClass,
@@ -32,12 +35,13 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            settings_version: SETTINGS_VERSION,
             name: default_name(),
             character: CharacterClass::default(),
             mouse_sensitivity: 1.0,
             invert_y: false,
             fov_degrees: 70.0,
-            fullscreen: false,
+            fullscreen: true,
             vsync: true,
             last_address: "127.0.0.1".into(),
             volume_master: 0.8,
@@ -53,6 +57,9 @@ fn default_name() -> String {
     std::env::var("USERNAME").or_else(|_| std::env::var("USER")).map(|n| clean_name(&n)).unwrap_or_else(|_| "Spieler".into())
 }
 
+/// 1: Vollbild wird Standard (ab Version 0.2.1).
+const SETTINGS_VERSION: u32 = 1;
+
 fn path() -> PathBuf {
     engine::storage::config_dir("EngineJN").join("einstellungen.json")
 }
@@ -61,10 +68,18 @@ impl Settings {
     pub fn load() -> Self {
         let path = path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                log::warn!("Einstellungen in {} sind beschädigt ({e}), nehme Standardwerte", path.display());
-                Settings::default()
-            }),
+            Ok(text) => {
+                let mut settings: Settings = serde_json::from_str(&text).unwrap_or_else(|e| {
+                    log::warn!("Einstellungen in {} sind beschädigt ({e}), nehme Standardwerte", path.display());
+                    Settings::default()
+                });
+                // Ältere Einstellungen: einmalig auf Vollbild umstellen, danach gilt die eigene Wahl.
+                if settings.settings_version < 1 {
+                    settings.fullscreen = true;
+                }
+                settings.settings_version = SETTINGS_VERSION;
+                settings
+            }
             Err(_) => Settings::default(),
         }
     }

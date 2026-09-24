@@ -40,11 +40,13 @@ pub struct EngineConfig {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    /// Gleich im (randlosen) Vollbild starten.
+    pub fullscreen: bool,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        EngineConfig { title: "Engine JN".into(), width: 1280, height: 720 }
+        EngineConfig { title: "Engine JN".into(), width: 1280, height: 720, fullscreen: false }
     }
 }
 
@@ -305,6 +307,8 @@ pub fn run(config: EngineConfig, game: impl Game) {
         fps_frames: 0,
         auto_screenshot: AutoScreenshot::from_args(),
     };
+    // Das Fenster entsteht gleich im gewünschten Modus – kein Umschalten nach dem ersten Bild.
+    app.applied_display.fullscreen = app.config.fullscreen && app.auto_screenshot.is_none();
 
     let event_loop = EventLoop::new().expect("Ereignisschleife konnte nicht erstellt werden");
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -428,6 +432,10 @@ impl App {
         };
 
         // Wünsche des Spiels ans Fenster übernehmen
+        // Automatische Screenshots immer im Fenster (gleiche Größe auf jedem Rechner).
+        if self.auto_screenshot.is_some() {
+            self.ctx.display.fullscreen = false;
+        }
         if self.ctx.cursor_locked != self.applied_cursor_locked {
             self.applied_cursor_locked = self.ctx.cursor_locked;
             set_cursor_locked(window, self.applied_cursor_locked);
@@ -521,7 +529,8 @@ impl ApplicationHandler for App {
         }
         let attributes = Window::default_attributes()
             .with_title(&self.config.title)
-            .with_inner_size(LogicalSize::new(self.config.width, self.config.height));
+            .with_inner_size(LogicalSize::new(self.config.width, self.config.height))
+            .with_fullscreen(self.applied_display.fullscreen.then_some(Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attributes).expect("Fenster konnte nicht erstellt werden"));
         let size = window.inner_size();
         self.ctx.window_size = UVec2::new(size.width.max(1), size.height.max(1));

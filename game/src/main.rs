@@ -76,6 +76,7 @@ fn main() {
         run_headless(game);
         log::info!("Server beendet");
     } else {
-        run(EngineConfig { title: "Spielplatz".into(), ..Default::default() }, game);
+        let fullscreen = settings::Settings::load().fullscreen;
+        run(EngineConfig { title: "Engine JN".into(), fullscreen, ..Default::default() }, game);
     }
 }
