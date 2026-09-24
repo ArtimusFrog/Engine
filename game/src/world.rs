@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 use engine::prelude::*;
 
 use crate::island::{self, ResourceKind, ResourceSpec};
-use crate::camp::Camp;
 use crate::characters::{Action, Puppet};
 use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
 
@@ -84,7 +83,6 @@ pub struct World {
     /// Zufall für Effekte wie Glühwürmchen (muss nicht auf allen Rechnern gleich sein).
     effects_rng: Rng,
     firefly_timer: f32,
-    camp: Camp,
     capsule: MeshId,
 }
 
@@ -106,7 +104,6 @@ impl World {
             day: DayCycle::default(),
             effects_rng: Rng::new(7),
             firefly_timer: 0.0,
-            camp: island.camp,
             capsule,
         };
         for (id, spec) in island.resources {
@@ -317,8 +314,6 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
         self.fireflies(ctx);
-        let night = ctx.env.sky.stars;
-        self.camp.update(ctx, night);
         let dt = ctx.time.delta;
         let blend = (dt * 12.0).min(1.0);
         for (id, avatar) in &self.players {
