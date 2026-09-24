@@ -1,5 +1,5 @@
-"""Schiefe Palme mit zerfledderten Wedeln (Dark Fantasy), Variante 2."""
+"""Palme, etwas gelblicher."""
 
 from baeume import palme
 
-palme(seed=10)
+palme(seed=10, laub="#86BC3A")

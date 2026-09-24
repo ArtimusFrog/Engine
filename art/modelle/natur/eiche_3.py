@@ -1,5 +1,5 @@
-"""Knorrige Eiche (Dark Fantasy), Variante 3."""
+"""Eiche im Herbst, leuchtendes Orange."""
 
 from baeume import eiche
 
-eiche(seed=33)
+eiche(seed=33, laub="#E0772C")

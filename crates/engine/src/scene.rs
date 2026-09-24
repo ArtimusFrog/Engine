@@ -45,6 +45,9 @@ pub enum Material {
     Water,
     /// Blätter und Gras, die sich im Wind wiegen. `sway` = Stärke (≈ 0.05–0.3).
     Foliage { sway: f32 },
+    /// Laub aus Blattkarten mit weichen (kugelförmigen) Normalen aus Blender: sanftes Licht,
+    /// scheint gegen die Sonne durch, wiegt sich im Wind wie `Foliage`.
+    Leaves { sway: f32 },
     /// Leuchtet von selbst (Kristalle, magische Pilze). `glow` = Helligkeit (≈ 0.5–3).
     Emissive { glow: f32 },
 }
@@ -56,6 +59,7 @@ impl Material {
             Material::Standard => [0.0, 0.0, 0.0, 0.0],
             Material::Water => [1.0, 0.0, 0.0, 0.0],
             Material::Foliage { sway } => [2.0, sway, 0.0, 0.0],
+            Material::Leaves { sway } => [2.0, sway, 1.0, 0.0],
             Material::Emissive { glow } => [3.0, glow, 0.0, 0.0],
         }
     }

@@ -224,7 +224,7 @@ impl Viewer {
         }
 
         self.generation += 1;
-        let textures = model.register_textures(&mut ctx.assets, &format!("ansehen{}", self.generation));
+        let textures = model.register_textures(&mut ctx.assets);
         let mut entities = Vec::new();
         let meshes: Vec<MeshData>;
         let mut animated = None;
@@ -232,7 +232,9 @@ impl Viewer {
             meshes = model.static_meshes(&textures);
             for mesh in &meshes {
                 let id = ctx.assets.add_mesh(mesh.clone());
-                entities.push(ctx.scene.spawn(Entity::new("Modell", id)));
+                // Blattkarten (Bäume, Gras) wie auf der Insel: weiches Laub-Licht, leichter Wind.
+                let material = if mesh.alpha_cutout { Material::Leaves { sway: 0.02 } } else { Material::Standard };
+                entities.push(ctx.scene.spawn(Entity::new("Modell", id).with_material(material)));
             }
         } else {
             // Animierte Modelle werden als ein Mesh verformt (eine Textur, Farben aus den Materialien).

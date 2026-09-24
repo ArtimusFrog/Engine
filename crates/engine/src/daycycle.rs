@@ -136,9 +136,9 @@ impl DayCycle {
         let twilight = (1.0 - day - night).max(0.0);
         let mix3 = |n: Vec3, t: Vec3, d: Vec3| n * night + t * twilight + d * day;
 
-        env.sky_color = mix3(Vec3::new(0.025, 0.035, 0.08), Vec3::new(0.95, 0.5, 0.3), Vec3::new(0.5, 0.64, 0.84));
-        env.zenith_color = mix3(Vec3::new(0.004, 0.008, 0.028), Vec3::new(0.12, 0.13, 0.36), Vec3::new(0.09, 0.23, 0.62));
-        env.sky_ambient = mix3(Vec3::new(0.025, 0.035, 0.075), Vec3::new(0.24, 0.2, 0.28), Vec3::new(0.2, 0.26, 0.4));
+        env.sky_color = mix3(Vec3::new(0.025, 0.035, 0.08), Vec3::new(0.95, 0.5, 0.3), Vec3::new(0.42, 0.62, 0.95));
+        env.zenith_color = mix3(Vec3::new(0.004, 0.008, 0.028), Vec3::new(0.12, 0.13, 0.36), Vec3::new(0.05, 0.2, 0.72));
+        env.sky_ambient = mix3(Vec3::new(0.025, 0.035, 0.075), Vec3::new(0.24, 0.2, 0.28), Vec3::new(0.23, 0.29, 0.42));
         env.ground_ambient = mix3(Vec3::new(0.01, 0.012, 0.02), Vec3::new(0.12, 0.08, 0.06), Vec3::new(0.13, 0.11, 0.07));
 
         // Hauptlicht: tagsüber die Sonne, nachts der Mond. Am Übergang sind beide fast
@@ -146,7 +146,7 @@ impl DayCycle {
         let sun_strength = smoothstep(-0.03, 0.18, elevation);
         let moon_strength = smoothstep(-0.03, 0.25, moon.y) * (1.0 - smoothstep(-0.12, 0.02, elevation));
         let warm = Vec3::new(1.45, 0.62, 0.28);
-        let noon = Vec3::new(1.3, 1.08, 0.82);
+        let noon = Vec3::new(1.38, 1.17, 0.9);
         if sun_strength >= moon_strength || elevation > 0.0 {
             env.sun_direction = sun;
             env.sun_color = warm.lerp(noon, smoothstep(0.08, 0.5, elevation)) * sun_strength;

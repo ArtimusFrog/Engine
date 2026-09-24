@@ -23,87 +23,21 @@
 	],
 	"materials":[
 		{
-			"name":"bm_zauber_rinde",
+			"alphaMode":"MASK",
+			"doubleSided":true,
+			"name":"Baum",
 			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.02518685907125473,
-					0.021219009533524513,
-					0.03310476616024971,
-					1
-				],
+				"baseColorTexture":{
+					"index":0
+				},
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"bm_zauber_rinde_hell",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.04817182570695877,
-					0.039546236395835876,
-					0.06480326503515244,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"bm_zauber_violett",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.07618538290262222,
-					0.04970656707882881,
-					0.1946178376674652,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"bm_zauber_tuerkis",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.04970656707882881,
-					0.21223075687885284,
-					0.2158605009317398,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"bm_zauber_violett_hell",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.1441284716129303,
-					0.09305896610021591,
-					0.35153260827064514,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"bm_zauber_dunkel",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.027320891618728638,
-					0.019382361322641373,
-					0.0802198201417923,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		},
 		{
 			"emissiveFactor":[
-				0.43415364623069763,
-				0.2622506618499756,
+				0.7681511640548706,
+				0.5271151065826416,
 				1
 			],
 			"extensions":{
@@ -111,11 +45,11 @@
 					"emissiveStrength":4
 				}
 			},
-			"name":"bm_zauber_glut",
+			"name":"Zauberbaum_Leuchten",
 			"pbrMetallicRoughness":{
 				"baseColorFactor":[
-					0.43415364623069763,
-					0.2622506618499756,
+					0.7681511640548706,
+					0.5271151065826416,
 					1,
 					1
 				],
@@ -131,391 +65,192 @@
 				{
 					"attributes":{
 						"POSITION":0,
-						"NORMAL":1
+						"NORMAL":1,
+						"TEXCOORD_0":2,
+						"COLOR_0":3
 					},
-					"indices":2,
+					"indices":4,
 					"material":0
 				},
 				{
 					"attributes":{
-						"POSITION":3,
-						"NORMAL":4
+						"POSITION":5,
+						"NORMAL":6,
+						"TEXCOORD_0":7,
+						"COLOR_0":8
 					},
-					"indices":5,
+					"indices":9,
 					"material":1
-				},
-				{
-					"attributes":{
-						"POSITION":6,
-						"NORMAL":7
-					},
-					"indices":8,
-					"material":2
-				},
-				{
-					"attributes":{
-						"POSITION":9,
-						"NORMAL":10
-					},
-					"indices":11,
-					"material":3
-				},
-				{
-					"attributes":{
-						"POSITION":12,
-						"NORMAL":13
-					},
-					"indices":14,
-					"material":4
-				},
-				{
-					"attributes":{
-						"POSITION":15,
-						"NORMAL":16
-					},
-					"indices":17,
-					"material":5
-				},
-				{
-					"attributes":{
-						"POSITION":18,
-						"NORMAL":19
-					},
-					"indices":20,
-					"material":6
 				}
 			]
+		}
+	],
+	"textures":[
+		{
+			"sampler":0,
+			"source":0
+		}
+	],
+	"images":[
+		{
+			"mimeType":"image/png",
+			"name":"Laub_Textur",
+			"uri":"Laub_Textur.png"
 		}
 	],
 	"accessors":[
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":1556,
+			"count":4603,
 			"max":[
-				1.0927188396453857,
-				5.967751979827881,
-				1.0335588455200195
+				2.755801200866699,
+				6.626612663269043,
+				2.5184969902038574
 			],
 			"min":[
-				-1.2697958946228027,
+				-2.073970079421997,
 				0,
-				-1.7459781169891357
+				-2.68795108795166
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":1556,
+			"count":4603,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
-			"componentType":5123,
-			"count":2436,
-			"type":"SCALAR"
+			"componentType":5126,
+			"count":4603,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5126,
-			"count":808,
-			"max":[
-				1.0905388593673706,
-				5.950631141662598,
-				1.0335588455200195
-			],
-			"min":[
-				-1.2697958946228027,
-				0,
-				-1.7459781169891357
-			],
+			"count":4603,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":4,
-			"componentType":5126,
-			"count":808,
-			"type":"VEC3"
+			"componentType":5123,
+			"count":7077,
+			"type":"SCALAR"
 		},
 		{
 			"bufferView":5,
-			"componentType":5123,
-			"count":1260,
-			"type":"SCALAR"
+			"componentType":5126,
+			"count":168,
+			"max":[
+				1.7083988189697266,
+				5.391321182250977,
+				1.5153573751449585
+			],
+			"min":[
+				-1.0824179649353027,
+				3.4751806259155273,
+				-2.0827574729919434
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":402,
-			"max":[
-				0.757917046546936,
-				6.297418594360352,
-				1.6882081031799316
-			],
-			"min":[
-				-1.6557626724243164,
-				4.453160285949707,
-				-2.1730194091796875
-			],
+			"count":168,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
 			"componentType":5126,
-			"count":402,
-			"type":"VEC3"
+			"count":168,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":8,
-			"componentType":5123,
-			"count":402,
-			"type":"SCALAR"
+			"componentType":5126,
+			"count":168,
+			"type":"VEC3"
 		},
 		{
 			"bufferView":9,
-			"componentType":5126,
-			"count":396,
-			"max":[
-				0.757917046546936,
-				6.297418594360352,
-				1.6882081031799316
-			],
-			"min":[
-				-1.7384568452835083,
-				4.453160285949707,
-				-2.1730194091796875
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":10,
-			"componentType":5126,
-			"count":396,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":11,
 			"componentType":5123,
-			"count":396,
-			"type":"SCALAR"
-		},
-		{
-			"bufferView":12,
-			"componentType":5126,
-			"count":468,
-			"max":[
-				0.757917046546936,
-				6.370851516723633,
-				1.6882081031799316
-			],
-			"min":[
-				-1.7384568452835083,
-				4.456446647644043,
-				-2.1730194091796875
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":13,
-			"componentType":5126,
-			"count":468,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":14,
-			"componentType":5123,
-			"count":468,
-			"type":"SCALAR"
-		},
-		{
-			"bufferView":15,
-			"componentType":5126,
-			"count":774,
-			"max":[
-				0.757917046546936,
-				6.141813278198242,
-				1.6428165435791016
-			],
-			"min":[
-				-1.7384568452835083,
-				4.343501091003418,
-				-2.1730194091796875
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":16,
-			"componentType":5126,
-			"count":774,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":17,
-			"componentType":5123,
-			"count":774,
-			"type":"SCALAR"
-		},
-		{
-			"bufferView":18,
-			"componentType":5126,
-			"count":660,
-			"max":[
-				0.4136590361595154,
-				5.778219223022461,
-				0.8305628895759583
-			],
-			"min":[
-				-1.6369668245315552,
-				4.283212184906006,
-				-2.020660638809204
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":19,
-			"componentType":5126,
-			"count":660,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":20,
-			"componentType":5123,
-			"count":660,
+			"count":840,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":18672,
+			"byteLength":55236,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":18672,
-			"byteOffset":18672,
+			"byteLength":55236,
+			"byteOffset":55236,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4872,
-			"byteOffset":37344,
+			"byteLength":36824,
+			"byteOffset":110472,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":55236,
+			"byteOffset":147296,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":14154,
+			"byteOffset":202532,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":9696,
-			"byteOffset":42216,
+			"byteLength":2016,
+			"byteOffset":216688,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":9696,
-			"byteOffset":51912,
+			"byteLength":2016,
+			"byteOffset":218704,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2520,
-			"byteOffset":61608,
+			"byteLength":1344,
+			"byteOffset":220720,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":2016,
+			"byteOffset":222064,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":1680,
+			"byteOffset":224080,
 			"target":34963
-		},
+		}
+	],
+	"samplers":[
 		{
-			"buffer":0,
-			"byteLength":4824,
-			"byteOffset":64128,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":4824,
-			"byteOffset":68952,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":804,
-			"byteOffset":73776,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":4752,
-			"byteOffset":74580,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":4752,
-			"byteOffset":79332,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":792,
-			"byteOffset":84084,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":5616,
-			"byteOffset":84876,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":5616,
-			"byteOffset":90492,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":936,
-			"byteOffset":96108,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":9288,
-			"byteOffset":97044,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":9288,
-			"byteOffset":106332,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1548,
-			"byteOffset":115620,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":7920,
-			"byteOffset":117168,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":7920,
-			"byteOffset":125088,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1320,
-			"byteOffset":133008,
-			"target":34963
+			"magFilter":9729,
+			"minFilter":9987
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":134328,
+			"byteLength":225760,
 			"uri":"zauberbaum_2.bin"
 		}
 	]

@@ -306,10 +306,19 @@ impl Model {
         (!mesh.vertices.is_empty()).then_some(mesh)
     }
 
-    /// Legt die Bilder des Modells als Texturen an (einmal pro `prefix`) und liefert
-    /// deren IDs in der Reihenfolge von [`images`](Self::images).
-    pub fn register_textures(&self, assets: &mut crate::assets::Assets, prefix: &str) -> Vec<TextureId> {
-        self.images.iter().enumerate().map(|(i, image)| assets.named_texture(&format!("{prefix}#{i}"), || image.clone())).collect()
+    /// Legt die Bilder des Modells als Texturen an und liefert deren IDs in der Reihenfolge
+    /// von [`images`](Self::images). Gleiche Bilder (z. B. die gemeinsame Blatt-Textur aller
+    /// Bäume) werden am Inhalt erkannt und nur einmal angelegt.
+    pub fn register_textures(&self, assets: &mut crate::assets::Assets) -> Vec<TextureId> {
+        use std::hash::{Hash, Hasher};
+        self.images
+            .iter()
+            .map(|image| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                (image.width, image.height, &image.rgba).hash(&mut hasher);
+                assets.named_texture(&format!("bild:{:016x}", hasher.finish()), || image.clone())
+            })
+            .collect()
     }
 
     /// Unbewegliches Modell (Baum, Fels, Gebäude) in Ruhehaltung – ein Mesh je Material,
@@ -672,8 +681,8 @@ mod file_tests {
         assert!(model.materials.len() >= 2, "Material aus der Datei fehlt");
 
         let mut assets = crate::assets::Assets::new();
-        let textures = model.register_textures(&mut assets, "axt");
-        let again = model.register_textures(&mut assets, "axt");
+        let textures = model.register_textures(&mut assets);
+        let again = model.register_textures(&mut assets);
         assert_eq!(textures, again, "Texturen dürfen nicht doppelt angelegt werden");
 
         let meshes = model.static_meshes(&textures);

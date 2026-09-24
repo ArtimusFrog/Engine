@@ -240,7 +240,10 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
 // Filmisches Tone-Mapping (ACES-Näherung): helle Stellen laufen weich aus statt auszubrennen.
 fn tonemap(color: vec3<f32>) -> vec3<f32> {
     let x = color * g.zenith.a;
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
+    let mapped = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
+    // ACES nimmt Farben etwas Sättigung – ein wenig zurückgeben, für eine fröhliche, satte Welt.
+    let grey = vec3<f32>(dot(mapped, vec3<f32>(0.2126, 0.7152, 0.0722)));
+    return clamp(mix(grey, mapped, 1.07), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 // Licht von Punktlichtern (Feuer, Laternen): weich zum Rand der Reichweite auslaufend.
@@ -291,8 +294,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let albedo = in.color * texel.rgb;
     let kind = in.material.x;
     var n = normalize(in.normal);
+    // Blattkarten tragen weiche Kugel-Normalen aus Blender – die gelten für beide Seiten.
+    let leaves = kind == MAT_FOLIAGE && in.material.z > 0.5;
     // Beidseitige Flächen: von hinten gesehen zeigt die Normale zum Betrachter.
-    if (!front) {
+    if (!front && !leaves) {
         n = -n;
     }
     let view = normalize(g.camera_pos.xyz - in.world_pos);
@@ -315,16 +320,24 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
 
     // Blätter sind oft von hinten zu sehen: dann die Rückseite beleuchten.
-    if (kind == MAT_FOLIAGE && dot(n, view) < 0.0) {
+    if (kind == MAT_FOLIAGE && !leaves && dot(n, view) < 0.0) {
         n = -n;
     }
     let n_dot_l = dot(n, g.sun_dir.xyz);
     var diffuse = max(n_dot_l, 0.0);
-    if (n_dot_l > 0.0) {
+    var translucent = vec3<f32>(0.0);
+    if (leaves) {
+        // Weiches Licht um die Krone herum; Schatten in der Krone nie ganz schwarz.
+        let visibility = sun_visibility(in.world_pos, n);
+        diffuse = clamp((n_dot_l + 0.55) / 1.55, 0.0, 1.0) * mix(0.4, 1.0, visibility);
+        // Gegenlicht: Blätter leuchten durch, wenn die Sonne hinter ihnen steht.
+        let behind = pow(max(dot(-view, g.sun_dir.xyz), 0.0), 3.0);
+        translucent = g.sun_color.rgb * behind * 0.45 * visibility;
+    } else if (n_dot_l > 0.0) {
         diffuse *= sun_visibility(in.world_pos, n);
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
-    var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse));
+    var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse + translucent));
     // Warmes Licht von Feuer und Laternen – nicht entsättigt, es soll nachts leuchten.
     color += albedo * point_lights(in.world_pos, n);
     // Selbstleuchtendes bleibt farbig – nachts stechen Pilze, Kristalle und Funken heraus.

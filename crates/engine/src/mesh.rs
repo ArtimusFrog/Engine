@@ -4,7 +4,7 @@
 //! mehrfarbig gestalten (Stamm braun, Krone grün) – der typische Low-Poly-Stil.
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec2, Vec3};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -271,6 +271,79 @@ impl MeshData {
     /// `cell` werden zusammengelegt, dabei entartete Dreiecke fallen weg. Ergebnis ist flach
     /// schattiert (passt zum Low-Poly-Stil).
     pub fn simplified(&self, cell: f32) -> MeshData {
+        if self.alpha_cutout {
+            return self.thinned_cards(cell);
+        }
+        self.clustered(cell)
+    }
+
+    /// Vereinfachung für Modelle aus Blattkarten (Ausschnitt-Textur): Zusammenschieben würde die
+    /// Karten zerknüllen. Stattdessen bleibt nur ein Teil der Karten stehen, dafür größer; der
+    /// Rest (Stamm, Äste – Dreiecke ohne Texturfläche) wird wie üblich vereinfacht.
+    fn thinned_cards(&self, cell: f32) -> MeshData {
+        let keep = (0.175 / cell).clamp(0.08, 1.0);
+        let grow = ((1.0 / keep).sqrt() * 0.9).max(1.0);
+        let uv_area = |t: &[u32]| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| Vec2::from(self.vertices[i as usize].uv));
+            (b - a).perp_dot(c - a).abs()
+        };
+        // Karten = zusammenhängende Dreiecke mit Texturfläche (meist zwei je Karte).
+        let mut parent: Vec<u32> = (0..self.vertices.len() as u32).collect();
+        fn root(parent: &mut [u32], mut i: u32) -> u32 {
+            while parent[i as usize] != i {
+                parent[i as usize] = parent[parent[i as usize] as usize];
+                i = parent[i as usize];
+            }
+            i
+        }
+        let (mut cards, mut solid) = (Vec::new(), MeshData { texture: self.texture, ..Default::default() });
+        for tri in self.indices.chunks_exact(3) {
+            if uv_area(tri) > 1e-7 {
+                let r = root(&mut parent, tri[0]);
+                for &i in &tri[1..] {
+                    let other = root(&mut parent, i);
+                    parent[other as usize] = r;
+                }
+                cards.push([tri[0], tri[1], tri[2]]);
+            } else {
+                let base = solid.vertices.len() as u32;
+                solid.vertices.extend(tri.iter().map(|&i| self.vertices[i as usize]));
+                solid.indices.extend([base, base + 1, base + 2]);
+            }
+        }
+        let mut mesh = solid.clustered(cell);
+        mesh.double_sided = self.double_sided;
+        mesh.alpha_cutout = true;
+        // Mittelpunkt je Karte, dann jede soundsovielte behalten (fest je Karte, nicht zufällig je Start).
+        let mut centers: std::collections::HashMap<u32, (Vec3, f32)> = std::collections::HashMap::new();
+        for tri in &cards {
+            let r = root(&mut parent, tri[0]);
+            let entry = centers.entry(r).or_insert((Vec3::ZERO, 0.0));
+            for &i in tri {
+                entry.0 += Vec3::from(self.vertices[i as usize].position);
+                entry.1 += 1.0;
+            }
+        }
+        for tri in &cards {
+            let r = root(&mut parent, tri[0]);
+            let hash = (r.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+            if hash >= keep {
+                continue;
+            }
+            let (sum, count) = centers[&r];
+            let center = sum / count;
+            let base = mesh.vertices.len() as u32;
+            for &i in tri {
+                let mut v = self.vertices[i as usize];
+                v.position = (center + (Vec3::from(v.position) - center) * grow).into();
+                mesh.vertices.push(v);
+            }
+            mesh.indices.extend([base, base + 1, base + 2]);
+        }
+        mesh
+    }
+
+    fn clustered(&self, cell: f32) -> MeshData {
         use std::collections::HashMap;
         let key = |p: Vec3| {
             let c = (p / cell).floor().as_ivec3();
@@ -318,6 +391,33 @@ impl MeshData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blattkarten_werden_ausgeduennt_statt_zerknuellt() {
+        // 100 Karten (je zwei Dreiecke mit Texturfläche) plus ein Stamm-Würfel ohne Texturfläche
+        let mut mesh = MeshData { alpha_cutout: true, ..Default::default() };
+        for k in 0..100 {
+            let c = Vec3::new(k as f32 * 0.1, 3.0, 0.0);
+            let base = mesh.vertices.len() as u32;
+            for (i, uv) in [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].into_iter().enumerate() {
+                let offset = Vec3::new(if i == 1 || i == 2 { 0.5 } else { -0.5 }, if i >= 2 { 0.5 } else { -0.5 }, 0.0);
+                mesh.vertices.push(Vertex { uv, ..Vertex::new(c + offset, Vec3::Z, Vec3::ONE) });
+            }
+            mesh.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        let trunk = MeshData::cube();
+        let base = mesh.vertices.len() as u32;
+        mesh.vertices.extend(&trunk.vertices);
+        mesh.indices.extend(trunk.indices.iter().map(|i| i + base));
+
+        let far = mesh.simplified(0.9);
+        let cards = |m: &MeshData| m.vertices.iter().filter(|v| v.uv != [0.0, 0.0] || v.position[1] > 2.0).count() / 6;
+        let kept = cards(&far);
+        assert!(kept > 5 && kept < 40, "{kept} von 100 Karten übrig");
+        // Jede übrige Karte ist noch ein ganzes, vergrößertes Quadrat
+        assert_eq!(far.indices.len() % 3, 0);
+        assert!(far.alpha_cutout);
+    }
 
     #[test]
     fn vereinfachen_spart_dreiecke_und_behaelt_die_form() {

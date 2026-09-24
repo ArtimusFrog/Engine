@@ -288,6 +288,8 @@ impl Renderer {
             label: Some("textur"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             ..Default::default()
@@ -883,12 +885,14 @@ fn texture_bind_group(
     sampler: &wgpu::Sampler,
     image: &crate::assets::Image,
 ) -> wgpu::BindGroup {
+    let levels = image.mip_chain();
+    let data: Vec<u8> = levels.iter().flat_map(|l| l.rgba.iter().copied()).collect();
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
             label: Some("textur"),
             size: wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
+            mip_level_count: levels.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             // PNG-Farben sind sRGB; so liefert der Shader beim Lesen lineare Werte.
@@ -897,7 +901,7 @@ fn texture_bind_group(
             view_formats: &[],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
-        &image.rgba,
+        &data,
     );
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("textur"),

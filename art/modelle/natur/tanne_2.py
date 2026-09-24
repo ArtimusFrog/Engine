@@ -1,5 +1,5 @@
-"""Dunkle, zerzauste Tanne (Dark Fantasy), Variante 2."""
+"""Tanne, etwas heller."""
 
 from baeume import tanne
 
-tanne(seed=34)
+tanne(seed=34, nadeln="#4CAA58")

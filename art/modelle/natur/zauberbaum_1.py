@@ -1,5 +1,5 @@
-"""Zauberbaum: schwarz, verdreht, glimmende Früchte (Dark Fantasy), Variante 1."""
+"""Zauberbaum mit Leuchtfrüchten."""
 
 from baeume import zauberbaum
 
-zauberbaum(seed=7)
+zauberbaum(seed=7, violett="#B07AF0", tuerkis="#40D8C8")

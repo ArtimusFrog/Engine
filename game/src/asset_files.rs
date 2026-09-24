@@ -54,7 +54,7 @@ pub struct StaticModel {
 impl StaticModel {
     pub fn load(assets: &mut Assets, path: &Path) -> Result<StaticModel, String> {
         let model = Model::from_file(path)?;
-        let textures = model.register_textures(assets, &path.to_string_lossy());
+        let textures = model.register_textures(assets);
         let mut mesh = MeshData::default();
         let mut glow = MeshData::default();
         for (material, part) in model.static_mesh_groups(&textures) {

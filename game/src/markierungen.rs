@@ -14,6 +14,7 @@ use crate::asset_files::asset_dir;
 /// Ein Platz auf der Insel, den ein Modell einnehmen kann: (Kennung, Anzeigename, Ordner).
 pub const PLAETZE: &[(&str, &str, &str)] = &[
     ("eiche", "Eiche", "natur"),
+    ("birke", "Birke", "natur"),
     ("tanne", "Tanne", "natur"),
     ("palme", "Palme", "natur"),
     ("zauberbaum", "Zauberbaum", "natur"),

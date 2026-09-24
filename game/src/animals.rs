@@ -318,7 +318,7 @@ impl Visual {
     fn new(ctx: &mut Context, kind: AnimalKind, position: Vec3) -> Visual {
         let body = match load_model(kind) {
             Some(model) => {
-                let textures = model.register_textures(&mut ctx.assets, &format!("tier_{}", kind.file_name()));
+                let textures = model.register_textures(&mut ctx.assets);
                 let texture = textures.first().copied();
                 let mut animator = Animator::new(model);
                 animator.play("Idle", true, 0.0);

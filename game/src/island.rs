@@ -48,8 +48,9 @@ pub struct Island {
 }
 
 /// Wie weit Wind Laub bewegt.
-const LEAVES: Material = Material::Foliage { sway: 0.035 };
-const GRASS: Material = Material::Foliage { sway: 0.25 };
+const LEAVES: Material = Material::Leaves { sway: 0.035 };
+const GRASS: Material = Material::Leaves { sway: 0.25 };
+const FLOWERS: Material = Material::Foliage { sway: 0.25 };
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -87,8 +88,8 @@ fn magic(p: Vec2) -> f32 {
 fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     let p = vec2(c.x, c.z);
     let slope = 1.0 - n.y;
-    let meadow = vec3(0.11, 0.30, 0.04);
-    let forest = vec3(0.045, 0.16, 0.025);
+    let meadow = vec3(0.085, 0.215, 0.04);
+    let forest = vec3(0.045, 0.145, 0.03);
     let enchanted = vec3(0.03, 0.2, 0.2);
     let alpine = vec3(0.22, 0.30, 0.11);
     let sand = vec3(0.56, 0.43, 0.22);
@@ -97,6 +98,10 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     let snow = vec3(0.86, 0.89, 0.94);
 
     let mut color = meadow.lerp(forest, smoothstep(0.45, 0.6, moisture(p)));
+    // Wiesen nicht einfarbig: großflächig hellere (trockenere) und sattere, dunklere Flecken.
+    let patches = fbm(p * 0.03 + vec2(9.0, 4.0), 2, SEED + 11) * 0.5 + 0.5;
+    color = color.lerp(color * vec3(1.35, 1.12, 0.8), smoothstep(0.55, 0.8, patches) * 0.6);
+    color = color.lerp(color * 0.72, smoothstep(0.45, 0.2, patches) * 0.5);
     color = color.lerp(enchanted, smoothstep(0.58, 0.66, magic(p)));
     color = color.lerp(alpine, smoothstep(15.0, 24.0, c.y));
     color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
@@ -128,6 +133,7 @@ type Variant = (MeshId, Option<MeshId>);
 
 struct Library {
     oaks: Vec<Variant>,
+    birches: Vec<Variant>,
     pines: Vec<Variant>,
     snowy_pines: Vec<Variant>,
     palms: Vec<Variant>,
@@ -179,6 +185,7 @@ impl Library {
 
         let mut library = Library {
             oaks: slot(ctx, "eiche", 3, &|s| models::oak(s * 17)),
+            birches: slot(ctx, "birke", 3, &|s| models::oak(s * 23)),
             pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
             // Auf den Bergen wachsen dieselben Tannen wie im Tal (keine eigenen Schneetannen).
             snowy_pines: Vec::new(),
@@ -198,7 +205,7 @@ impl Library {
 
         // In der Ferne einfachere Modelle, Kleinkram verschwindet ganz (spart viel Grafikleistung).
         // Neue Bäume/Felsen aus Blender bekommen das automatisch mit.
-        let trees = [&library.oaks, &library.pines, &library.snowy_pines, &library.palms, &library.magic_trees];
+        let trees = [&library.oaks, &library.birches, &library.pines, &library.snowy_pines, &library.palms, &library.magic_trees];
         for variants in trees {
             add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9))]);
         }
@@ -365,7 +372,9 @@ pub fn build(ctx: &mut Context) -> Island {
                 } else if wet > 0.52 {
                     if roll < 0.2 {
                         found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
-                    } else if roll < 0.29 {
+                    } else if roll < 0.25 {
+                        found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
+                    } else if roll < 0.31 {
                         found = Some(tree("Tanne", pick(&lib.pines, &mut rng), size, 5));
                     } else if roll < 0.40 {
                         decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
@@ -374,14 +383,16 @@ pub fn build(ctx: &mut Context) -> Island {
                     } else if roll < 0.47 {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
-                } else if roll < 0.03 {
+                } else if roll < 0.02 {
                     found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
+                } else if roll < 0.035 {
+                    found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
                 } else if roll < 0.07 {
                     decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
                 } else if roll < 0.09 {
                     found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                 } else if roll < 0.28 {
-                    decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, GRASS);
+                    decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, FLOWERS);
                 }
             }
 
@@ -389,10 +400,19 @@ pub fn build(ctx: &mut Context) -> Island {
                 resources.push((id, spec));
             }
 
-            // Gras fast überall, wo es grün ist
-            if h > 2.2 && h < 26.0 && slope < 0.45 && rng.chance(if wet > 0.52 { 0.35 } else { 0.55 }) {
-                let mesh = if enchanted { by_id(&lib.teal_grass) } else { pick(&lib.grass, &mut rng) };
-                decor(ctx, mesh, base, yaw, rng.range(0.8, 1.4), Vec4::ONE, GRASS);
+            // Hohes Gras fast überall, wo es grün ist - mehrere Büschel je Zelle, damit Wiesen satt wirken
+            if h > 2.2 && h < 26.0 && slope < 0.45 {
+                let tufts = if wet > 0.52 { 2 } else { 3 };
+                for _ in 0..tufts {
+                    if !rng.chance(0.6) {
+                        continue;
+                    }
+                    let q = vec2(x + rng.range(-1.6, 1.6), z + rng.range(-1.6, 1.6));
+                    let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
+                    let turn = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
+                    let mesh = if enchanted { by_id(&lib.teal_grass) } else { pick(&lib.grass, &mut rng) };
+                    decor(ctx, mesh, spot, turn, rng.range(0.8, 1.35), Vec4::ONE, GRASS);
+                }
             }
         }
 

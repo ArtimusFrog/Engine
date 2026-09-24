@@ -16,6 +16,132 @@ pub struct Image {
     pub rgba: Vec<u8>,
 }
 
+impl Image {
+    /// Alle Mipmap-Stufen (Stufe 0 = das Bild selbst), für ruhige Texturen in der Ferne.
+    ///
+    /// Für Ausschnitt-Texturen (Blätter, Gras) zweierlei Besonderheiten:
+    /// - durchsichtige Pixel bekommen die Farbe ihrer Nachbarn, sonst entstehen dunkle Ränder
+    /// - die Deckkraft jeder Stufe wird so skaliert, dass gleich viel Fläche „stehen bleibt“ –
+    ///   sonst lösen sich Baumkronen in der Ferne auf
+    pub fn mip_chain(&self) -> Vec<Image> {
+        let mut base = self.clone();
+        let cutout = base.rgba.chunks_exact(4).any(|p| p[3] < 255);
+        if cutout {
+            base.bleed_colors(8);
+        }
+        let coverage = base.coverage(1.0);
+        let mut levels = vec![base];
+        while levels.last().is_some_and(|l| l.width > 1 || l.height > 1) {
+            let mut next = levels.last().unwrap().half();
+            if cutout {
+                next.keep_coverage(coverage);
+            }
+            levels.push(next);
+        }
+        levels
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y.min(self.height - 1) * self.width + x.min(self.width - 1)) * 4) as usize;
+        [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2], self.rgba[i + 3]]
+    }
+
+    /// Halbe Größe; Farben nach Deckkraft gewichtet und in linearem Licht gemittelt.
+    fn half(&self) -> Image {
+        let (width, height) = ((self.width / 2).max(1), (self.height / 2).max(1));
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let mut color = [0.0f32; 3];
+                let (mut weight, mut alpha) = (0.0f32, 0.0f32);
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let p = self.pixel(x * 2 + dx, y * 2 + dy);
+                    let a = p[3] as f32 / 255.0;
+                    let w = a.max(0.001);
+                    for c in 0..3 {
+                        color[c] += srgb_to_linear(p[c]) * w;
+                    }
+                    weight += w;
+                    alpha += a;
+                }
+                rgba.extend(color.map(|c| linear_to_srgb(c / weight)));
+                rgba.push((alpha / 4.0 * 255.0).round() as u8);
+            }
+        }
+        Image { width, height, rgba }
+    }
+
+    /// Anteil der Pixel, die nach Skalierung der Deckkraft mit `scale` noch gezeichnet werden.
+    fn coverage(&self, scale: f32) -> f32 {
+        let visible = self.rgba.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count();
+        visible as f32 / (self.rgba.len() / 4) as f32
+    }
+
+    fn keep_coverage(&mut self, target: f32) {
+        let (mut low, mut high) = (0.0f32, 8.0f32);
+        for _ in 0..16 {
+            let mid = (low + high) / 2.0;
+            if self.coverage(mid) < target {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        for p in self.rgba.chunks_exact_mut(4) {
+            p[3] = (p[3] as f32 * high).ceil().min(255.0) as u8;
+        }
+    }
+
+    /// Färbt durchsichtige Pixel in `rounds` Schritten mit der Farbe sichtbarer Nachbarn.
+    fn bleed_colors(&mut self, rounds: u32) {
+        let (w, h) = (self.width as i32, self.height as i32);
+        let mut filled: Vec<bool> = self.rgba.chunks_exact(4).map(|p| p[3] > 0).collect();
+        for _ in 0..rounds {
+            let mut updates = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) as usize;
+                    if filled[i] {
+                        continue;
+                    }
+                    let (mut sum, mut count) = ([0u32; 3], 0);
+                    for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                        let (nx, ny) = (x + dx, y + dy);
+                        if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                            continue;
+                        }
+                        let n = (ny * w + nx) as usize;
+                        if filled[n] {
+                            for c in 0..3 {
+                                sum[c] += self.rgba[n * 4 + c] as u32;
+                            }
+                            count += 1;
+                        }
+                    }
+                    if count > 0 {
+                        updates.push((i, sum.map(|s| (s / count) as u8)));
+                    }
+                }
+            }
+            if updates.is_empty() {
+                break;
+            }
+            for (i, color) in updates {
+                self.rgba[i * 4..i * 4 + 3].copy_from_slice(&color);
+                filled[i] = true;
+            }
+        }
+    }
+}
+
+fn srgb_to_linear(c: u8) -> f32 {
+    (c as f32 / 255.0).powf(2.2)
+}
+
+fn linear_to_srgb(c: f32) -> u8 {
+    (c.max(0.0).powf(1.0 / 2.2) * 255.0).round().min(255.0) as u8
+}
+
 pub(crate) struct MeshSlot {
     pub data: MeshData,
     /// Hüllkugel im Raum des Meshs (Mittelpunkt, Radius).
@@ -156,6 +282,22 @@ pub struct Lod {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mipmaps_behalten_die_blattflaeche() {
+        // Schachbrett aus einzelnen Pixeln: 25 % deckend – ohne Ausgleich wäre ab Stufe 1 alles durchsichtig.
+        let (w, h) = (64u32, 64u32);
+        let rgba = (0..w * h).flat_map(|i| if (i % w) % 2 == 0 && (i / w) % 2 == 0 { [40, 200, 40, 255] } else { [0, 0, 0, 0] }).collect();
+        let levels = Image { width: w, height: h, rgba }.mip_chain();
+        assert_eq!(levels.len(), 7);
+        assert_eq!((levels[6].width, levels[6].height), (1, 1));
+        for level in &levels[1..4] {
+            let c = level.coverage(1.0);
+            assert!(c > 0.15, "Stufe {}x{}: nur {c} deckend", level.width, level.height);
+            // Kein Schwarz an den Rändern: Farbe bleibt grün
+            assert!(level.rgba[1] > 150 && level.rgba[0] < 90, "{:?}", &level.rgba[..4]);
+        }
+    }
 
     #[test]
     fn detailstufen_nach_entfernung() {
