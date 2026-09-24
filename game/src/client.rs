@@ -102,6 +102,7 @@ impl Replica {
             }
         }
 
+        world.day.advance(Physics::FIXED_DT);
         if let Some(tick) = &mut self.server_tick {
             *tick += 1.0;
         }
@@ -168,6 +169,7 @@ impl Replica {
     }
 
     fn receive_snapshot(&mut self, ctx: &mut Context, world: &mut World, snapshot: Snapshot) {
+        world.day.sync(snapshot.hour, snapshot.day);
         let tick = snapshot.tick as f64;
         match &mut self.server_tick {
             Some(estimate) if (*estimate - tick).abs() < 30.0 => *estimate += (tick - *estimate) * 0.05,

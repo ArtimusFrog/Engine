@@ -82,6 +82,8 @@ impl Authority {
             self.play_input(ctx, world, HOST_PLAYER, &input);
         }
 
+        world.day.advance(Physics::FIXED_DT);
+
         // Nachwachsen: abgebaute Rohstoffe kommen nach einer Weile zurück.
         let regrown: Vec<u32> = world
             .resources
@@ -270,7 +272,7 @@ impl Authority {
             })
             .collect();
 
-        let snapshot = ServerMessage::Snapshot(Snapshot { tick: ctx.time.tick as u32, players, objects });
+        let snapshot = ServerMessage::Snapshot(Snapshot { tick: ctx.time.tick as u32, players, objects, hour: world.day.hour, day: world.day.day });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));
         }

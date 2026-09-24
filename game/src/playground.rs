@@ -113,7 +113,10 @@ impl Playground {
     fn show_menu(&mut self, ctx: &mut Context, error: Option<String>) {
         self.session = None;
         ctx.reset_world();
-        self.menu_world = Some(World::new(ctx));
+        let mut world = World::new(ctx);
+        // Im Menü immer goldene Abendstimmung.
+        world.day.hour = 17.6;
+        self.menu_world = Some(world);
         self.screen = Screen::MainMenu;
         self.error = error;
         self.free_camera = false;
@@ -176,6 +179,12 @@ impl Playground {
                         if let Some(session) = &mut self.session {
                             session.preview_harvest(ctx, id);
                         }
+                    }
+                }
+                // F6: eine Stunde vorspulen (nur wer die Welt berechnet)
+                if ctx.input.key_pressed(KeyCode::F6) {
+                    if let Some(session) = &mut self.session {
+                        session.skip_time(1.0);
                     }
                 }
                 if ctx.input.key_pressed(KeyCode::F1) {
@@ -505,6 +514,7 @@ impl Playground {
         if self.screen != Screen::Playing {
             return;
         }
+        ui::time_bar(egui_ctx, session.day());
         if ctx.cursor_locked {
             ui::crosshair(egui_ctx);
         }
@@ -596,6 +606,16 @@ impl Game for Playground {
                 _ => {}
             }
             ctx.show_debug = args.iter().any(|a| a == "--debug");
+        }
+        if let (Some(hour), Some(session)) = (
+            args.iter().position(|a| a == "--uhrzeit").and_then(|i| args.get(i + 1)).and_then(|h| h.parse::<f32>().ok()),
+            &mut self.session,
+        ) {
+            session.world_mut().day.hour = hour.rem_euclid(24.0);
+        }
+        if args.iter().any(|a| a == "--blick-hoch") {
+            ctx.camera.pitch = 0.45;
+            ctx.camera.yaw = -1.9;
         }
         if args.iter().any(|a| a == "--kamera-vorne") {
             ctx.camera.yaw = std::f32::consts::PI;

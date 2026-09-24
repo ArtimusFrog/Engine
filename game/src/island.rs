@@ -182,15 +182,7 @@ impl Library {
 /// werden nur beschrieben – die Welt erzeugt sie, damit sie verschwinden und
 /// nachwachsen können.
 pub fn build(ctx: &mut Context) -> Island {
-    // Stimmung: warme Nachmittagssonne, leicht dunstiger Horizont.
-    ctx.env.sun_direction = vec3(0.55, 0.45, 0.4);
-    ctx.env.sun_color = vec3(1.3, 1.08, 0.82);
-    ctx.env.sky_color = vec3(0.5, 0.64, 0.84);
-    ctx.env.zenith_color = vec3(0.09, 0.23, 0.62);
-    ctx.env.exposure = 1.0;
-    ctx.env.sky_ambient = vec3(0.2, 0.26, 0.4);
-    ctx.env.ground_ambient = vec3(0.13, 0.11, 0.07);
-    ctx.env.fog_density = 0.0018;
+    // Licht und Himmel kommen vom Tag-Nacht-Zyklus (`World::day`).
     ctx.env.shadow_range = 45.0;
 
     let terrain = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, height);

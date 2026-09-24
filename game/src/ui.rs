@@ -2,6 +2,7 @@
 
 use engine::egui::{self, Align2, Color32, FontId, RichText, Stroke};
 use engine::prelude::*;
+use engine::daycycle::DayCycle;
 
 pub const ACCENT: Color32 = Color32::from_rgb(255, 150, 40);
 pub const TEXT: Color32 = Color32::from_rgb(235, 238, 245);
@@ -134,4 +135,85 @@ pub fn local_ip() -> Option<std::net::IpAddr> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
     socket.local_addr().ok().map(|a| a.ip())
+}
+
+/// Farbe der Zeitleiste zu einer Uhrzeit (Stunden) – Nacht, Morgenrot, Tag, Abendrot.
+fn sky_band(hour: f32) -> Color32 {
+    const STOPS: [(f32, [u8; 3]); 10] = [
+        (0.0, [18, 22, 52]),
+        (4.5, [22, 26, 62]),
+        (6.0, [235, 125, 85]),
+        (7.5, [125, 185, 240]),
+        (12.0, [150, 205, 255]),
+        (17.0, [125, 185, 240]),
+        (19.0, [245, 120, 65]),
+        (20.5, [70, 55, 115]),
+        (22.0, [25, 28, 62]),
+        (24.0, [18, 22, 52]),
+    ];
+    let next = STOPS.iter().position(|&(h, _)| h >= hour).unwrap_or(STOPS.len() - 1).max(1);
+    let ((h0, a), (h1, b)) = (STOPS[next - 1], STOPS[next]);
+    let t = ((hour - h0) / (h1 - h0).max(1e-3)).clamp(0.0, 1.0);
+    let mix = |i: usize| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t) as u8;
+    Color32::from_rgb(mix(0), mix(1), mix(2))
+}
+
+/// Zeitleiste oben in der Mitte: Tagesverlauf, Sonne bzw. Mond an der aktuellen Uhrzeit,
+/// dazu Uhr, Tageszeit und Tageszähler.
+pub fn time_bar(ctx: &egui::Context, day: &DayCycle) {
+    egui::Area::new(egui::Id::new("zeitleiste"))
+        .anchor(Align2::CENTER_TOP, [0.0, 10.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(Color32::from_black_alpha(155))
+                .corner_radius(10.0)
+                .inner_margin(egui::Margin::symmetric(16, 8))
+                .show(ui, |ui| {
+                    let width = 340.0;
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.0), egui::Sense::hover());
+                    let painter = ui.painter();
+                    let muted = TEXT.gamma_multiply(0.85);
+                    let top = rect.top() + 9.0;
+                    painter.text(egui::pos2(rect.left(), top), Align2::LEFT_CENTER, day.phase().label(), FontId::proportional(14.0), muted);
+                    painter.text(egui::pos2(rect.center().x, top), Align2::CENTER_CENTER, day.clock(), FontId::proportional(21.0), Color32::WHITE);
+                    painter.text(egui::pos2(rect.right(), top), Align2::RIGHT_CENTER, format!("Tag {}", day.day), FontId::proportional(14.0), muted);
+
+                    // Farbverlauf über 24 Stunden
+                    let bar = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + 27.0), egui::vec2(width, 10.0));
+                    let x_at = |hour: f32| bar.left() + hour / 24.0 * width;
+                    let mut mesh = egui::Mesh::default();
+                    let steps = 48;
+                    for i in 0..=steps {
+                        let hour = i as f32 / steps as f32 * 24.0;
+                        let color = sky_band(hour);
+                        mesh.colored_vertex(egui::pos2(x_at(hour), bar.top()), color);
+                        mesh.colored_vertex(egui::pos2(x_at(hour), bar.bottom()), color);
+                        if i > 0 {
+                            let v = (i * 2) as u32;
+                            mesh.add_triangle(v - 2, v - 1, v);
+                            mesh.add_triangle(v - 1, v + 1, v);
+                        }
+                    }
+                    painter.add(egui::Shape::mesh(mesh));
+                    painter.rect_stroke(bar, 3.0, Stroke::new(1.0, Color32::from_white_alpha(45)), egui::StrokeKind::Outside);
+                    for hour in [6.0, 12.0, 18.0] {
+                        let x = x_at(hour);
+                        painter.line_segment([egui::pos2(x, bar.bottom() + 2.0), egui::pos2(x, bar.bottom() + 6.0)], Stroke::new(1.0, Color32::from_white_alpha(90)));
+                    }
+
+                    // Sonne oder Mond an der aktuellen Uhrzeit
+                    let center = egui::pos2(x_at(day.hour), bar.center().y);
+                    if day.is_night() {
+                        painter.circle_filled(center, 12.0, Color32::from_white_alpha(22));
+                        painter.circle_filled(center, 7.5, Color32::from_rgb(228, 232, 248));
+                        // Sichel: ein Teil wird mit der Nachtfarbe überdeckt
+                        painter.circle_filled(center + egui::vec2(3.2, -2.2), 6.2, sky_band(day.hour));
+                    } else {
+                        painter.circle_filled(center, 13.0, Color32::from_rgba_unmultiplied(255, 200, 80, 55));
+                        painter.circle_filled(center, 7.5, Color32::from_rgb(255, 208, 72));
+                        painter.circle_stroke(center, 7.5, Stroke::new(1.5, Color32::from_rgb(255, 240, 180)));
+                    }
+                });
+        });
 }

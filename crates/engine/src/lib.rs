@@ -6,6 +6,7 @@
 mod app;
 pub mod assets;
 pub mod camera;
+pub mod daycycle;
 pub mod input;
 pub mod mesh;
 pub mod model;
@@ -20,7 +21,7 @@ pub mod terrain;
 
 pub use egui;
 
-pub use app::{run, run_headless, Context, Display, EngineConfig, Environment, FrameStats, Game, Time};
+pub use app::{run, run_headless, Context, Display, EngineConfig, Environment, FrameStats, Game, SkyBodies, Time};
 
 /// Alles, was ein Spiel typischerweise braucht, mit einem einzigen `use`.
 pub mod prelude {
@@ -29,6 +30,7 @@ pub mod prelude {
     pub use crate::assets::{Assets, Image, MeshId, TextureId};
     pub use crate::model::{Animator, Model};
     pub use crate::camera::{Camera, FlyController, OrbitController};
+    pub use crate::daycycle::{DayCycle, DayPhase};
     pub use crate::input::{Input, KeyCode, MouseButton};
     pub use crate::mesh::MeshData;
     pub use crate::net::{Channel, ClientId, NetClient, NetServer, ServerEvent};

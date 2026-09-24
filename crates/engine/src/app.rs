@@ -77,6 +77,8 @@ pub struct Environment {
     pub shadow_range: f32,
     /// Gesamthelligkeit vor dem Tone-Mapping.
     pub exposure: f32,
+    /// Was am Himmel zu sehen ist (unabhängig vom Hauptlicht `sun_*`).
+    pub sky: SkyBodies,
 }
 
 impl Default for Environment {
@@ -91,6 +93,34 @@ impl Default for Environment {
             fog_density: 0.006,
             shadow_range: 35.0,
             exposure: 1.2,
+            sky: SkyBodies::default(),
+        }
+    }
+}
+
+/// Himmelskörper für die Darstellung des Himmels (Sonnenscheibe, Mond, Sterne).
+#[derive(Clone, Copy, Debug)]
+pub struct SkyBodies {
+    pub sun_direction: Vec3,
+    /// 0 = Sonne unsichtbar (unter dem Horizont), 1 = voll sichtbar.
+    pub sun_visible: f32,
+    pub moon_direction: Vec3,
+    pub moon_visible: f32,
+    /// Helligkeit der Sterne (0 am Tag, 1 in der Nacht).
+    pub stars: f32,
+    /// Rötliches Leuchten am Horizont in Richtung Sonne (Dämmerung).
+    pub glow: f32,
+}
+
+impl Default for SkyBodies {
+    fn default() -> Self {
+        SkyBodies {
+            sun_direction: Vec3::new(0.6, 0.55, 0.35).normalize(),
+            sun_visible: 1.0,
+            moon_direction: Vec3::new(-0.5, 0.5, -0.3).normalize(),
+            moon_visible: 0.0,
+            stars: 0.0,
+            glow: 0.0,
         }
     }
 }

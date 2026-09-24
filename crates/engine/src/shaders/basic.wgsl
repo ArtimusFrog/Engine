@@ -19,6 +19,11 @@ struct Globals {
     shadow_params: vec4<f32>,
     // rgb = Himmelsfarbe oben, a = Belichtung
     zenith: vec4<f32>,
+    // Himmelskörper: xyz = Richtung, w = Sichtbarkeit
+    sky_sun: vec4<f32>,
+    sky_moon: vec4<f32>,
+    // x = Sterne, y = Dämmerungsglühen
+    sky_misc: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -140,16 +145,68 @@ fn sun_visibility(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     return lit / 9.0;
 }
 
-// Himmelsfarbe in Blickrichtung `dir` (normiert), inklusive Sonnenscheibe.
-fn sky_color(dir: vec3<f32>) -> vec3<f32> {
+fn hash3(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+// Sterne: zufällig verteilte, leicht funkelnde Punkte am Himmel.
+fn stars(dir: vec3<f32>) -> vec3<f32> {
+    let p = dir * 220.0;
+    let cell = floor(p);
+    let h = hash3(cell);
+    if (h < 0.9965) {
+        return vec3<f32>(0.0);
+    }
+    let jitter = vec3<f32>(hash3(cell + 1.3), hash3(cell + 7.1), hash3(cell + 3.7)) - 0.5;
+    let d = length(p - (cell + 0.5 + jitter * 0.6));
+    let twinkle = 0.65 + 0.35 * sin(time() * (2.0 + h * 3.0) + h * 1000.0);
+    let brightness = (1.0 - smoothstep(0.0, 0.35, d)) * twinkle * (h - 0.9965) / 0.0035 * 3.0;
+    let tint = mix(vec3<f32>(0.75, 0.85, 1.0), vec3<f32>(1.0, 0.9, 0.75), hash3(cell + 9.9));
+    return tint * brightness;
+}
+
+fn sun_tint() -> vec3<f32> {
+    // Tief am Horizont orange, hoch am Himmel weiß.
+    return mix(vec3<f32>(1.7, 0.75, 0.35), vec3<f32>(1.3, 1.1, 0.9), clamp(g.sky_sun.y * 3.0, 0.0, 1.0));
+}
+
+// Weicher Himmel ohne Sonnenscheibe, Mond und Sterne – auch die Farbe des Nebels.
+fn sky_base(dir: vec3<f32>) -> vec3<f32> {
     let horizon = g.fog.rgb;
     let up = max(dir.y, 0.0);
     var color = mix(horizon, g.zenith.rgb, pow(up, 0.45));
     if (dir.y < 0.0) {
         color = mix(horizon, horizon * 0.8, min(-dir.y * 3.0, 1.0));
     }
-    let s = max(dot(dir, g.sun_dir.xyz), 0.0);
-    color += g.sun_color.rgb * (pow(s, 1200.0) * 30.0 + pow(s, 16.0) * 0.35 + pow(s, 3.0) * 0.08);
+
+    // Breiter Dunst in Richtung Sonne.
+    let sun = g.sky_sun.xyz;
+    let s = max(dot(dir, sun), 0.0);
+    color += sun_tint() * g.sky_sun.w * pow(s, 3.0) * 0.08;
+
+    // Abendrot bzw. Morgenrot rund um die Sonne, entlang des Horizonts.
+    let flat_sun = normalize(vec3<f32>(sun.x, 0.0, sun.z) + vec3<f32>(0.0001, 0.0, 0.0));
+    let toward = max(dot(dir, flat_sun), 0.0);
+    let near_horizon = 1.0 - smoothstep(0.0, 0.45, abs(dir.y));
+    color += vec3<f32>(1.0, 0.32, 0.1) * g.sky_misc.y * pow(toward, 3.0) * near_horizon * 0.9;
+    return color;
+}
+
+// Himmelsfarbe in Blickrichtung `dir` (normiert): Verlauf, Sonne, Abendrot, Mond, Sterne.
+fn sky_color(dir: vec3<f32>) -> vec3<f32> {
+    var color = sky_base(dir);
+
+    // Sonnenscheibe mit Lichthof
+    let s = max(dot(dir, g.sky_sun.xyz), 0.0);
+    color += sun_tint() * g.sky_sun.w * (pow(s, 1200.0) * 30.0 + pow(s, 16.0) * 0.35);
+
+    // Mond: scharfe Scheibe mit weichem Lichthof.
+    let m = max(dot(dir, g.sky_moon.xyz), 0.0);
+    color += vec3<f32>(0.85, 0.9, 1.0) * g.sky_moon.w * (smoothstep(0.99935, 0.9997, m) * 2.5 + pow(m, 80.0) * 0.12);
+
+    if (g.sky_misc.x > 0.0 && dir.y > 0.0) {
+        color += stars(dir) * g.sky_misc.x * smoothstep(0.0, 0.25, dir.y);
+    }
     return color;
 }
 
@@ -159,13 +216,24 @@ fn tonemap(color: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Nachtsicht: Im Dunkeln verlieren Farben an Sättigung und wirken bläulich.
+fn night_grade(color: vec3<f32>) -> vec3<f32> {
+    let night = g.sky_misc.x;
+    let moonlit = vec3<f32>(luminance(color)) * vec3<f32>(0.55, 0.75, 1.35);
+    return mix(color, moonlit, night * 0.65);
+}
+
 fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let to_point = world_pos - g.camera_pos.xyz;
     let dist = length(to_point);
     // Nebel wird mit der Höhe dünner, damit Berggipfel klar bleiben.
     let height_falloff = exp(-max(world_pos.y, 0.0) * 0.02);
     let fog = 1.0 - exp(-dist * g.fog.a * height_falloff);
-    return mix(color, sky_color(to_point / max(dist, 0.001)), fog);
+    return mix(color, sky_base(to_point / max(dist, 0.001)), fog);
 }
 
 @fragment
@@ -186,7 +254,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let reflection = sky_color(reflect(-view, n));
         let visibility = sun_visibility(in.world_pos, vec3<f32>(0.0, 1.0, 0.0));
         let sparkle = pow(max(dot(reflect(-g.sun_dir.xyz, n), view), 0.0), 180.0) * 6.0 * visibility;
-        var color = mix(body * (0.6 + 0.4 * visibility), reflection, 0.15 + fresnel * 0.75) + g.sun_color.rgb * sparkle;
+        // Das Wasser selbst ist nur so hell wie das Licht, das auf es fällt.
+        let light = clamp(luminance(g.sky_ambient.rgb) * 2.0 + luminance(g.sun_color.rgb) * 0.5, 0.04, 1.0);
+        var color = mix(night_grade(body * light * (0.6 + 0.4 * visibility)), reflection, 0.15 + fresnel * 0.75) + g.sun_color.rgb * sparkle;
         color = apply_fog(color, in.world_pos);
         return vec4<f32>(tonemap(color), 1.0);
     }
@@ -201,7 +271,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         diffuse *= sun_visibility(in.world_pos, n);
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
-    var color = albedo * (ambient + g.sun_color.rgb * diffuse);
+    var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse));
+    // Selbstleuchtendes bleibt farbig – nachts stechen Pilze, Kristalle und Funken heraus.
     if (kind == MAT_EMISSIVE) {
         color += albedo * in.material.y;
     }

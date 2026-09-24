@@ -78,6 +78,11 @@ pub struct World {
     /// Startpunkt für neue Spieler.
     pub spawn: Vec3,
     pub terrain: Terrain,
+    /// Tageszeit mit Sonne, Mond und Himmelsfarben.
+    pub day: DayCycle,
+    /// Zufall für Effekte wie Glühwürmchen (muss nicht auf allen Rechnern gleich sein).
+    effects_rng: Rng,
+    firefly_timer: f32,
     capsule: MeshId,
 }
 
@@ -96,6 +101,9 @@ impl World {
             puppets: HashMap::new(),
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
+            day: DayCycle::default(),
+            effects_rng: Rng::new(7),
+            firefly_timer: 0.0,
             capsule,
         };
         for (id, spec) in island.resources {
@@ -267,8 +275,43 @@ impl World {
         self.place_resource(ctx, id);
     }
 
-    /// Dreht Figuren weich in ihre Blickrichtung und lässt getroffene Rohstoffe wackeln.
+    /// Glühwürmchen in der Nacht rund um die Kamera, über Wiesen und im Wald.
+    fn fireflies(&mut self, ctx: &mut Context) {
+        let night = ctx.env.sky.stars;
+        if night < 0.3 {
+            return;
+        }
+        self.firefly_timer -= ctx.time.delta;
+        while self.firefly_timer < 0.0 {
+            self.firefly_timer += 0.12 / night;
+            let rng = &mut self.effects_rng;
+            let offset = vec2(rng.range(-28.0, 28.0), rng.range(-28.0, 28.0));
+            let (x, z) = (ctx.camera.position.x + offset.x, ctx.camera.position.z + offset.y);
+            let ground = self.terrain.height_at(x, z);
+            if !(2.0..20.0).contains(&ground) {
+                continue;
+            }
+            let color = if rng.chance(0.2) { vec3(0.35, 0.9, 1.0) } else { vec3(0.85, 1.0, 0.3) };
+            ctx.particles.burst(Burst {
+                position: vec3(x, ground + rng.range(0.4, 2.2), z),
+                count: 1,
+                color,
+                color_variation: 0.1,
+                speed: 0.5,
+                direction: Vec3::ZERO,
+                size: 0.09,
+                life: 5.0,
+                gravity: -0.03,
+                glow: 5.0,
+            });
+        }
+    }
+
+    /// Tageszeit auf Licht und Himmel anwenden, Figuren drehen und animieren,
+    /// getroffene Rohstoffe wackeln lassen.
     pub fn update_visuals(&mut self, ctx: &mut Context) {
+        self.day.apply(&mut ctx.env);
+        self.fireflies(ctx);
         let dt = ctx.time.delta;
         let blend = (dt * 12.0).min(1.0);
         for (id, avatar) in &self.players {

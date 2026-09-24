@@ -91,6 +91,19 @@ impl Session {
         }
     }
 
+    /// Stellt die Uhr vor (nur wer die Welt berechnet: Einzelspieler, Host, Server).
+    pub fn skip_time(&mut self, hours: f32) -> bool {
+        if self.authority.is_none() {
+            return false;
+        }
+        self.world.day.advance(hours * self.world.day.seconds_per_hour);
+        true
+    }
+
+    pub fn day(&self) -> &DayCycle {
+        &self.world.day
+    }
+
     pub fn world(&self) -> &World {
         &self.world
     }
@@ -302,6 +315,20 @@ mod tests {
         assert_eq!(resource.health, resource.spec.max_health, "Server hat einen Schlag aus der Ferne angenommen");
     }
 
+
+    #[test]
+    fn uhrzeit_kommt_beim_client_an() {
+        let mut pair = Pair::start(false);
+        pair.run(30);
+        assert!(!pair.client.session.skip_time(5.0), "Client darf die Zeit nicht verstellen");
+        // 12 Stunden ab 8 Uhr: 20 Uhr (noch Tag, gleiche Geschwindigkeit überall).
+        assert!(pair.server.session.skip_time(12.0));
+        pair.run(90);
+        let (server, client) = (pair.server.session.day(), pair.client.session.day());
+        assert_eq!(server.day, client.day);
+        assert!((server.hour - client.hour).abs() < 0.05, "Server {} / Client {}", server.clock(), client.clock());
+        assert!(server.hour > 19.9, "Zeitsprung fehlt: {}", server.clock());
+    }
     #[test]
     fn belegter_port_liefert_fehlermeldung() {
         let mut ctx = Context::headless();

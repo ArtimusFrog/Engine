@@ -35,6 +35,9 @@ struct Globals {
     fog: [f32; 4],
     shadow_params: [f32; 4],
     zenith: [f32; 4],
+    sky_sun: [f32; 4],
+    sky_moon: [f32; 4],
+    sky_misc: [f32; 4],
 }
 
 #[repr(C)]
@@ -502,6 +505,9 @@ impl Renderer {
             fog: env.sky_color.extend(env.fog_density).into(),
             shadow_params: [1.0 / SHADOW_MAP_SIZE as f32, texel_world * 1.5, ctx.time.elapsed, 0.0],
             zenith: env.zenith_color.extend(env.exposure).into(),
+            sky_sun: env.sky.sun_direction.normalize().extend(env.sky.sun_visible).into(),
+            sky_moon: env.sky.moon_direction.normalize().extend(env.sky.moon_visible).into(),
+            sky_misc: [env.sky.stars, env.sky.glow, 0.0, 0.0],
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 

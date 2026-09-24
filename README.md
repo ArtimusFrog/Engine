@@ -67,6 +67,7 @@ zwischen zwei Server-Ständen interpoliert, damit sie flüssig laufen.
 | Esc | Menü (Weiter, Einstellungen, Hauptmenü, Beenden) |
 | Tab (halten) | Spielerliste |
 | F3 | Debug-Anzeige (FPS, Objekte, Draw-Calls) |
+| F6 | Eine Stunde vorspulen (nur allein oder als Host) |
 | F1 | Freie Kamera an/aus (rechte Maustaste + WASD/QE) |
 | F12 | Screenshot nach `screenshots/` |
 
@@ -95,3 +96,10 @@ Die Engine lädt glTF-Modelle (`.glb`) mit Skelett, Textur und Animationen
 (`engine::model::Model`, `Animator`) – eigene Modelle aus Blender funktionieren genauso.
 
 Test-Schalter für Screenshots: `--figur barbar`, `--kamera-vorne`, `--demo-hacken`.
+
+## Tag und Nacht
+
+Ein Spieltag dauert etwa 20 Minuten (eine Stunde pro Minute, nachts doppelt so schnell).
+Die Uhrzeit bestimmt der Server und schickt sie mit jedem Weltzustand an alle Spieler.
+Die Leiste oben zeigt Tageszeit, Uhr, Tag und den Stand von Sonne bzw. Mond.
+Test-Schalter: `--uhrzeit 22.5`, `--blick-hoch`.
