@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engine JN – Fantasy-Insel für dich und deine Freunde</title>
+  <meta name="description" content="Engine JN: eine Fantasy-Insel zum Erkunden, Sammeln und Bauen – gemeinsam im Multiplayer. Kostenlos für Windows.">
+  <link rel="icon" href="bilder/icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero__bild" role="img" aria-label="Die Insel im Abendlicht"></div>
+    <nav class="nav">
+      <a class="nav__logo" href="#">ENGINE JN</a>
+      <div class="nav__links">
+        <a href="#spiel">Das Spiel</a>
+        <a href="#neues">Neuigkeiten</a>
+        <a href="#installieren">Installieren</a>
+      </div>
+    </nav>
+    <div class="hero__inhalt">
+      <p class="hero__kicker">Fantasy · Multiplayer · Low-Poly</p>
+      <h1>ENGINE JN</h1>
+      <div class="zier"><span></span><i></i><span></span></div>
+      <p class="hero__text">Eine Insel voller Wälder, Berge und Geheimnisse. Fälle Bäume, sammle Stein, entdecke die Tiere der Wildnis – allein oder zusammen mit deinen Freunden.</p>
+
+      <div class="downloads" id="download">
+        <a class="dl dl--an" id="dl-windows" href="downloads/EngineJN-Windows.exe" download>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4.5v7H3zm0 13 7.5 1v-7H3zM11.5 4.4 21 3v8.5h-9.5zm0 15.2L21 21v-8.5h-9.5z"/></svg>
+          <span class="dl__text">
+            <strong>Für Windows herunterladen</strong>
+            <small id="dl-windows-info">Windows 10 und 11 · kostenlos</small>
+          </span>
+        </a>
+        <div class="dl dl--aus" id="dl-mac" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.8-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4zM13.9 5c.7-.9 1.2-2 1-3.2-1 .1-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.1 1.2.1 2.3-.6 3.1-1.5z"/></svg>
+          <span class="dl__text">
+            <strong>Für macOS</strong>
+            <small>Bald verfügbar</small>
+          </span>
+        </div>
+      </div>
+      <p class="hero__version" id="version">&nbsp;</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="abschnitt" id="spiel">
+      <h2>Was dich erwartet</h2>
+      <div class="karten">
+        <article class="karte">
+          <div class="karte__symbol">⛰</div>
+          <h3>Eine lebendige Insel</h3>
+          <p>Wiesen, dichte Wälder, verschneite Gipfel, Palmenstrände und ein verzauberter Hain, der nachts leuchtet.</p>
+        </article>
+        <article class="karte">
+          <div class="karte__symbol">⚔</div>
+          <h3>Gemeinsam spielen</h3>
+          <p>Tritt dem Server bei und erkunde die Welt mit deinen Freunden – flüssig, auch über das Internet.</p>
+        </article>
+        <article class="karte">
+          <div class="karte__symbol">☾</div>
+          <h3>Tag und Nacht</h3>
+          <p>Sonnenaufgänge, goldene Abende und Sternennächte mit Glühwürmchen, Grillenzirpen und Mondlicht.</p>
+        </article>
+        <article class="karte">
+          <div class="karte__symbol">⚒</div>
+          <h3>Sammeln und bauen</h3>
+          <p>Fälle Bäume, schlage Stein und sammle Rohstoffe. Die Welt merkt sich, was ihr verändert habt.</p>
+        </article>
+      </div>
+
+      <div class="galerie">
+        <figure><img src="bilder/abend.jpg" alt="Spielfigur am Strand im Abendlicht" loading="lazy"><figcaption>Goldene Stunde am Strand</figcaption></figure>
+        <figure><img src="bilder/tag.jpg" alt="Wiese mit Bäumen und Bergen am Tag" loading="lazy"><figcaption>Die Wiesen im Süden</figcaption></figure>
+        <figure><img src="bilder/nacht.jpg" alt="Die Insel bei Nacht" loading="lazy"><figcaption>Wenn der Mond aufgeht</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="abschnitt abschnitt--dunkel" id="neues">
+      <h2>Neuigkeiten</h2>
+      <div class="neues">
+        <p class="neues__kopf" id="neues-kopf">Wird geladen …</p>
+        <ul id="neues-liste"></ul>
+      </div>
+    </section>
+
+    <section class="abschnitt" id="installieren">
+      <h2>So geht's los</h2>
+      <ol class="schritte">
+        <li><strong>Herunterladen</strong> – oben auf „Für Windows herunterladen“ klicken.</li>
+        <li><strong>Starten</strong> – die Datei öffnen. Zeigt Windows „Der Computer wurde durch Windows geschützt“, auf <em>Weitere Informationen</em> und dann <em>Trotzdem ausführen</em> klicken. Das erscheint, weil unser kleines Projekt (noch) kein kostenpflichtiges Signaturzertifikat hat.</li>
+        <li><strong>Installieren</strong> – der Launcher richtet sich selbst ein, lädt das Spiel und hält es ab dann automatisch aktuell.</li>
+        <li><strong>Spielen</strong> – im Spiel auf „Beitreten“ klicken und die Server-Adresse eingeben, die du von uns bekommen hast.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="fuss">
+    <p>ENGINE JN · ein Hobbyprojekt unter Freunden</p>
+    <p class="fuss__klein">Figuren: KayKit Adventurers von Kay Lousberg (CC0)</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

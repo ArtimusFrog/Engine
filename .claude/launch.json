@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webseite",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["deploy/web/vorschau.mjs"],
+      "port": 8080
+    }
+  ]
+}

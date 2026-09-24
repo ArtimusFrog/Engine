@@ -283,6 +283,7 @@ fn init_logging() {
 ///
 /// Kommandozeile:
 /// - `--screenshot <datei.png>`: nach einigen Frames ein Bild speichern und beenden
+///   (mit `--ohne-ui` nur die Welt)
 /// - `--frames <n>`: Anzahl Frames vor dem Screenshot (Standard 30)
 pub fn run(config: EngineConfig, game: impl Game) {
     init_logging();
@@ -340,6 +341,8 @@ pub fn run_headless(mut game: impl Game) {
 struct AutoScreenshot {
     path: PathBuf,
     after_frames: u64,
+    /// `--ohne-ui`: nur die 3D-Welt, ohne Menüs und Anzeigen.
+    with_ui: bool,
 }
 
 impl AutoScreenshot {
@@ -348,7 +351,7 @@ impl AutoScreenshot {
         let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1));
         let path = value("--screenshot")?;
         let after_frames = value("--frames").and_then(|n| n.parse().ok()).unwrap_or(30);
-        Some(AutoScreenshot { path: path.into(), after_frames })
+        Some(AutoScreenshot { path: path.into(), after_frames, with_ui: !args.iter().any(|a| a == "--ohne-ui") })
     }
 }
 
@@ -451,7 +454,7 @@ impl App {
         }
         if let Some(shot) = &self.auto_screenshot {
             if self.ctx.time.frame + 1 >= shot.after_frames {
-                match renderer.screenshot(&self.ctx, Some(&ui_frame), &shot.path) {
+                match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &shot.path) {
                     Ok(()) => println!("Screenshot gespeichert: {}", shot.path.display()),
                     Err(e) => eprintln!("Screenshot fehlgeschlagen: {e}"),
                 }

@@ -4,3 +4,6 @@
 *.blend1
 __pycache__/
 /deploy/server.txt
+/dist
+/deploy/web/.env.deploy
+/deploy/web/node_modules

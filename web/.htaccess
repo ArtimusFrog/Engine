@@ -1,0 +1,33 @@
+# Engine JN – Webseite und Update-Server (Strato, Apache)
+
+Options -Indexes
+DirectoryIndex index.html
+
+<IfModule mod_headers.c>
+  # Update-Liste und Versionsinfo nie zwischenspeichern – sonst sehen Spieler Updates zu spät.
+  <FilesMatch "^(manifest\.signed|version\.json)$">
+    Header set Cache-Control "no-store"
+  </FilesMatch>
+  # Dateien unter updates/*/dateien/ sind nach ihrem Inhalt benannt und ändern sich nie.
+  <If "%{REQUEST_URI} =~ m#/updates/[^/]+/dateien/#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+    Header set Content-Type "application/octet-stream"
+  </If>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 7 days"
+  ExpiresByType image/png "access plus 7 days"
+  ExpiresByType text/css "access plus 1 day"
+  ExpiresByType application/javascript "access plus 1 day"
+</IfModule>
+
+# Downloads immer als Datei anbieten
+<FilesMatch "\.exe$">
+  <IfModule mod_headers.c>
+    Header set Content-Disposition "attachment"
+  </IfModule>
+</FilesMatch>
