@@ -83,3 +83,15 @@ Prozess: Verbinden, Bewegung, Vorhersage ohne Korrekturen, synchrone Kisten).
     cargo run -p game -- --screenshot screenshots/test.png --frames 60
 
 Startet das Spiel, speichert nach 60 Frames ein Bild und beendet sich. Mit `--autopilot` läuft die Figur dabei von allein los.
+
+## Spielfiguren
+
+Die Figuren (Ritter, Barbar, Magier, Schurkin) stammen aus dem
+[KayKit Character Pack: Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0)
+von Kay Lousberg – Lizenz CC0 (frei nutzbar, auch kommerziell). Details in
+`game/assets/characters/LICENSE-KayKit.txt`. Die Figur wählt man in den Einstellungen.
+
+Die Engine lädt glTF-Modelle (`.glb`) mit Skelett, Textur und Animationen
+(`engine::model::Model`, `Animator`) – eigene Modelle aus Blender funktionieren genauso.
+
+Test-Schalter für Screenshots: `--figur barbar`, `--kamera-vorne`, `--demo-hacken`.

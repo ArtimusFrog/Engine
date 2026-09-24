@@ -8,12 +8,13 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::app::Context;
-use crate::mesh::{MeshData, Vertex};
+use crate::mesh::Vertex;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_MAP_SIZE: u32 = 2048;
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 12 => Float32x2];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
     7 => Float32x3, 8 => Float32x3, 9 => Float32x3,
@@ -63,6 +64,8 @@ struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    version: u64,
+    texture: Option<crate::assets::TextureId>,
 }
 
 pub(crate) struct Renderer {
@@ -81,6 +84,10 @@ pub(crate) struct Renderer {
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
     meshes: Vec<GpuMesh>,
+    textures: Vec<wgpu::BindGroup>,
+    white_texture: wgpu::BindGroup,
+    texture_layout: wgpu::BindGroupLayout,
+    texture_sampler: wgpu::Sampler,
     adapter_name: String,
     ui: egui_wgpu::Renderer,
     stats: RenderStats,
@@ -244,9 +251,42 @@ impl Renderer {
             cache: None,
         });
 
+        // Gruppe 1: Textur des Meshs (Meshes ohne Textur bekommen ein weißes Pixel).
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("textur"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("textur"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
+        let white = crate::assets::Image { width: 1, height: 1, rgba: vec![255; 4] };
+        let white_texture = texture_bind_group(&device, &queue, &texture_layout, &texture_sampler, &white);
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("basic"),
-            bind_group_layouts: &[Some(&globals_layout)],
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout)],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -328,6 +368,10 @@ impl Renderer {
             instance_buffer,
             instance_capacity,
             meshes: Vec::new(),
+            textures: Vec::new(),
+            white_texture,
+            texture_layout,
+            texture_sampler,
             adapter_name,
             ui,
             stats: RenderStats::default(),
@@ -440,7 +484,7 @@ impl Renderer {
     }
 
     fn draw(&mut self, ctx: &Context, target: &wgpu::TextureView, ui: Option<&UiFrame>) {
-        self.upload_new_meshes(ctx.assets.meshes());
+        self.sync_assets(&ctx.assets);
 
         let env = &ctx.env;
         let aspect = self.config.width as f32 / self.config.height as f32;
@@ -513,7 +557,7 @@ impl Renderer {
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches);
+            self.draw_batches(&mut pass, &batches, false);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -537,11 +581,12 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_bind_group(1, &self.white_texture, &[]);
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches);
+            self.draw_batches(&mut pass, &batches, true);
         }
         self.stats = RenderStats { instances: instances.len(), draw_calls: batches.len() * 2 };
 
@@ -594,31 +639,77 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)]) {
+    /// Zeichnet die Stapel. Mit `textured` wird pro Mesh die passende Textur gebunden
+    /// (nicht im Schatten-Durchgang, der nur Tiefe braucht).
+    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], textured: bool) {
         for (mesh, instances) in batches {
             let mesh = &self.meshes[*mesh];
+            if mesh.index_count == 0 {
+                continue;
+            }
+            if textured {
+                let texture = mesh.texture.and_then(|t| self.textures.get(t.0 as usize)).unwrap_or(&self.white_texture);
+                pass.set_bind_group(1, texture, &[]);
+            }
             pass.set_vertex_buffer(0, mesh.vertices.slice(..));
             pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh.index_count, 0, instances.clone());
         }
     }
 
-    fn upload_new_meshes(&mut self, meshes: &[MeshData]) {
-        for mesh in &meshes[self.meshes.len()..] {
-            self.meshes.push(GpuMesh {
-                vertices: self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mesh vertices"),
-                    contents: bytemuck::cast_slice(&mesh.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                indices: self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mesh indices"),
-                    contents: bytemuck::cast_slice(&mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
-                index_count: mesh.indices.len() as u32,
-            });
+    /// Lädt neue und geänderte Meshes und Texturen auf die Grafikkarte.
+    fn sync_assets(&mut self, assets: &crate::assets::Assets) {
+        for image in &assets.textures()[self.textures.len()..] {
+            let bind_group = self.create_texture(image);
+            self.textures.push(bind_group);
         }
+        for (index, slot) in assets.mesh_slots().iter().enumerate() {
+            let mesh = &slot.data;
+            let vertex_bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+            let index_bytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
+            if let Some(gpu) = self.meshes.get_mut(index) {
+                if gpu.version == slot.version {
+                    continue;
+                }
+                // Passt die neue Geometrie in die alten Puffer, nur überschreiben.
+                if vertex_bytes.len() as u64 <= gpu.vertices.size() && index_bytes.len() as u64 <= gpu.indices.size() {
+                    self.queue.write_buffer(&gpu.vertices, 0, vertex_bytes);
+                    self.queue.write_buffer(&gpu.indices, 0, index_bytes);
+                    gpu.index_count = mesh.indices.len() as u32;
+                    gpu.version = slot.version;
+                    gpu.texture = mesh.texture;
+                    continue;
+                }
+            }
+            let buffer = |bytes: &[u8], usage: wgpu::BufferUsages| {
+                // Etwas Reserve, damit wachsende Meshes nicht jedes Mal neu angelegt werden.
+                let size = (bytes.len() as u64 * 5 / 4).max(256).next_multiple_of(4);
+                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("mesh"),
+                    size,
+                    usage: usage | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue.write_buffer(&buffer, 0, bytes);
+                buffer
+            };
+            let gpu = GpuMesh {
+                vertices: buffer(vertex_bytes, wgpu::BufferUsages::VERTEX),
+                indices: buffer(index_bytes, wgpu::BufferUsages::INDEX),
+                index_count: mesh.indices.len() as u32,
+                version: slot.version,
+                texture: mesh.texture,
+            };
+            if index < self.meshes.len() {
+                self.meshes[index] = gpu;
+            } else {
+                self.meshes.push(gpu);
+            }
+        }
+    }
+
+    fn create_texture(&self, image: &crate::assets::Image) -> wgpu::BindGroup {
+        texture_bind_group(&self.device, &self.queue, &self.texture_layout, &self.texture_sampler, image)
     }
 
     fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
@@ -670,4 +761,37 @@ fn instance(model: Mat4, color: glam::Vec4, material: [f32; 4]) -> Instance {
         color: color.into(),
         material,
     }
+}
+
+fn texture_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    image: &crate::assets::Image,
+) -> wgpu::BindGroup {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("textur"),
+            size: wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // PNG-Farben sind sRGB; so liefert der Shader beim Lesen lineare Werte.
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &image.rgba,
+    );
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("textur"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+        ],
+    })
 }

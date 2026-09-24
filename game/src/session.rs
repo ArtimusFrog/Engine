@@ -3,7 +3,8 @@
 use engine::prelude::*;
 
 use crate::client::Replica;
-use crate::protocol::{Inventory, PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
+use crate::characters::Action;
+use crate::protocol::{Hello, Inventory, PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
 use crate::server::Authority;
 use crate::world::World;
 
@@ -28,7 +29,7 @@ pub struct Session {
 
 impl Session {
     /// Leert die Welt und startet eine neue Runde.
-    pub fn start(ctx: &mut Context, mode: Mode, name: &str) -> Result<Session, String> {
+    pub fn start(ctx: &mut Context, mode: Mode, hello: &Hello) -> Result<Session, String> {
         ctx.reset_world();
         let is_client = matches!(mode, Mode::Join { .. });
         // Beim Client bewegt der Server die Objekte, nicht die eigene Physik.
@@ -44,7 +45,7 @@ impl Session {
                 (Some(Authority::new(Some(net))), None)
             }
             Mode::Join { address } => {
-                let replica = Replica::connect(address, name).map_err(|e| format!("{address} ist nicht erreichbar: {e}"))?;
+                let replica = Replica::connect(address, hello).map_err(|e| format!("{address} ist nicht erreichbar: {e}"))?;
                 log::info!("Verbinde mit {address} …");
                 (None, Some(replica))
             }
@@ -53,7 +54,7 @@ impl Session {
         let mut world = World::new(ctx);
         if matches!(mode, Mode::Offline | Mode::Host { .. }) {
             let spawn = world.spawn;
-            world.spawn_player(ctx, HOST_PLAYER, name, spawn);
+            world.spawn_player(ctx, HOST_PLAYER, &hello.name, hello.class, spawn);
         }
         Ok(Session { mode, world, authority, replica })
     }
@@ -76,7 +77,17 @@ impl Session {
     pub fn preview_harvest(&mut self, ctx: &mut Context, id: u32) {
         if let Some(replica) = &mut self.replica {
             self.world.preview_hit(ctx, id);
+            if let Some(local) = replica.local_id() {
+                self.world.play_action(local, Action::Chop);
+            }
             replica.note_preview(id, ctx.time.tick);
+        }
+    }
+
+    /// Wurf-Animation der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
+    pub fn preview_throw(&mut self) {
+        if let Some(local) = self.replica.as_ref().and_then(Replica::local_id) {
+            self.world.play_action(local, Action::Throw);
         }
     }
 
@@ -131,6 +142,11 @@ impl Session {
 mod tests {
     use super::*;
     use crate::island::ResourceKind;
+    use crate::protocol::CharacterClass;
+
+    fn hello(name: &str) -> Hello {
+        Hello { name: name.into(), class: CharacterClass::Mage }
+    }
 
     /// Minimales Spiel für Tests: eine Runde, deren Figur optional geradeaus läuft
     /// oder auf einen Rohstoff einschlägt.
@@ -167,13 +183,13 @@ mod tests {
     impl Pair {
         fn start(client_autopilot: bool) -> Pair {
             let mut server_ctx = Context::headless();
-            let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, "Server").unwrap();
+            let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, &hello("Server")).unwrap();
             let port = session.port().expect("Server hat keinen Port");
             let server = TestGame { session, autopilot: false, harvest: None };
 
             let mut client_ctx = Context::headless();
             let address = format!("127.0.0.1:{port}");
-            let session = Session::start(&mut client_ctx, Mode::Join { address }, "Testerin").unwrap();
+            let session = Session::start(&mut client_ctx, Mode::Join { address }, &hello("Testerin")).unwrap();
             let client = TestGame { session, autopilot: client_autopilot, harvest: None };
             Pair { server, server_ctx, client, client_ctx }
         }
@@ -197,6 +213,7 @@ mod tests {
         assert!(!pair.client.session.is_connecting());
         assert_eq!(pair.server.session.world().players[&id].name, "Testerin", "Server kennt den Namen nicht");
         assert_eq!(pair.client.session.world().players[&id].name, "Testerin");
+        assert_eq!(pair.server.session.world().players[&id].class, CharacterClass::Mage, "Figur kommt nicht an");
     }
 
     #[test]
@@ -288,10 +305,10 @@ mod tests {
     #[test]
     fn belegter_port_liefert_fehlermeldung() {
         let mut ctx = Context::headless();
-        let first = Session::start(&mut ctx, Mode::Server { port: 0 }, "A").unwrap();
+        let first = Session::start(&mut ctx, Mode::Server { port: 0 }, &hello("A")).unwrap();
         let port = first.port().unwrap();
         let mut ctx2 = Context::headless();
-        let error = Session::start(&mut ctx2, Mode::Host { port }, "B").err().expect("Zweiter Server auf demselben Port");
+        let error = Session::start(&mut ctx2, Mode::Host { port }, &hello("B")).err().expect("Zweiter Server auf demselben Port");
         assert!(error.contains(&port.to_string()), "{error}");
     }
 }

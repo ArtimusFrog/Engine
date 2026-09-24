@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use engine::prelude::*;
 
+use crate::characters::Action;
 use crate::protocol::*;
 use std::collections::HashMap;
 
@@ -40,15 +41,17 @@ pub struct Replica {
     last_reconciled: u32,
     pub corrections: u32,
     name: String,
+    class: CharacterClass,
     /// Rohstoffe, deren Treffer schon vorab gezeigt wurden (Takt der Vorschau).
     previewed: HashMap<u32, u64>,
 }
 
 impl Replica {
-    pub fn connect(address: &str, name: &str) -> std::io::Result<Self> {
+    pub fn connect(address: &str, hello: &Hello) -> std::io::Result<Self> {
         Ok(Replica {
-            net: NetClient::connect(address, PROTOCOL_ID, name.as_bytes())?,
-            name: name.to_string(),
+            net: NetClient::connect(address, PROTOCOL_ID, &encode(hello))?,
+            name: hello.name.clone(),
+            class: hello.class,
             previewed: HashMap::new(),
             local_id: None,
             next_seq: 1,
@@ -115,26 +118,35 @@ impl Replica {
                 self.local_id = Some(player_id);
                 self.server_tick = Some(tick as f64);
                 let spawn = world.spawn;
-                world.spawn_player(ctx, player_id, &self.name, spawn);
+                world.spawn_player(ctx, player_id, &self.name, self.class, spawn);
             }
-            ServerMessage::PlayerJoined { player_id, name } => {
+            ServerMessage::PlayerJoined { player_id, name, class } => {
                 let spawn = world.spawn;
-                world.spawn_player(ctx, player_id, &name, spawn);
+                world.spawn_player(ctx, player_id, &name, class, spawn);
             }
             ServerMessage::PlayerLeft { player_id } => world.remove_player(ctx, player_id),
-            ServerMessage::Spawn { id, kind, position, velocity } => {
+            ServerMessage::Spawn { id, kind, position, velocity, by } => {
+                if let Some(thrower) = by.filter(|&p| Some(p) != self.local_id) {
+                    world.play_action(thrower, Action::Throw);
+                }
                 if !world.objects.contains_key(&id) {
                     world.spawn_object(ctx, id, kind, position, velocity);
                 }
             }
             ServerMessage::Despawn { id } => world.remove_object(ctx, id),
             ServerMessage::Snapshot(snapshot) => self.receive_snapshot(ctx, world, snapshot),
-            ServerMessage::ResourceHit { id, health } => {
+            ServerMessage::ResourceHit { id, health, by } => {
+                if Some(by) != self.local_id {
+                    world.play_action(by, Action::Chop);
+                }
                 // Eigene Schläge wurden schon vorab gezeigt – nicht doppelt.
                 let shown = self.previewed.remove(&id).is_some_and(|tick| ctx.time.tick < tick + 60);
                 world.resource_hit(ctx, id, health, !shown);
             }
-            ServerMessage::ResourceGone { id } => {
+            ServerMessage::ResourceGone { id, by } => {
+                if Some(by) != self.local_id {
+                    world.play_action(by, Action::Chop);
+                }
                 self.previewed.remove(&id);
                 world.resource_hit(ctx, id, 0, true);
             }

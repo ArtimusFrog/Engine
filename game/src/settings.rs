@@ -5,12 +5,14 @@ use std::path::PathBuf;
 use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::clean_name;
+use crate::protocol::{clean_name, CharacterClass, Hello};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub name: String,
+    /// Gewählte Figur.
+    pub character: CharacterClass,
     /// Faktor auf die Grundempfindlichkeit der Maus (1 = Standard).
     pub mouse_sensitivity: f32,
     pub invert_y: bool,
@@ -26,6 +28,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             name: default_name(),
+            character: CharacterClass::default(),
             mouse_sensitivity: 1.0,
             invert_y: false,
             fov_degrees: 70.0,
@@ -69,5 +72,12 @@ impl Settings {
     pub fn apply(&self, ctx: &mut Context) {
         ctx.camera.fov_y = self.fov_degrees.clamp(50.0, 120.0).to_radians();
         ctx.display = Display { fullscreen: self.fullscreen, vsync: self.vsync };
+    }
+}
+
+impl Settings {
+    /// Was beim Verbinden an den Server geht.
+    pub fn hello(&self) -> Hello {
+        Hello { name: clean_name(&self.name), class: self.character }
     }
 }

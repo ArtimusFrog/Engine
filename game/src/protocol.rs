@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0003;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0004;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -65,14 +65,15 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     Welcome { player_id: PlayerId, tick: u32 },
-    PlayerJoined { player_id: PlayerId, name: String },
+    PlayerJoined { player_id: PlayerId, name: String, class: CharacterClass },
     PlayerLeft { player_id: PlayerId },
-    Spawn { id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3 },
+    /// `by`: wer das Objekt geworfen hat (für die Wurf-Animation).
+    Spawn { id: NetId, kind: ObjectKind, position: Vec3, velocity: Vec3, by: Option<PlayerId> },
     Despawn { id: NetId },
     Snapshot(Snapshot),
     /// Ein Rohstoff wurde getroffen und hat noch `health` Schläge übrig.
-    ResourceHit { id: u32, health: u8 },
-    ResourceGone { id: u32 },
+    ResourceHit { id: u32, health: u8, by: PlayerId },
+    ResourceGone { id: u32, by: PlayerId },
     ResourceBack { id: u32 },
     /// Für neue Spieler: welche Rohstoffe fehlen oder beschädigt sind.
     ResourceStates { gone: Vec<u32>, damaged: Vec<(u32, u8)> },
@@ -122,5 +123,44 @@ impl Inventory {
             crate::island::ResourceKind::Wood => self.wood += amount,
             crate::island::ResourceKind::Stone => self.stone += amount,
         }
+    }
+}
+
+/// Welche Figur ein Spieler spielt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CharacterClass {
+    #[default]
+    Knight,
+    Barbarian,
+    Mage,
+    Rogue,
+}
+
+impl CharacterClass {
+    pub const ALL: [CharacterClass; 4] = [CharacterClass::Knight, CharacterClass::Barbarian, CharacterClass::Mage, CharacterClass::Rogue];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CharacterClass::Knight => "Ritter",
+            CharacterClass::Barbarian => "Barbar",
+            CharacterClass::Mage => "Magier",
+            CharacterClass::Rogue => "Schurkin",
+        }
+    }
+}
+
+/// Was der Client beim Verbinden mitschickt.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Hello {
+    pub name: String,
+    pub class: CharacterClass,
+}
+
+impl Hello {
+    /// Liest die Begrüßung; alte oder kaputte Daten werden als bloßer Name gedeutet.
+    pub fn parse(bytes: &[u8]) -> Hello {
+        postcard::from_bytes(bytes)
+            .map(|hello: Hello| Hello { name: clean_name(&hello.name), ..hello })
+            .unwrap_or_else(|_| Hello { name: clean_name(&String::from_utf8_lossy(bytes)), class: CharacterClass::default() })
     }
 }

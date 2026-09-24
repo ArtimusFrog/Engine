@@ -8,6 +8,7 @@ pub mod assets;
 pub mod camera;
 pub mod input;
 pub mod mesh;
+pub mod model;
 pub mod net;
 pub mod noise;
 pub mod particles;
@@ -25,7 +26,8 @@ pub use app::{run, run_headless, Context, Display, EngineConfig, Environment, Fr
 pub mod prelude {
     pub use crate::app::{run, run_headless, Context, Display, EngineConfig, Environment, Game, Time};
     pub use egui;
-    pub use crate::assets::{Assets, MeshId};
+    pub use crate::assets::{Assets, Image, MeshId, TextureId};
+    pub use crate::model::{Animator, Model};
     pub use crate::camera::{Camera, FlyController, OrbitController};
     pub use crate::input::{Input, KeyCode, MouseButton};
     pub use crate::mesh::MeshData;

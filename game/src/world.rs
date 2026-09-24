@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 use engine::prelude::*;
 
 use crate::island::{self, ResourceKind, ResourceSpec};
-use crate::protocol::{Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
+use crate::characters::{Action, Puppet};
+use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
 
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_SPEED: f32 = 9.0;
@@ -29,6 +30,7 @@ pub struct Avatar {
     pub last_throw_tick: u64,
     pub last_harvest_tick: u64,
     pub name: String,
+    pub class: CharacterClass,
 }
 
 pub struct NetObject {
@@ -71,6 +73,8 @@ pub struct World {
     pub resources: BTreeMap<u32, Resource>,
     by_entity: HashMap<EntityId, u32>,
     pub inventories: HashMap<PlayerId, Inventory>,
+    /// Sichtbare, animierte Figuren (nur mit Fenster).
+    puppets: HashMap<PlayerId, Puppet>,
     /// Startpunkt für neue Spieler.
     pub spawn: Vec3,
     pub terrain: Terrain,
@@ -89,6 +93,7 @@ impl World {
             resources: BTreeMap::new(),
             by_entity: HashMap::new(),
             inventories: HashMap::new(),
+            puppets: HashMap::new(),
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
             capsule,
@@ -103,26 +108,23 @@ impl World {
 
     // ---------- Spieler ----------
 
-    pub fn spawn_player(&mut self, ctx: &mut Context, id: PlayerId, name: &str, position: Vec3) {
+    pub fn spawn_player(&mut self, ctx: &mut Context, id: PlayerId, name: &str, class: CharacterClass, position: Vec3) {
         if self.players.contains_key(&id) {
             return;
         }
-        let entity = ctx.scene.spawn(
-            Entity::new(format!("Spieler {id}"), self.capsule)
-                .with_transform(Transform::from_position(position))
-                .with_color(player_color(id).extend(1.0)),
-        );
-        // Visier zeigt, wohin die Figur schaut.
-        ctx.scene.spawn(
-            Entity::new("Visier", ctx.assets.cube())
-                .with_parent(entity)
-                .with_transform(Transform::from_position(vec3(0.0, 0.45, -0.33)).with_scale(vec3(0.55, 0.18, 0.2)))
-                .with_color(vec4(0.02, 0.02, 0.03, 1.0)),
-        );
+        // Das Objekt der Kapsel trägt Position und Blickrichtung; sichtbar ist die animierte Figur.
+        let mut root = Entity::new(format!("Spieler {id}"), self.capsule)
+            .with_transform(Transform::from_position(position))
+            .with_color(player_color(id).extend(1.0));
+        root.visible = ctx.is_headless();
+        let entity = ctx.scene.spawn(root);
+        if !ctx.is_headless() {
+            self.puppets.insert(id, Puppet::new(ctx, class, entity));
+        }
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
         self.players.insert(
             id,
-            Avatar { entity, character, facing: 0.0, last_throw_tick: 0, last_harvest_tick: 0, name: name.to_string() },
+            Avatar { entity, character, facing: 0.0, last_throw_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
         );
         self.inventories.entry(id).or_default();
         log::info!("{name} ({id}) ist da");
@@ -133,6 +135,7 @@ impl World {
             ctx.physics.remove_character(avatar.character);
             ctx.scene.despawn(avatar.entity);
             self.inventories.remove(&id);
+            self.puppets.remove(&id);
             log::info!("{} ({id}) ist weg", avatar.name);
         }
     }
@@ -146,6 +149,13 @@ impl World {
         ctx.physics.drive_character(avatar.character, wish * speed, input.jump);
         if wish.length_squared() > 0.01 {
             avatar.facing = wish.x.atan2(-wish.z);
+        }
+    }
+
+    /// Lässt die Figur eines Spielers eine Aktion ausführen (nur Optik).
+    pub fn play_action(&mut self, player: PlayerId, action: Action) {
+        if let Some(puppet) = self.puppets.get_mut(&player) {
+            puppet.act(action);
         }
     }
 
@@ -261,10 +271,13 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         let dt = ctx.time.delta;
         let blend = (dt * 12.0).min(1.0);
-        for avatar in self.players.values() {
-            if let Some(entity) = ctx.scene.try_get_mut(avatar.entity) {
-                let target = Quat::from_rotation_y(-avatar.facing);
-                entity.transform.rotation = entity.transform.rotation.slerp(target, blend);
+        for (id, avatar) in &self.players {
+            let Some(entity) = ctx.scene.try_get_mut(avatar.entity) else { continue };
+            let target = Quat::from_rotation_y(-avatar.facing);
+            entity.transform.rotation = entity.transform.rotation.slerp(target, blend);
+            let position = entity.transform.position;
+            if let Some(puppet) = self.puppets.get_mut(id) {
+                puppet.update(ctx, position, self.terrain.height_at(position.x, position.z));
             }
         }
         for resource in self.resources.values_mut().filter(|r| r.shake > 0.0) {

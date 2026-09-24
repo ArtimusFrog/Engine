@@ -24,6 +24,8 @@ struct Globals {
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(1) @binding(0) var albedo_texture: texture_2d<f32>;
+@group(1) @binding(1) var albedo_sampler: sampler;
 
 const MAT_WATER: f32 = 1.0;
 const MAT_FOLIAGE: f32 = 2.0;
@@ -43,6 +45,7 @@ struct VertexIn {
     @location(9) n2: vec3<f32>,
     @location(10) color: vec4<f32>,
     @location(11) material: vec4<f32>,
+    @location(12) uv: vec2<f32>,
 };
 
 struct VertexOut {
@@ -51,6 +54,7 @@ struct VertexOut {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) @interpolate(flat) material: vec4<f32>,
+    @location(4) uv: vec2<f32>,
 };
 
 fn time() -> f32 {
@@ -95,6 +99,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.normal = normal_matrix * in.normal;
     out.color = in.vertex_color * in.color.rgb;
     out.material = in.material;
+    out.uv = in.uv;
     return out;
 }
 
@@ -165,6 +170,8 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    // Textur vor allen Verzweigungen lesen (WGSL verlangt einheitlichen Kontrollfluss).
+    let albedo = in.color * textureSample(albedo_texture, albedo_sampler, in.uv).rgb;
     let kind = in.material.x;
     var n = normalize(in.normal);
     let view = normalize(g.camera_pos.xyz - in.world_pos);
@@ -194,9 +201,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         diffuse *= sun_visibility(in.world_pos, n);
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
-    var color = in.color * (ambient + g.sun_color.rgb * diffuse);
+    var color = albedo * (ambient + g.sun_color.rgb * diffuse);
     if (kind == MAT_EMISSIVE) {
-        color += in.color * in.material.y;
+        color += albedo * in.material.y;
     }
     color = apply_fog(color, in.world_pos);
     return vec4<f32>(tonemap(color), 1.0);

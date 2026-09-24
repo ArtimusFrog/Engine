@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use engine::prelude::*;
 
+use crate::characters::Action;
 use crate::protocol::*;
 use crate::world::{World, FIRST_RUNTIME_ID, HARVEST_COOLDOWN_TICKS, RESPAWN_TICKS, THROW_COOLDOWN_TICKS, THROW_SPEED};
 
@@ -135,7 +136,9 @@ impl Authority {
         let health = resource.health.saturating_sub(1);
 
         world.resource_hit(ctx, id, health, true);
-        self.broadcast(if health == 0 { ServerMessage::ResourceGone { id } } else { ServerMessage::ResourceHit { id, health } });
+        world.play_action(player, Action::Chop);
+        let by = player;
+        self.broadcast(if health == 0 { ServerMessage::ResourceGone { id, by } } else { ServerMessage::ResourceHit { id, health, by } });
 
         // Jeder Schlag bringt etwas, der letzte einen Bonus.
         let inventory = world.inventories.entry(player).or_default();
@@ -161,7 +164,8 @@ impl Authority {
         let id = self.next_object_id;
         self.next_object_id += 1;
         world.spawn_object(ctx, id, ObjectKind::Ball, position, velocity);
-        self.broadcast(ServerMessage::Spawn { id, kind: ObjectKind::Ball, position, velocity });
+        world.play_action(player, Action::Throw);
+        self.broadcast(ServerMessage::Spawn { id, kind: ObjectKind::Ball, position, velocity, by: Some(player) });
 
         self.thrown.push_back(id);
         if self.thrown.len() > MAX_THROWN {
@@ -179,16 +183,17 @@ impl Authority {
             match event {
                 ServerEvent::Connected(id) => {
                     let spawn = world.spawn + vec3((id % 5) as f32 - 2.0, 0.0, 0.0);
-                    let name = clean_name(&String::from_utf8_lossy(&net.hello(id)));
-                    world.spawn_player(ctx, id, &name, spawn);
+                    let hello = Hello::parse(&net.hello(id));
+                    let (name, class) = (hello.name, hello.class);
+                    world.spawn_player(ctx, id, &name, class, spawn);
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
                     let mut intro = vec![ServerMessage::Welcome { player_id: id, tick: ctx.time.tick as u32 }];
                     intro.extend(
-                        world.players.iter().filter(|&(&p, _)| p != id).map(|(&p, a)| ServerMessage::PlayerJoined { player_id: p, name: a.name.clone() }),
+                        world.players.iter().filter(|&(&p, _)| p != id).map(|(&p, a)| ServerMessage::PlayerJoined { player_id: p, name: a.name.clone(), class: a.class }),
                     );
                     for (&object_id, object) in &world.objects {
                         if let Some((position, _)) = ctx.physics.body_pose(object.body) {
-                            intro.push(ServerMessage::Spawn { id: object_id, kind: object.kind, position, velocity: Vec3::ZERO });
+                            intro.push(ServerMessage::Spawn { id: object_id, kind: object.kind, position, velocity: Vec3::ZERO, by: None });
                         }
                     }
                     let gone = world.resources.iter().filter(|(_, r)| !r.is_present()).map(|(&id, _)| id).collect();
@@ -203,7 +208,7 @@ impl Authority {
                         net.send(id, Channel::Reliable, encode(&message));
                     }
                     for &other in self.clients.keys() {
-                        net.send(other, Channel::Reliable, encode(&ServerMessage::PlayerJoined { player_id: id, name: name.clone() }));
+                        net.send(other, Channel::Reliable, encode(&ServerMessage::PlayerJoined { player_id: id, name: name.clone(), class }));
                     }
                     self.clients.insert(
                         id,

@@ -50,6 +50,8 @@ pub struct Playground {
     themed: bool,
     /// Eigene Adresse im Heimnetz, damit Mitspieler wissen, wohin sie sich verbinden.
     local_ip: Option<std::net::IpAddr>,
+    /// Nur zum Testen: Figur hackt regelmäßig in die Luft.
+    demo_chop: bool,
 }
 
 impl Playground {
@@ -76,6 +78,7 @@ impl Playground {
             autopilot,
             themed: false,
             local_ip: None,
+            demo_chop: false,
         }
     }
 
@@ -87,7 +90,7 @@ impl Playground {
     }
 
     fn start_session(&mut self, ctx: &mut Context, mode: Mode) {
-        match Session::start(ctx, mode, &self.settings.name) {
+        match Session::start(ctx, mode, &self.settings.hello()) {
             Ok(session) => {
                 self.screen = if session.is_connecting() { Screen::Connecting } else { Screen::Playing };
                 self.session = Some(session);
@@ -159,6 +162,9 @@ impl Playground {
                     ctx.cursor_locked = true;
                 } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
                     self.throw_requested = true;
+                    if let Some(session) = &mut self.session {
+                        session.preview_throw();
+                    }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
                 // Rechte Maustaste halten: im Takt der Abklingzeit zuschlagen.
@@ -389,6 +395,17 @@ impl Playground {
                 ui.add(egui::TextEdit::singleline(&mut s.name).char_limit(MAX_NAME_CHARS).desired_width(220.0));
                 ui.end_row();
 
+                ui.label("Figur");
+                egui::ComboBox::from_id_salt("figur")
+                    .selected_text(s.character.label())
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        for class in crate::protocol::CharacterClass::ALL {
+                            ui.selectable_value(&mut s.character, class, class.label());
+                        }
+                    });
+                ui.end_row();
+
                 ui.label("Mausempfindlichkeit");
                 ui.add(egui::Slider::new(&mut s.mouse_sensitivity, 0.2..=3.0).fixed_decimals(1).suffix("×"));
                 ui.end_row();
@@ -556,6 +573,14 @@ fn explain_disconnect(reason: &str) -> String {
 impl Game for Playground {
     fn init(&mut self, ctx: &mut Context) {
         self.apply_settings(ctx);
+        // Nur zum Testen: Figur für diesen Start festlegen (`--figur barbar`).
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(name) = args.iter().position(|a| a == "--figur").and_then(|i| args.get(i + 1)) {
+            if let Some(class) = crate::protocol::CharacterClass::ALL.into_iter().find(|c| c.label().eq_ignore_ascii_case(name)) {
+                self.settings.character = class;
+            }
+        }
+        self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
         match self.start.take() {
             Some(mode) => self.start_session(ctx, mode),
             None => self.show_menu(ctx, None),
@@ -571,6 +596,11 @@ impl Game for Playground {
                 _ => {}
             }
             ctx.show_debug = args.iter().any(|a| a == "--debug");
+        }
+        if args.iter().any(|a| a == "--kamera-vorne") {
+            ctx.camera.yaw = std::f32::consts::PI;
+            ctx.camera.pitch = -0.15;
+            self.orbit.distance = 3.5;
         }
     }
 
@@ -604,6 +634,11 @@ impl Game for Playground {
         }
 
         if let Some(session) = &mut self.session {
+            if self.demo_chop && (ctx.time.elapsed % 1.2) < ctx.time.delta {
+                if let Some(local) = session.local_player() {
+                    session.world_mut().play_action(local, crate::characters::Action::Chop);
+                }
+            }
             session.world_mut().update_visuals(ctx);
         } else if let Some(world) = &mut self.menu_world {
             world.update_visuals(ctx);

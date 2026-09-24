@@ -13,11 +13,13 @@ pub struct Vertex {
     pub normal: [f32; 3],
     /// Grundfarbe in linearem RGB; wird mit der Farbe des Objekts multipliziert.
     pub color: [f32; 3],
+    /// Texturkoordinaten (nur bei Meshes mit Textur von Bedeutung).
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
     pub fn new(position: Vec3, normal: Vec3, color: Vec3) -> Self {
-        Vertex { position: position.into(), normal: normal.into(), color: color.into() }
+        Vertex { position: position.into(), normal: normal.into(), color: color.into(), uv: [0.0, 0.0] }
     }
 }
 
@@ -26,6 +28,8 @@ impl Vertex {
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    /// Textur für das ganze Mesh; ohne Textur zählen nur die Farben.
+    pub texture: Option<crate::assets::TextureId>,
 }
 
 impl MeshData {
@@ -210,6 +214,7 @@ impl MeshData {
             position: transform.transform_point3(v.position.into()).into(),
             normal: (normal_matrix * Vec3::from(v.normal)).normalize_or_zero().into(),
             color: v.color,
+            uv: v.uv,
         }));
         self.indices.extend(other.indices.iter().map(|i| i + base));
     }
