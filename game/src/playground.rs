@@ -16,6 +16,8 @@ const CONNECT_TIMEOUT: f32 = 10.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
     MainMenu,
+    /// Asset-Galerie: alle Modelle ansehen (und für Entwickler: für die Insel markieren).
+    Gallery,
     Join,
     Settings,
     Connecting,
@@ -55,6 +57,8 @@ pub struct Playground {
     demo_chop: bool,
     /// Geräusche und Klangkulisse (nur mit Fenster).
     sounds: Option<Sounds>,
+    /// Asset-Galerie, solange sie offen ist.
+    gallery: Option<crate::viewer::Viewer>,
 }
 
 impl Playground {
@@ -83,6 +87,7 @@ impl Playground {
             local_ip: None,
             demo_chop: false,
             sounds: None,
+            gallery: None,
         }
     }
 
@@ -111,6 +116,16 @@ impl Playground {
                 self.show_menu(ctx, Some(message));
             }
         }
+    }
+
+    /// Öffnet die Asset-Galerie (ersetzt die Menü-Kulisse durch den Betrachter).
+    fn open_gallery(&mut self, ctx: &mut Context) {
+        ctx.reset_world();
+        self.menu_world = None;
+        let mut gallery = crate::viewer::Viewer::gallery();
+        gallery.setup(ctx);
+        self.gallery = Some(gallery);
+        self.screen = Screen::Gallery;
     }
 
     /// Beendet die laufende Runde (falls vorhanden) und zeigt das Hauptmenü.
@@ -322,6 +337,7 @@ impl Playground {
 
     fn main_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         let mut action = None;
+        let mut open_gallery = false;
         ui::left_shade(egui_ctx);
         egui::Area::new(egui::Id::new("hauptmenue")).anchor(Align2::LEFT_CENTER, [70.0, 0.0]).show(egui_ctx, |ui| {
             ui.label(RichText::new("ENGINE JN").size(64.0).strong().color(Color32::WHITE));
@@ -342,6 +358,9 @@ impl Playground {
                     self.settings_return = Screen::MainMenu;
                     self.screen = Screen::Settings;
                 }
+                if ui::big_button(ui, "Asset-Galerie").clicked() {
+                    open_gallery = true;
+                }
                 if ui::big_button(ui, "Beenden").clicked() {
                     ctx.exit();
                 }
@@ -353,6 +372,9 @@ impl Playground {
             ui.add_space(10.0);
             ui.label(RichText::new(format!("Spielername: {}", self.settings.name)).size(15.0).color(ui::TEXT));
         });
+        if open_gallery {
+            self.open_gallery(ctx);
+        }
         if let Some(mode) = action {
             self.start_session(ctx, mode);
         }
@@ -620,6 +642,7 @@ impl Game for Playground {
             match screen.as_str() {
                 "beitreten" => self.screen = Screen::Join,
                 "einstellungen" => self.screen = Screen::Settings,
+                "galerie" => self.open_gallery(ctx),
                 "pause" => self.screen = Screen::Paused,
                 "fehler" => self.error = Some("Der Server antwortet nicht. Stimmt die Adresse, und läuft er?".into()),
                 _ => {}
@@ -672,6 +695,17 @@ impl Game for Playground {
     fn update(&mut self, ctx: &mut Context) {
         self.handle_game_keys(ctx);
 
+        if self.screen == Screen::Gallery {
+            let back = ctx.input.key_pressed(KeyCode::Escape) || self.gallery.as_ref().is_some_and(|g| g.wants_back());
+            if back {
+                self.gallery = None;
+                self.show_menu(ctx, None);
+            } else if let Some(gallery) = &mut self.gallery {
+                gallery.update(ctx);
+            }
+            return;
+        }
+
         if self.screen == Screen::Connecting {
             match &self.session {
                 Some(session) if !session.is_connecting() => {
@@ -721,6 +755,11 @@ impl Game for Playground {
         self.hud(ctx, egui_ctx);
         match self.screen {
             Screen::MainMenu => self.main_menu(ctx, egui_ctx),
+            Screen::Gallery => {
+                if let Some(gallery) = &mut self.gallery {
+                    gallery.ui(ctx, egui_ctx);
+                }
+            }
             Screen::Join => self.join_menu(ctx, egui_ctx),
             Screen::Settings => self.settings_menu(ctx, egui_ctx),
             Screen::Connecting => self.connecting_screen(ctx, egui_ctx),

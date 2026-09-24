@@ -18,7 +18,8 @@ pub fn asset_dir() -> Option<PathBuf> {
     }
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"));
     candidates.push(PathBuf::from("game").join("assets"));
-    candidates.into_iter().find(|dir| dir.is_dir())
+    // Sauberer absoluter Pfad (ohne „..“), damit Pfadvergleiche stimmen.
+    candidates.into_iter().find(|dir| dir.is_dir()).map(|dir| std::path::absolute(&dir).unwrap_or(dir))
 }
 
 /// Gehört die Datei zu den Varianten von `name` (`name.gltf`, `name_3.glb`, …)?
@@ -86,7 +87,10 @@ impl StaticModel {
 /// Jede Datei wird nur einmal pro Programmlauf gelesen.
 pub fn load_variants(ctx: &mut Context, folder: &str, name: &str, scale: Vec3, sink: f32) -> Vec<(MeshId, Option<MeshId>)> {
     let mut result = Vec::new();
-    for path in variants(folder, name) {
+    // In der Asset-Galerie markierte Modelle haben Vorrang (Entwickler-Test).
+    let marked = crate::markierungen::fuer_platz(name);
+    let paths = if marked.is_empty() { variants(folder, name) } else { marked };
+    for path in paths {
         let key = format!("datei:{}", path.display());
         let glow_key = format!("{key}#leuchten");
         if let Some(mesh) = ctx.assets.find_mesh(&key) {
@@ -164,8 +168,7 @@ pub fn check_model(path: &Path, model: &Model) -> Vec<String> {
 }
 
 /// Alle Modelldateien unter einem Ordner (rekursiv).
-#[cfg(test)]
-fn all_models(dir: &Path) -> Vec<PathBuf> {
+pub fn all_models(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();

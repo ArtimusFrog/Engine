@@ -1,11 +1,14 @@
-//! Asset-Betrachter: zeigt ein Modell aus Blender im Licht des Spiels.
+//! Asset-Betrachter: zeigt Modelle im Licht des Spiels.
 //!
-//! `game --ansehen game/assets/tiere/fuchs.gltf` öffnet das Modell auf einem Boden mit
-//! 1-Meter-Karos, daneben eine Spielfigur als Größenvergleich. Wird die Datei neu
-//! exportiert, lädt der Betrachter sie von selbst neu.
+//! Zwei Arten:
+//! - **Galerie** im Hauptmenü: Liste aller Modelle des Spiels zum Anschauen. Wer aus dem
+//!   Projektordner spielt (Entwickler), kann Modelle zusätzlich für die Insel markieren.
+//! - **Einzeln** über `game --ansehen <datei>` (auch Blender-Quellen aus `art/modelle/`, die
+//!   bei jeder Änderung neu gebaut werden). Schalter für Screenshots: `--animation <name>`,
+//!   `--uhrzeit <h>`, `--drehen <grad>`.
 //!
-//! Weitere Schalter (für automatische Screenshots): `--animation <name>`, `--uhrzeit <h>`,
-//! `--drehen <grad>`.
+//! Modell auf einem Boden mit 1-Meter-Karos, daneben eine 1,8 m große Spielfigur als
+//! Größenvergleich. Wird eine Datei neu exportiert, lädt der Betrachter sie von selbst neu.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,8 +18,10 @@ use engine::egui::{self, RichText};
 use engine::mesh::Vertex;
 use engine::prelude::*;
 
+use crate::asset_files;
 use crate::blender::{self, Build, BuildState};
 use crate::characters::Puppet;
+use crate::markierungen::{self, Markierungen, PLAETZE};
 use crate::protocol::CharacterClass;
 use crate::ui;
 
@@ -24,6 +29,9 @@ use crate::ui;
 const POLL_INTERVAL: f32 = 0.5;
 /// Abstand der Vergleichsfigur zum Modell in Metern.
 const REFERENCE_GAP: f32 = 0.8;
+/// Kamera-Abstand: so nah und so weit geht es.
+const ZOOM_MIN: f32 = 0.3;
+const ZOOM_MAX: f32 = 120.0;
 
 /// Was gerade geladen ist.
 struct Shown {
@@ -37,6 +45,16 @@ struct Shown {
     triangles: usize,
     /// Verstöße gegen die Asset-Regeln (siehe art/README.md).
     problems: Vec<String>,
+}
+
+/// Galerie-Zustand: alle Modelle und (für Entwickler) ihre Markierungen.
+struct Gallery {
+    /// (Gruppe, Anzeigename, Pfad relativ zum Asset-Ordner, voller Pfad)
+    assets: Vec<(String, String, String, PathBuf)>,
+    marks: Markierungen,
+    /// Markieren nur, wenn das Spiel aus dem Projektordner läuft.
+    developer: bool,
+    back: bool,
 }
 
 pub struct Viewer {
@@ -56,6 +74,7 @@ pub struct Viewer {
     pending: Option<SystemTime>,
     poll_timer: f32,
     reloaded_at: Option<f32>,
+    gallery: Option<Gallery>,
 
     day: DayCycle,
     speed: f32,
@@ -68,6 +87,19 @@ pub struct Viewer {
     distance: f32,
     pointer_over_ui: bool,
     themed: bool,
+}
+
+/// Gruppenname für einen Ordner im Asset-Verzeichnis.
+fn group_name(folder: &str) -> String {
+    match folder {
+        "natur" => "Natur".into(),
+        "tiere" => "Tiere".into(),
+        "characters" => "Figuren".into(),
+        "gebaeude" => "Gebäude".into(),
+        "gegenstaende" => "Gegenstände".into(),
+        "" => "Sonstiges".into(),
+        other => other.to_string(),
+    }
 }
 
 impl Viewer {
@@ -90,6 +122,7 @@ impl Viewer {
             pending: None,
             poll_timer: 0.0,
             reloaded_at: None,
+            gallery: None,
             day: DayCycle { hour: 10.5, ..Default::default() },
             speed: 1.0,
             playing: true,
@@ -100,6 +133,62 @@ impl Viewer {
             pointer_over_ui: false,
             themed: false,
         }
+    }
+
+    /// Galerie für das Hauptmenü: alle Modelle im Asset-Ordner.
+    pub fn gallery() -> Self {
+        let dir = asset_files::asset_dir();
+        let mut assets = Vec::new();
+        if let Some(dir) = &dir {
+            for path in asset_files::all_models(dir) {
+                let relative = path.strip_prefix(dir).unwrap_or(&path).components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
+                let folder = relative.rsplit_once('/').map_or("", |(folder, _)| folder).to_string();
+                let stem = path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().replace('_', " "));
+                let mut buchstaben = stem.chars();
+                let name: String = buchstaben.next().map(|c| c.to_uppercase().chain(buchstaben).collect()).unwrap_or_default();
+                assets.push((group_name(&folder), name, relative, path));
+            }
+        }
+        // Natur und Tiere zuerst, dann der Rest.
+        let order = |group: &str| ["Tiere", "Natur", "Figuren"].iter().position(|g| *g == group).unwrap_or(9);
+        assets.sort_by(|a, b| order(&a.0).cmp(&order(&b.0)).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
+        // Entwickler = das Spiel läuft aus dem Projekt (Assets unter …/game/assets, nicht neben der installierten .exe).
+        let developer = dir.as_ref().is_some_and(|d| d.components().rev().nth(1).is_some_and(|c| c.as_os_str() == "game"));
+        let first = assets.first().map(|a| a.3.clone()).unwrap_or_default();
+        let mut viewer = Viewer::new(first);
+        viewer.gallery = Some(Gallery { assets, marks: Markierungen::laden(), developer, back: false });
+        viewer
+    }
+
+    /// Will der Spieler aus der Galerie zurück ins Hauptmenü?
+    pub fn wants_back(&self) -> bool {
+        self.gallery.as_ref().is_some_and(|g| g.back)
+    }
+
+    /// Boden und Kamera anlegen, erstes Modell laden.
+    pub fn setup(&mut self, ctx: &mut Context) {
+        let floor = ctx.assets.named_mesh("betrachter_boden", || checker_floor(30));
+        ctx.scene.spawn(Entity::new("Boden", floor));
+        ctx.camera.yaw = 0.5;
+        ctx.camera.pitch = -0.3;
+        ctx.cursor_locked = false;
+        self.stamp = self.files_stamp();
+        self.load(ctx);
+    }
+
+    /// Anderes Modell zeigen (Galerie).
+    fn select(&mut self, ctx: &mut Context, path: PathBuf) {
+        if let Some(old) = self.shown.take() {
+            for id in old.entities {
+                ctx.scene.despawn(id);
+            }
+        }
+        self.path = path;
+        self.reloaded_at = None;
+        self.error = None;
+        self.stamp = self.files_stamp();
+        self.pending = None;
+        self.load(ctx);
     }
 
     /// Jüngste Änderungszeit aller Dateien neben dem Modell (.gltf, .bin, Texturen).
@@ -116,7 +205,7 @@ impl Viewer {
     }
 
     fn load(&mut self, ctx: &mut Context) {
-        if !self.path.exists() {
+        if !self.path.is_file() {
             return;
         }
         let model = match Model::from_file(&self.path) {
@@ -171,9 +260,9 @@ impl Viewer {
         if meshes.iter().all(|m| m.vertices.is_empty()) {
             (min, max) = (Vec3::ZERO, Vec3::ZERO);
         }
-        let first = self.shown.is_none() && self.reloaded_at.is_none();
+        let first = self.reloaded_at.is_none();
         self.shown = Some(Shown {
-            problems: crate::asset_files::check_model(&self.path, &model),
+            problems: asset_files::check_model(&self.path, &model),
             model,
             entities,
             animated,
@@ -184,8 +273,9 @@ impl Viewer {
         });
         self.error = None;
         if first {
-            let size = (max - min).max_element().max(0.5);
-            self.distance = (size * 2.2).clamp(2.0, 60.0);
+            let size = (max - min).max_element().max(0.3);
+            self.distance = (size * 2.2).clamp(1.0, 60.0);
+            self.reloaded_at = Some(-100.0);
         } else {
             self.reloaded_at = Some(ctx.time.elapsed);
         }
@@ -254,52 +344,9 @@ impl Viewer {
             None => Vec3::Y,
         }
     }
-}
 
-/// Boden mit 1-Meter-Karos, damit Größen sofort ablesbar sind.
-fn checker_floor(half: i32) -> MeshData {
-    let mut mesh = MeshData::default();
-    for z in -half..half {
-        for x in -half..half {
-            let light = (x + z).rem_euclid(2) == 0;
-            let color = if light { [0.36, 0.42, 0.33] } else { [0.3, 0.36, 0.28] };
-            let base = mesh.vertices.len() as u32;
-            for (dx, dz) in [(0, 0), (1, 0), (1, 1), (0, 1)] {
-                mesh.vertices.push(Vertex {
-                    position: [(x + dx) as f32, 0.0, (z + dz) as f32],
-                    normal: [0.0, 1.0, 0.0],
-                    color,
-                    uv: [0.0, 0.0],
-                });
-            }
-            mesh.indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
-        }
-    }
-    mesh
-}
-
-impl Game for Viewer {
-    fn init(&mut self, ctx: &mut Context) {
-        let floor = ctx.assets.add_mesh(checker_floor(30));
-        ctx.scene.spawn(Entity::new("Boden", floor));
-        let args: Vec<String> = std::env::args().collect();
-        let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<f32>().ok());
-        if let Some(hour) = value("--uhrzeit") {
-            self.day.hour = hour.rem_euclid(24.0);
-        }
-        ctx.camera.yaw = value("--drehen").map_or(0.5, f32::to_radians);
-        ctx.camera.pitch = -0.3;
-        self.stamp = self.files_stamp();
-        // Erst die vorhandene Fassung zeigen, dann bei Bedarf im Hintergrund neu bauen.
-        self.load(ctx);
-        match &self.source {
-            Some(source) if blender::needs_build(source) => self.start_build(),
-            Some(source) => self.source_stamp = blender::source_stamp(source),
-            None => {}
-        }
-    }
-
-    fn update(&mut self, ctx: &mut Context) {
+    /// Einmal pro Bild: Neuladen, Animation, Kamera, Licht.
+    pub fn update(&mut self, ctx: &mut Context) {
         let dt = ctx.time.delta;
 
         // Neu exportiert? Erst laden, wenn sich die Dateien eine Prüfung lang nicht mehr ändern.
@@ -332,103 +379,242 @@ impl Game for Viewer {
             puppet.set_visible(ctx, self.show_reference);
         }
 
-        // Kamera: linke Maustaste ziehen = drehen, Mausrad = Abstand.
+        // Kamera: linke Maustaste ziehen = drehen, Mausrad = zoomen.
         if !self.pointer_over_ui {
             if ctx.input.mouse(MouseButton::Left) {
                 let delta = ctx.input.mouse_delta() * 0.005;
                 ctx.camera.yaw += delta.x;
                 ctx.camera.pitch = (ctx.camera.pitch - delta.y).clamp(-1.45, 0.6);
             }
-            self.distance = (self.distance * 0.9f32.powf(ctx.input.scroll())).clamp(0.5, 120.0);
+            self.distance = (self.distance * 0.88f32.powf(ctx.input.scroll())).clamp(ZOOM_MIN, ZOOM_MAX);
         }
         if self.turntable {
             ctx.camera.yaw += dt * 0.4;
         }
         let target = self.center();
         ctx.camera.position = target - ctx.camera.forward() * self.distance;
-        ctx.camera.near = (self.distance * 0.01).clamp(0.02, 0.1);
+        ctx.camera.near = (self.distance * 0.01).clamp(0.01, 0.1);
 
         self.day.apply(&mut ctx.env);
         let size = self.shown.as_ref().map_or(2.0, |s| (s.max - s.min).max_element());
         ctx.env.shadow_range = (size * 1.5 + 3.0).clamp(6.0, 60.0);
     }
 
-    fn ui(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+    /// Die Liste aller Modelle (links) – nur in der Galerie.
+    fn asset_list(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let Some(gallery) = &mut self.gallery else { return };
+        let mut chosen = None;
+        let hoehe = egui_ctx.content_rect().height() - 24.0;
+        egui::Window::new("Asset-Galerie")
+            .title_bar(false)
+            .anchor(egui::Align2::LEFT_TOP, [12.0, 12.0])
+            .resizable(false)
+            .movable(false)
+            .frame(ui::panel_frame())
+            .show(egui_ctx, |ui| {
+            ui.set_width(260.0);
+            ui.set_height(hoehe - 40.0);
+            if ui.button(RichText::new("Zurück zum Hauptmenü").size(17.0)).clicked() {
+                gallery.back = true;
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new("ASSET-GALERIE").strong().size(20.0).color(ui::ACCENT));
+            ui.label(RichText::new(format!("{} Modelle", gallery.assets.len())).color(ui::MUTED).size(13.0));
+            ui.separator();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut current_group = "";
+                for (group, name, relative, path) in &gallery.assets {
+                    if group != current_group {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(group.to_uppercase()).size(13.0).strong().color(ui::MUTED));
+                        current_group = group;
+                    }
+                    let marked = gallery.marks.platz(relative).map(|p| format!("   [{}]", markierungen::platz_name(p))).unwrap_or_default();
+                    let active = *path == self.path;
+                    if ui.selectable_label(active, format!("{name}{marked}")).clicked() && !active {
+                        chosen = Some(path.clone());
+                    }
+                }
+            });
+        });
+        if let Some(path) = chosen {
+            self.select(ctx, path);
+        }
+    }
+
+    /// „Auf der Insel verwenden als …“ – nur für Entwickler.
+    fn marking(&mut self, ui: &mut egui::Ui) {
+        let Some(gallery) = &mut self.gallery else { return };
+        if !gallery.developer {
+            return;
+        }
+        let Some((_, _, relative, _)) = gallery.assets.iter().find(|a| a.3 == self.path) else { return };
+        let relative = relative.clone();
+        ui.separator();
+        ui.label(RichText::new("Auf der Insel verwenden als").strong());
+        let current = gallery.marks.platz(&relative).map(str::to_string);
+        let mut choice = current.clone();
+        egui::ComboBox::from_id_salt("markierung")
+            .width(230.0)
+            .selected_text(current.as_deref().map_or("– nicht verwenden –", markierungen::platz_name))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut choice, None, "– nicht verwenden –");
+                for (id, name, folder) in PLAETZE {
+                    ui.selectable_value(&mut choice, Some(id.to_string()), format!("{name}  ({folder})"));
+                }
+            });
+        if choice != current {
+            gallery.marks.setzen(&relative, choice.as_deref());
+            gallery.marks.speichern();
+        }
+        ui.label(
+            RichText::new("Nur auf diesem PC (Entwickler-Test). Wirkt ab der nächsten Runde; mehrere Modelle für einen Platz werden gemischt.")
+                .color(ui::MUTED)
+                .size(12.0),
+        );
+    }
+
+    pub fn ui(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         if !self.themed {
             ui::apply_theme(egui_ctx);
             self.themed = true;
         }
+        self.asset_list(ctx, egui_ctx);
         let mut reload = false;
-        egui::Window::new("Asset-Betrachter")
-            .anchor(egui::Align2::LEFT_TOP, [12.0, 12.0])
+        let in_gallery = self.gallery.is_some();
+        let window = egui::Window::new(if in_gallery { "Details" } else { "Asset-Betrachter" })
+            .anchor(if in_gallery { egui::Align2::RIGHT_TOP } else { egui::Align2::LEFT_TOP }, if in_gallery { [-12.0, 12.0] } else { [12.0, 12.0] })
             .resizable(false)
             .collapsible(true)
-            .frame(ui::panel_frame())
-            .show(egui_ctx, |ui| {
-                ui.set_width(290.0);
-                ui.spacing_mut().slider_width = 150.0;
-                let name = self.path.file_name().map_or_else(|| self.path.display().to_string(), |n| n.to_string_lossy().into_owned());
-                ui.label(RichText::new(name).strong().size(16.0).color(ui::ACCENT));
-                if let Some(source) = self.source.as_deref().and_then(Path::file_name) {
-                    ui.label(RichText::new(format!("Quelle: {}", source.to_string_lossy())).color(ui::MUTED));
+            .vscroll(true)
+            .max_height(egui_ctx.content_rect().height() - 24.0)
+            .default_height(egui_ctx.content_rect().height() - 24.0)
+            .frame(ui::panel_frame());
+        window.show(egui_ctx, |ui| {
+            ui.set_width(290.0);
+            ui.spacing_mut().slider_width = 150.0;
+            let name = self.path.file_name().map_or_else(|| self.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+            ui.label(RichText::new(name).strong().size(16.0).color(ui::ACCENT));
+            if let Some(source) = self.source.as_deref().and_then(Path::file_name) {
+                ui.label(RichText::new(format!("Quelle: {}", source.to_string_lossy())).color(ui::MUTED));
+            }
+            if self.build.is_some() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Blender baut …").color(ui::ACCENT));
+                });
+            }
+            if let Some(error) = &self.build_error {
+                ui.label(RichText::new(error).color(ui::ERROR).monospace().size(11.0));
+            }
+            if let Some(error) = &self.error {
+                ui.label(RichText::new(error).color(ui::ERROR));
+            }
+            if self.reloaded_at.is_some_and(|t| ctx.time.elapsed - t < 2.0) {
+                ui.label(RichText::new("Neu geladen").color(ui::ACCENT));
+            }
+            // Für Entwickler zuerst: Modell für die Insel markieren.
+            self.marking(ui);
+            if let Some(shown) = &mut self.shown {
+                let size = shown.max - shown.min;
+                ui.label(format!("Größe: {:.2} × {:.2} × {:.2} m (B × H × T)", size.x, size.y, size.z));
+                ui.label(RichText::new(format!("Unterkante bei {:.2} m", shown.min.y)).color(ui::MUTED));
+                ui.label(format!("{} Dreiecke, {} Eckpunkte", shown.triangles, shown.vertices));
+                for problem in &shown.problems {
+                    ui.label(RichText::new(format!("⚠ {problem}")).color(ui::ERROR));
                 }
-                if self.build.is_some() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new("Blender baut …").color(ui::ACCENT));
-                    });
-                }
-                if let Some(error) = &self.build_error {
-                    ui.label(RichText::new(error).color(ui::ERROR).monospace().size(11.0));
-                }
-                if let Some(error) = &self.error {
-                    ui.label(RichText::new(error).color(ui::ERROR));
-                }
-                if self.reloaded_at.is_some_and(|t| ctx.time.elapsed - t < 2.0) {
-                    ui.label(RichText::new("Neu geladen").color(ui::ACCENT));
-                }
-                if let Some(shown) = &mut self.shown {
-                    let size = shown.max - shown.min;
-                    ui.label(format!("Größe: {:.2} × {:.2} × {:.2} m (B × H × T)", size.x, size.y, size.z));
-                    ui.label(RichText::new(format!("Unterkante bei {:.2} m", shown.min.y)).color(ui::MUTED));
-                    ui.label(format!("{} Dreiecke, {} Eckpunkte", shown.triangles, shown.vertices));
-                    for problem in &shown.problems {
-                        ui.label(RichText::new(format!("⚠ {problem}")).color(ui::ERROR));
-                    }
-                    ui.label(format!(
-                        "{} Materialien, {} Texturen",
-                        shown.model.materials.len().saturating_sub(1),
-                        shown.model.images.len()
-                    ));
+                ui.label(format!("{} Materialien, {} Texturen", shown.model.materials.len().saturating_sub(1), shown.model.images.len()));
 
-                    if let Some((animator, _, _)) = &mut shown.animated {
-                        ui.separator();
-                        ui.label(RichText::new("Animationen").strong());
-                        egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                            for clip in &shown.model.clips {
-                                let active = animator.current() == Some(clip.name.as_str());
-                                let label = format!("{}  ({:.1} s)", clip.name, clip.duration);
-                                if ui.selectable_label(active, label).clicked() {
-                                    animator.play(&clip.name, true, 0.2);
-                                }
+                if let Some((animator, _, _)) = &mut shown.animated {
+                    ui.separator();
+                    ui.label(RichText::new("Animationen").strong());
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        for clip in &shown.model.clips {
+                            let active = animator.current() == Some(clip.name.as_str());
+                            let label = format!("{}  ({:.1} s)", clip.name, clip.duration);
+                            if ui.selectable_label(active, label).clicked() {
+                                animator.play(&clip.name, true, 0.2);
                             }
-                        });
-                        if ui.button(if self.playing { "Pause" } else { "Abspielen" }).clicked() {
-                            self.playing = !self.playing;
                         }
-                        ui.add(egui::Slider::new(&mut self.speed, 0.1..=2.0).text("Tempo"));
+                    });
+                    if ui.button(if self.playing { "Pause" } else { "Abspielen" }).clicked() {
+                        self.playing = !self.playing;
                     }
+                    ui.add(egui::Slider::new(&mut self.speed, 0.1..=2.0).text("Tempo"));
                 }
-                ui.separator();
-                ui.add(egui::Slider::new(&mut self.day.hour, 0.0..=24.0).text("Uhrzeit"));
-                ui.checkbox(&mut self.turntable, "Drehteller");
-                ui.checkbox(&mut self.show_reference, "Vergleichsfigur (1,8 m)");
-                reload = ui.button("Neu laden").clicked();
-                ui.label(RichText::new("Linke Maustaste ziehen: drehen · Mausrad: zoomen").color(ui::MUTED).size(12.0));
+            }
+            ui.separator();
+            // Zoom: Regler (logarithmisch) plus Knöpfe; das Mausrad geht auch.
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new(" − ").size(18.0)).clicked() {
+                    self.distance = (self.distance * 1.25).min(ZOOM_MAX);
+                }
+                ui.add(egui::Slider::new(&mut self.distance, ZOOM_MIN..=ZOOM_MAX).logarithmic(true).show_value(false).text("Zoom"));
+                if ui.button(RichText::new(" + ").size(18.0)).clicked() {
+                    self.distance = (self.distance * 0.8).max(ZOOM_MIN);
+                }
             });
+            ui.add(egui::Slider::new(&mut self.day.hour, 0.0..=24.0).text("Uhrzeit"));
+            ui.checkbox(&mut self.turntable, "Drehteller");
+            ui.checkbox(&mut self.show_reference, "Vergleichsfigur (1,8 m)");
+            if !in_gallery {
+                reload = ui.button("Neu laden").clicked();
+            }
+            ui.label(RichText::new("Linke Maustaste ziehen: drehen · Mausrad: zoomen").color(ui::MUTED).size(12.0));
+        });
         self.pointer_over_ui = egui_ctx.is_pointer_over_egui() || egui_ctx.egui_is_using_pointer();
         if reload {
             self.load(ctx);
         }
+    }
+}
+
+/// Boden mit 1-Meter-Karos, damit Größen sofort ablesbar sind.
+fn checker_floor(half: i32) -> MeshData {
+    let mut mesh = MeshData::default();
+    for z in -half..half {
+        for x in -half..half {
+            let light = (x + z).rem_euclid(2) == 0;
+            let color = if light { [0.36, 0.42, 0.33] } else { [0.3, 0.36, 0.28] };
+            let base = mesh.vertices.len() as u32;
+            for (dx, dz) in [(0, 0), (1, 0), (1, 1), (0, 1)] {
+                mesh.vertices.push(Vertex {
+                    position: [(x + dx) as f32, 0.0, (z + dz) as f32],
+                    normal: [0.0, 1.0, 0.0],
+                    color,
+                    uv: [0.0, 0.0],
+                });
+            }
+            mesh.indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+        }
+    }
+    mesh
+}
+
+/// Einzelbetrachter als eigenes Programm (`game --ansehen <datei>`).
+impl Game for Viewer {
+    fn init(&mut self, ctx: &mut Context) {
+        self.setup(ctx);
+        let args: Vec<String> = std::env::args().collect();
+        let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<f32>().ok());
+        if let Some(hour) = value("--uhrzeit") {
+            self.day.hour = hour.rem_euclid(24.0);
+        }
+        if let Some(winkel) = value("--drehen") {
+            ctx.camera.yaw = winkel.to_radians();
+        }
+        match &self.source {
+            Some(source) if blender::needs_build(source) => self.start_build(),
+            Some(source) => self.source_stamp = blender::source_stamp(source),
+            None => {}
+        }
+    }
+
+    fn update(&mut self, ctx: &mut Context) {
+        Viewer::update(self, ctx);
+    }
+
+    fn ui(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        Viewer::ui(self, ctx, egui_ctx);
     }
 }

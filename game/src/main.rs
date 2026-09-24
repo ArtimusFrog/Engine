@@ -7,6 +7,7 @@ mod blender;
 mod characters;
 mod client;
 mod island;
+mod markierungen;
 mod models;
 mod playground;
 mod protocol;

@@ -45,7 +45,6 @@ struct Traits {
 }
 
 impl AnimalKind {
-    pub const ALL: [AnimalKind; 4] = [AnimalKind::Hare, AnimalKind::Fox, AnimalKind::Deer, AnimalKind::Bear];
 
     fn traits(self) -> Traits {
         match self {
@@ -54,6 +53,16 @@ impl AnimalKind {
             AnimalKind::Deer => Traits { walk: 1.8, run: 11.0, flee: 14.0, calm: 32.0, height: 1.1, stride: (1.0, 1.0) },
             // Bären sind gemächlich und lassen Spieler nah heran, bevor sie davontrotten.
             AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (0.75, 1.55) },
+        }
+    }
+
+    /// Platz-Kennung für Markierungen in der Asset-Galerie.
+    pub fn slot(self) -> &'static str {
+        match self {
+            AnimalKind::Hare => "hase",
+            AnimalKind::Fox => "fuchs",
+            AnimalKind::Deer => "hirsch",
+            AnimalKind::Bear => "baer",
         }
     }
 
@@ -327,20 +336,27 @@ impl Visual {
     }
 }
 
-/// Liest das Blender-Modell einer Tierart (einmal pro Programmlauf).
+/// Liest das Blender-Modell einer Tierart: in der Galerie markiert, sonst `tiere/<name>.gltf`.
+/// Jede Datei wird nur einmal pro Programmlauf gelesen.
 fn load_model(kind: AnimalKind) -> Option<Arc<Model>> {
-    use std::sync::OnceLock;
-    static CACHE: [OnceLock<Option<Arc<Model>>>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
-    let index = AnimalKind::ALL.iter().position(|&k| k == kind)?;
-    CACHE[index]
-        .get_or_init(|| {
-            let path = asset_files::variants("tiere", kind.file_name()).into_iter().next()?;
-            match Model::from_file(&path) {
-                Ok(model) => Some(Arc::new(model)),
-                Err(message) => {
-                    log::warn!("{message} – nehme den Platzhalter");
-                    None
-                }
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<PathBuf, Option<Arc<Model>>>>> = Mutex::new(None);
+
+    let path = crate::markierungen::fuer_platz(kind.slot())
+        .into_iter()
+        .next()
+        .or_else(|| asset_files::variants("tiere", kind.file_name()).into_iter().next())?;
+    let mut cache = CACHE.lock().ok()?;
+    cache
+        .get_or_insert_with(HashMap::new)
+        .entry(path.clone())
+        .or_insert_with(|| match Model::from_file(&path) {
+            Ok(model) => Some(Arc::new(model)),
+            Err(message) => {
+                log::warn!("{message} – nehme den Platzhalter");
+                None
             }
         })
         .clone()
