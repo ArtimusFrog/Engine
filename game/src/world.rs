@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use engine::prelude::*;
 
+use crate::animals::{self, Animal};
 use crate::island::{self, ResourceKind, ResourceSpec};
 use crate::characters::{Action, Puppet};
 use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
@@ -78,6 +79,8 @@ pub struct World {
     /// Startpunkt für neue Spieler.
     pub spawn: Vec3,
     pub terrain: Terrain,
+    /// Tiere; der Index ist ihre Netzwerk-ID.
+    pub animals: Vec<Animal>,
     /// Tageszeit mit Sonne, Mond und Himmelsfarben.
     pub day: DayCycle,
     /// Zufall für Effekte wie Glühwürmchen (muss nicht auf allen Rechnern gleich sein).
@@ -92,6 +95,7 @@ impl World {
         let settings = CharacterSettings::default();
         let capsule = ctx.assets.named_mesh("spielfigur", || MeshData::capsule(settings.radius, settings.height, 24, 8));
         let island = island::build(ctx);
+        let animals = animals::populate(&island.terrain, island.spawn, island::SEED, island::moisture);
         let mut world = World {
             players: HashMap::new(),
             objects: BTreeMap::new(),
@@ -101,6 +105,7 @@ impl World {
             puppets: HashMap::new(),
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
+            animals,
             day: DayCycle::default(),
             effects_rng: Rng::new(7),
             firefly_timer: 0.0,
@@ -112,6 +117,16 @@ impl World {
             world.place_resource(ctx, id);
         }
         world
+    }
+
+    // ---------- Tiere ----------
+
+    /// Ein Takt Tier-Verhalten (nur auf dem Server): grasen, umherstreifen, fliehen.
+    pub fn think_animals(&mut self, ctx: &Context) {
+        let players: Vec<Vec3> = self.players.values().map(|a| ctx.physics.character_position(a.character)).collect();
+        for animal in &mut self.animals {
+            animal.think(Physics::FIXED_DT, &players, &self.terrain);
+        }
     }
 
     // ---------- Spieler ----------
@@ -314,6 +329,9 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
         self.fireflies(ctx);
+        for animal in &mut self.animals {
+            animal.update_visual(ctx);
+        }
         let dt = ctx.time.delta;
         let blend = (dt * 12.0).min(1.0);
         for (id, avatar) in &self.players {

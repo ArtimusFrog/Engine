@@ -75,7 +75,7 @@ pub fn height(p: Vec2) -> f32 {
     if shaped > 0.0 && shaped < 3.0 { shaped * (0.55 + shaped * 0.15) } else { shaped }
 }
 
-fn moisture(p: Vec2) -> f32 {
+pub fn moisture(p: Vec2) -> f32 {
     fbm(p * 0.008 + vec2(40.0, -13.0), 3, SEED + 5) * 0.5 + 0.5
 }
 

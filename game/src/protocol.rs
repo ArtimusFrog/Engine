@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0005;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0006;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -63,6 +63,8 @@ pub struct Snapshot {
     /// Uhrzeit (Stunden) und Tag – der Server bestimmt die Tageszeit für alle.
     pub hour: f32,
     pub day: u32,
+    /// Tiere, die sich bewegt haben (alle paar Sekunden alle).
+    pub animals: Vec<crate::animals::AnimalState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -285,6 +285,22 @@ impl Replica {
             };
             ctx.physics.set_body_pose(object.body, position, rotation);
         }
+
+        // Tiere: wie Objekte – wer im neueren Snapshot fehlt, steht still.
+        for start in &from.animals {
+            if to.animals.iter().all(|a| a.id != start.id) {
+                if let Some(animal) = world.animals.get_mut(start.id as usize) {
+                    animal.apply(start.position, start.facing, start.gait);
+                }
+            }
+        }
+        for target in &to.animals {
+            let Some(animal) = world.animals.get_mut(target.id as usize) else { continue };
+            match from.animals.iter().find(|a| a.id == target.id) {
+                Some(start) => animal.apply(start.position.lerp(target.position, t), lerp_angle(start.facing, target.facing, t), target.gait),
+                None => animal.apply(target.position, target.facing, target.gait),
+            }
+        }
     }
 }
 

@@ -329,6 +329,24 @@ mod tests {
         assert!((server.hour - client.hour).abs() < 0.05, "Server {} / Client {}", server.clock(), client.clock());
         assert!(server.hour > 19.9, "Zeitsprung fehlt: {}", server.clock());
     }
+
+    #[test]
+    fn tiere_bewegen_sich_beim_client_mit() {
+        let mut pair = Pair::start(false);
+        let start: Vec<Vec3> = pair.server.session.world().animals.iter().map(|a| a.position).collect();
+        assert!(start.len() > 20, "zu wenige Tiere: {}", start.len());
+        pair.run(60 * 12);
+        let server = &pair.server.session.world().animals;
+        let client = &pair.client.session.world().animals;
+        assert_eq!(server.len(), client.len());
+        let moved = server.iter().zip(&start).filter(|(a, s)| a.position.distance(**s) > 1.0).count();
+        assert!(moved > 3, "Tiere laufen nicht umher: {moved}");
+        // Der Client zeigt sie leicht verzögert (Interpolation), aber am selben Ort.
+        for (s, c) in server.iter().zip(client) {
+            assert!(s.position.distance(c.position) < 1.5, "Tier weicht ab: Server {:?} / Client {:?}", s.position, c.position);
+        }
+    }
+
     #[test]
     fn belegter_port_liefert_fehlermeldung() {
         let mut ctx = Context::headless();

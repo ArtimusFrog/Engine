@@ -83,6 +83,7 @@ impl Authority {
         }
 
         world.day.advance(Physics::FIXED_DT);
+        world.think_animals(ctx);
 
         // Nachwachsen: abgebaute Rohstoffe kommen nach einer Weile zurück.
         let regrown: Vec<u32> = world
@@ -243,7 +244,7 @@ impl Authority {
         }
     }
 
-    fn send_snapshot(&mut self, ctx: &Context, world: &World) {
+    fn send_snapshot(&mut self, ctx: &Context, world: &mut World) {
         let full = self.send_full_snapshot || ctx.time.tick % FULL_SNAPSHOT_INTERVAL == 0;
         self.send_full_snapshot = false;
 
@@ -272,7 +273,19 @@ impl Authority {
             })
             .collect();
 
-        let snapshot = ServerMessage::Snapshot(Snapshot { tick: ctx.time.tick as u32, players, objects, hour: world.day.hour, day: world.day.day });
+        let animals = world
+            .animals
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, a)| full || a.moved)
+            .map(|(id, a)| {
+                a.moved = false;
+                a.state(id as u16)
+            })
+            .collect();
+
+        let snapshot =
+            ServerMessage::Snapshot(Snapshot { tick: ctx.time.tick as u32, players, objects, hour: world.day.hour, day: world.day.day, animals });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));
         }
