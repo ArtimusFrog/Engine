@@ -15,7 +15,6 @@ use crate::asset_files::asset_dir;
 pub const PLAETZE: &[(&str, &str, &str)] = &[
     ("eiche", "Eiche", "natur"),
     ("tanne", "Tanne", "natur"),
-    ("schneetanne", "Schneetanne", "natur"),
     ("palme", "Palme", "natur"),
     ("zauberbaum", "Zauberbaum", "natur"),
     ("fels", "Fels", "natur"),

@@ -12,7 +12,6 @@ from baeume import eiche, palme, tanne, zauberbaum
 REIHEN = [
     ("Eiche", eiche, [dict(seed=11), dict(seed=22), dict(seed=33)]),
     ("Tanne", tanne, [dict(seed=17), dict(seed=34), dict(seed=51)]),
-    ("Schneetanne", tanne, [dict(seed=23, schnee=True), dict(seed=46, schnee=True)]),
     ("Palme", palme, [dict(seed=5), dict(seed=10)]),
     ("Zauberbaum", zauberbaum, [dict(seed=7), dict(seed=14)]),
 ]

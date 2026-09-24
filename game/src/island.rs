@@ -177,10 +177,11 @@ impl Library {
                 .collect();
         }
 
-        let library = Library {
+        let mut library = Library {
             oaks: slot(ctx, "eiche", 3, &|s| models::oak(s * 17)),
             pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
-            snowy_pines: slot(ctx, "schneetanne", 2, &|s| models::pine(s * 31, true)),
+            // Auf den Bergen wachsen dieselben Tannen wie im Tal (keine eigenen Schneetannen).
+            snowy_pines: Vec::new(),
             palms: slot(ctx, "palme", 2, &|s| models::palm(s * 13)),
             magic_trees,
             rocks,
@@ -193,6 +194,7 @@ impl Library {
             glow_mushroom: slot(ctx, "leuchtpilz", 1, &|_| models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
             crystals: slot(ctx, "kristall", 2, &|s| models::crystals(s * 41)),
         };
+        library.snowy_pines = library.pines.clone();
 
         // In der Ferne einfachere Modelle, Kleinkram verschwindet ganz (spart viel Grafikleistung).
         // Neue Bäume/Felsen aus Blender bekommen das automatisch mit.
