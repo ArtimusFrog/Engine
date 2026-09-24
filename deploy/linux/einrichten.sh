@@ -14,7 +14,7 @@ QUELLE="/opt/spiel/src"
 echo "== Pakete =="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q build-essential pkg-config curl ufw
+apt-get install -y -q build-essential pkg-config curl ufw libasound2-dev
 
 echo "== Benutzer und Ordner =="
 id spiel &>/dev/null || useradd --system --home-dir /opt/spiel --shell /usr/sbin/nologin spiel
