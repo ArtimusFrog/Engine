@@ -138,6 +138,16 @@ impl Default for Display {
     }
 }
 
+/// Lichtquelle an einem Punkt, z. B. ein Lagerfeuer oder eine Laterne.
+#[derive(Clone, Copy, Debug)]
+pub struct PointLight {
+    pub position: Vec3,
+    /// Farbe mal Helligkeit (linear), z. B. warmes Feuer `(3.0, 1.4, 0.5)`.
+    pub color: Vec3,
+    /// Reichweite in Metern; dahinter kommt kein Licht mehr an.
+    pub radius: f32,
+}
+
 /// Messwerte für die Debug-Anzeige (F3).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameStats {
@@ -167,6 +177,9 @@ pub struct Context {
     pub stats: FrameStats,
     /// Optische Effekte ohne Physik (Splitter, Funken, Blätter).
     pub particles: Particles,
+    /// Punktlichter für dieses Bild (Feuer, Laternen). Werden nach jedem Frame geleert,
+    /// das Spiel trägt sie also jedes Bild neu ein. Die acht nächsten zur Kamera zählen.
+    pub lights: Vec<PointLight>,
     /// Name der Grafikkarte und Grafikschnittstelle.
     pub gpu: String,
     window_size: UVec2,
@@ -192,6 +205,7 @@ impl Context {
             debug_lines: Vec::new(),
             stats: FrameStats::default(),
             particles: Particles::default(),
+            lights: Vec::new(),
             gpu: String::new(),
             window_size: UVec2::ONE,
             pixels_per_point: 1.0,
@@ -457,6 +471,7 @@ impl App {
 
         self.ctx.input.end_frame();
         self.ctx.debug_lines.clear();
+        self.ctx.lights.clear();
         self.ctx.time.frame += 1;
         if self.ctx.exit_requested {
             event_loop.exit();

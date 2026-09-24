@@ -21,11 +21,11 @@ pub mod terrain;
 
 pub use egui;
 
-pub use app::{run, run_headless, Context, Display, EngineConfig, Environment, FrameStats, Game, SkyBodies, Time};
+pub use app::{run, run_headless, Context, Display, EngineConfig, Environment, FrameStats, Game, PointLight, SkyBodies, Time};
 
 /// Alles, was ein Spiel typischerweise braucht, mit einem einzigen `use`.
 pub mod prelude {
-    pub use crate::app::{run, run_headless, Context, Display, EngineConfig, Environment, Game, Time};
+    pub use crate::app::{run, run_headless, Context, Display, EngineConfig, Environment, Game, PointLight, Time};
     pub use egui;
     pub use crate::assets::{Assets, Image, MeshId, TextureId};
     pub use crate::model::{Animator, Model};

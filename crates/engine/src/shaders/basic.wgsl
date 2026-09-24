@@ -22,8 +22,10 @@ struct Globals {
     // Himmelskörper: xyz = Richtung, w = Sichtbarkeit
     sky_sun: vec4<f32>,
     sky_moon: vec4<f32>,
-    // x = Sterne, y = Dämmerungsglühen
+    // x = Sterne, y = Dämmerungsglühen, z = Anzahl Punktlichter
     sky_misc: vec4<f32>,
+    // Punktlichter: je zwei Einträge (Position + Reichweite, Farbe)
+    lights: array<vec4<f32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -216,6 +218,23 @@ fn tonemap(color: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// Licht von Punktlichtern (Feuer, Laternen): weich zum Rand der Reichweite auslaufend.
+fn point_lights(world_pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    var total = vec3<f32>(0.0);
+    let count = i32(g.sky_misc.z);
+    for (var i = 0; i < count; i++) {
+        let position = g.lights[i * 2];
+        let color = g.lights[i * 2 + 1].rgb;
+        let to_light = position.xyz - world_pos;
+        let distance = length(to_light);
+        let falloff = clamp(1.0 - distance / position.w, 0.0, 1.0);
+        // Etwas "Umlicht", damit auch abgewandte Flächen nicht ganz schwarz sind.
+        let facing = max(dot(n, to_light / max(distance, 0.001)), 0.0) * 0.8 + 0.2;
+        total += color * facing * falloff * falloff;
+    }
+    return total;
+}
+
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
@@ -272,6 +291,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
     var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse));
+    // Warmes Licht von Feuer und Laternen – nicht entsättigt, es soll nachts leuchten.
+    color += albedo * point_lights(in.world_pos, n);
     // Selbstleuchtendes bleibt farbig – nachts stechen Pilze, Kristalle und Funken heraus.
     if (kind == MAT_EMISSIVE) {
         color += albedo * in.material.y;

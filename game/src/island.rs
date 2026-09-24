@@ -6,6 +6,7 @@
 use engine::noise::{fbm, hash01, ridged, Rng};
 use engine::prelude::*;
 
+use crate::camp::{Camp, Layout};
 use crate::models;
 
 pub const SEED: u32 = 20_260_924;
@@ -44,6 +45,8 @@ pub struct Island {
     /// Rohstoffe mit ihrer ID (= Nummer der Rasterzelle, siehe `build`).
     pub resources: Vec<(u32, ResourceSpec)>,
     pub spawn: Vec3,
+    /// Lager am Startpunkt (Hütte, Feuer, Laterne).
+    pub camp: Camp,
 }
 
 /// Wie weit Wind Laub bewegt.
@@ -200,6 +203,7 @@ pub fn build(ctx: &mut Context) -> Island {
 
     let lib = Library::load(ctx);
     let spawn = find_spawn(&terrain);
+    let layout = Layout::new(spawn, &terrain);
     let mut resources = Vec::new();
 
 
@@ -223,7 +227,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let normal = terrain.normal_at(p.x, p.y);
             let slope = 1.0 - normal.y;
             let base = vec3(p.x, h, p.y);
-            let clearing = base.distance(spawn) < SPAWN_CLEARING;
+            let clearing = base.distance(spawn) < SPAWN_CLEARING || layout.blocks(p);
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
@@ -326,7 +330,7 @@ pub fn build(ctx: &mut Context) -> Island {
             }
 
             // Gras fast überall, wo es grün ist
-            if h > 2.2 && h < 26.0 && slope < 0.45 && rng.chance(if wet > 0.52 { 0.35 } else { 0.55 }) {
+            if !layout.blocks(p) && h > 2.2 && h < 26.0 && slope < 0.45 && rng.chance(if wet > 0.52 { 0.35 } else { 0.55 }) {
                 let mesh = if enchanted { lib.teal_grass } else { pick(&lib.grass, &mut rng) };
                 decor(ctx, mesh, base, yaw, rng.range(0.8, 1.4), Vec4::ONE, GRASS);
             }
@@ -335,7 +339,8 @@ pub fn build(ctx: &mut Context) -> Island {
     }
 
     log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
-    Island { terrain, resources, spawn }
+    let camp = Camp::build(ctx, layout);
+    Island { terrain, resources, spawn, camp }
 }
 
 fn decor(ctx: &mut Context, mesh: MeshId, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {

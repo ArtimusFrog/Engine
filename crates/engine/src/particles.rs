@@ -18,6 +18,10 @@ pub struct Particle {
     pub rotation: Quat,
     /// Leuchtet selbst (z. B. Funken, Magie).
     pub glow: f32,
+    /// Wachstum über die Lebenszeit (0 = schrumpft, 2 = wird dreimal so groß wie Rauch).
+    pub grow: f32,
+    /// Rund (Rauch, Dampf) statt eckig (Splitter, Funken).
+    pub round: bool,
 }
 
 /// Beschreibung für einen Schwall Partikel.
@@ -35,6 +39,10 @@ pub struct Burst {
     pub life: f32,
     pub gravity: f32,
     pub glow: f32,
+    /// Wachstum über die Lebenszeit (0 = schrumpft, 2 = wird dreimal so groß wie Rauch).
+    pub grow: f32,
+    /// Rund (Rauch, Dampf) statt eckig (Splitter, Funken).
+    pub round: bool,
 }
 
 impl Default for Burst {
@@ -50,6 +58,8 @@ impl Default for Burst {
             life: 0.9,
             gravity: 12.0,
             glow: 0.0,
+            grow: 0.0,
+            round: false,
         }
     }
 }
@@ -87,9 +97,12 @@ impl Particles {
                 life,
                 max_life: life,
                 gravity: burst.gravity,
-                spin: Vec3::new(r.range(-9.0, 9.0), r.range(-9.0, 9.0), r.range(-9.0, 9.0)),
+                // Rauch dreht sich nur träge, Splitter wirbeln.
+                spin: Vec3::new(r.range(-9.0, 9.0), r.range(-9.0, 9.0), r.range(-9.0, 9.0)) * if burst.grow > 0.0 { 0.12 } else { 1.0 },
                 rotation: Quat::IDENTITY,
                 glow: burst.glow,
+                grow: burst.grow,
+                round: burst.round,
             });
         }
     }
@@ -113,11 +126,12 @@ impl Particles {
         self.list.is_empty()
     }
 
-    /// (Modellmatrix, Farbe, Leuchtkraft) jedes Partikels; schrumpft zum Lebensende.
-    pub(crate) fn instances(&self) -> impl Iterator<Item = (Mat4, Vec4, f32)> + '_ {
+    /// (Modellmatrix, Farbe, Leuchtkraft, rund?) jedes Partikels.
+    pub(crate) fn instances(&self) -> impl Iterator<Item = (Mat4, Vec4, f32, bool)> + '_ {
         self.list.iter().map(|p| {
-            let scale = p.size * (p.life / p.max_life).sqrt();
-            (Mat4::from_scale_rotation_translation(Vec3::splat(scale), p.rotation, p.position), p.color, p.glow)
+            let t = p.life / p.max_life;
+            let scale = if p.grow > 0.0 { p.size * (1.0 + (1.0 - t) * p.grow) * (t * 6.0).min(1.0) } else { p.size * t.sqrt() };
+            (Mat4::from_scale_rotation_translation(Vec3::splat(scale), p.rotation, p.position), p.color, p.glow, p.round)
         })
     }
 }

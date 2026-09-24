@@ -12,6 +12,7 @@ use crate::mesh::Vertex;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_MAP_SIZE: u32 = 2048;
+const MAX_LIGHTS: usize = 8;
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 12 => Float32x2];
@@ -38,6 +39,8 @@ struct Globals {
     sky_sun: [f32; 4],
     sky_moon: [f32; 4],
     sky_misc: [f32; 4],
+    /// Je Punktlicht zwei Einträge: (Position, Reichweite), (Farbe, –).
+    lights: [[f32; 4]; MAX_LIGHTS * 2],
 }
 
 #[repr(C)]
@@ -493,6 +496,19 @@ impl Renderer {
         let aspect = self.config.width as f32 / self.config.height as f32;
         let texel_world = 2.0 * env.shadow_range / SHADOW_MAP_SIZE as f32;
         let view_proj = ctx.camera.view_projection(aspect);
+        // Die nächsten Punktlichter zur Kamera
+        let mut nearby: Vec<_> = ctx.lights.iter().collect();
+        nearby.sort_by(|a, b| {
+            let da = a.position.distance_squared(ctx.camera.position);
+            let db = b.position.distance_squared(ctx.camera.position);
+            da.total_cmp(&db)
+        });
+        let mut lights = [[0.0f32; 4]; MAX_LIGHTS * 2];
+        let light_count = nearby.len().min(MAX_LIGHTS);
+        for (i, light) in nearby.iter().take(MAX_LIGHTS).enumerate() {
+            lights[i * 2] = light.position.extend(light.radius).into();
+            lights[i * 2 + 1] = light.color.extend(0.0).into();
+        }
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
             light_view_proj: sun_view_projection(ctx).to_cols_array_2d(),
@@ -507,7 +523,8 @@ impl Renderer {
             zenith: env.zenith_color.extend(env.exposure).into(),
             sky_sun: env.sky.sun_direction.normalize().extend(env.sky.sun_visible).into(),
             sky_moon: env.sky.moon_direction.normalize().extend(env.sky.moon_visible).into(),
-            sky_misc: [env.sky.stars, env.sky.glow, 0.0, 0.0],
+            sky_misc: [env.sky.stars, env.sky.glow, light_count as f32, 0.0],
+            lights,
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
@@ -530,14 +547,16 @@ impl Renderer {
             start = end;
         }
 
-        // Partikel als eigener Stapel kleiner Würfel
-        let first_particle = instances.len() as u32;
-        instances.extend(ctx.particles.instances().map(|(model, color, glow)| {
-            let material = if glow > 0.0 { crate::scene::Material::Emissive { glow } } else { crate::scene::Material::Standard };
-            instance(model, color, material.shader_params())
-        }));
-        if instances.len() as u32 > first_particle {
-            batches.push((ctx.assets.cube().0 as usize, first_particle..instances.len() as u32));
+        // Partikel als zwei eigene Stapel: kleine Würfel und runde Puffs
+        for (round, mesh) in [(false, ctx.assets.cube()), (true, ctx.assets.sphere())] {
+            let first = instances.len() as u32;
+            instances.extend(ctx.particles.instances().filter(|p| p.3 == round).map(|(model, color, glow, _)| {
+                let material = if glow > 0.0 { crate::scene::Material::Emissive { glow } } else { crate::scene::Material::Standard };
+                instance(model, color, material.shader_params())
+            }));
+            if instances.len() as u32 > first {
+                batches.push((mesh.0 as usize, first..instances.len() as u32));
+            }
         }
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().next_power_of_two();
