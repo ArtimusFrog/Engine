@@ -1,0 +1,37 @@
+# Prüft jeden Push auf GitHub: Tests unter Windows und Linux, dazu ein fertiger Linux-Server
+# und das Windows-Spiel zum Herunterladen (unter "Actions" → Lauf → "Artifacts").
+name: Pruefen
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests
+        run: cargo test --workspace
+      - name: Release bauen
+        run: cargo build --release -p game
+      - name: Linux-Server hochladen
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spielserver-linux
+          path: target/release/game
+      - name: Windows-Spiel hochladen
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spiel-windows
+          path: |
+            target/release/game.exe
+            game/assets

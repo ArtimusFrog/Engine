@@ -97,6 +97,12 @@ Die Engine lädt glTF-Modelle (`.glb`) mit Skelett, Textur und Animationen
 
 Test-Schalter für Screenshots: `--figur barbar`, `--kamera-vorne`, `--demo-hacken`.
 
+## Eigener Server (Strato-VPS)
+
+Einrichten und Aktualisieren mit je einem Doppelklick, siehe [deploy/README.md](deploy/README.md).
+Auf GitHub prüft jeder Push automatisch die Tests unter Windows und Linux
+(`.github/workflows/pruefen.yml`).
+
 ## Spielstand
 
 Der Server speichert alle 30 Sekunden, wenn jemand geht, und beim Beenden (Strg+C bzw.

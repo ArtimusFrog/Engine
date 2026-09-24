@@ -1,0 +1,27 @@
+[Unit]
+Description=Spielserver (Engine JN)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=spiel
+Group=spiel
+WorkingDirectory=/var/lib/spiel
+ExecStart=/opt/spiel/game --server --port 7777 --welt /var/lib/spiel/welt.json
+# Einstellungen des Spiels landen sonst im (schreibgeschützten) Home-Ordner.
+Environment=XDG_CONFIG_HOME=/var/lib/spiel
+# SIGTERM: der Server beendet den Takt sauber und speichert die Welt.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=always
+RestartSec=3
+
+# Absicherung: darf nur in seinen eigenen Ordner schreiben.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spiel
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

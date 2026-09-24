@@ -3,3 +3,4 @@
 /screenshots
 *.blend1
 __pycache__/
+/deploy/server.txt
