@@ -42,71 +42,12 @@ def verlinken(obj):
 
 
 # ---------------------------------------------------------------------------
-# Körper aus Metaballs: weiche Ellipsoide, die wie Muskeln und Fettpolster ineinander
-# übergehen – ohne Knickstellen. (Mitte, Halbachsen x/y/z in Metern)
-# Koordinaten: Z oben, Bär schaut nach -Y. Maße wie ein erwachsener Braunbär (~2,1 m lang).
+# Körper: gemeinsame Form aus art/lib/baer_form.py (auch fürs Spielmodell)
 # ---------------------------------------------------------------------------
-formen = [
-    # Rumpf: Becken, Bauch (hängt etwas), Brust, Schulterbuckel – schmaler als hoch
-    ((0, 0.62, 0.97), (0.31, 0.38, 0.33)),
-    ((0, 0.12, 0.95), (0.35, 0.48, 0.36)),
-    ((0, -0.32, 1.0), (0.34, 0.36, 0.38)),
-    ((0, -0.45, 1.17), (0.26, 0.28, 0.22)),
-    # Hals und Kopf: deutlicher Hals, breiter Schädel, Wangen, Stirnabsatz, längere Schnauze
-    ((0, -0.8, 1.02), (0.22, 0.26, 0.23)),
-    ((0, -1.07, 0.98), (0.235, 0.21, 0.21)),
-    ((0.1, -1.12, 0.92), (0.11, 0.11, 0.1)),
-    ((-0.1, -1.12, 0.92), (0.11, 0.11, 0.1)),
-    ((0, -1.33, 0.9), (0.095, 0.16, 0.085)),
-    ((0, -1.24, 0.98), (0.085, 0.11, 0.075)),
-    # Schwanz
-    ((0, 1.0, 0.9), (0.07, 0.07, 0.07)),
-]
-for x in (-1, 1):
-    formen += [
-        # Ohren: runde Muscheln oben am Kopf
-        ((0.17 * x, -1.0, 1.2), (0.085, 0.045, 0.085)),
-        # Vorderbein: Oberarm, Unterarm, breite Tatze
-        ((0.23 * x, -0.42, 0.72), (0.14, 0.15, 0.28)),
-        ((0.24 * x, -0.47, 0.32), (0.105, 0.11, 0.27)),
-        ((0.24 * x, -0.54, 0.06), (0.11, 0.15, 0.06)),
-        # Hinterbein: dicker Oberschenkel, Unterschenkel, lange Sohle
-        ((0.22 * x, 0.6, 0.72), (0.17, 0.23, 0.3)),
-        ((0.24 * x, 0.64, 0.3), (0.1, 0.115, 0.26)),
-        ((0.24 * x, 0.55, 0.06), (0.11, 0.17, 0.06)),
-    ]
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1] / "lib"))
+import baer_form  # noqa: E402
 
-# Sichtbarer Radius einer Metaball-Kugel ≈ 0,575 × Einflussradius (Schwelle 0,6, Härte 2).
-SICHTBAR = 0.575
-kugeln = bpy.data.metaballs.new("BaerForm")
-kugeln.resolution = 0.03
-kugeln.render_resolution = 0.02
-kugeln.threshold = 0.6
-for (mitte, (hx, hy, hz)) in formen:
-    element = kugeln.elements.new(type="ELLIPSOID")
-    element.co = mitte
-    element.radius = 1.0
-    element.size_x, element.size_y, element.size_z = hx / SICHTBAR, hy / SICHTBAR, hz / SICHTBAR
-    element.stiffness = 2.0
-form = verlinken(bpy.data.objects.new("BaerForm", kugeln))
-bpy.context.view_layer.update()
-bpy.ops.object.select_all(action="DESELECT")
-form.select_set(True)
-bpy.context.view_layer.objects.active = form
-bpy.ops.object.convert(target="MESH")
-koerper = bpy.context.active_object
-koerper.name = "Baer"
-
-# Unebenheiten: Muskeln, Fettpolster – großflächiges Rauschen, nur leicht.
-textur = bpy.data.textures.new("Beulen", "CLOUDS")
-textur.noise_scale = 0.3
-beulen = koerper.modifiers.new("Beulen", "DISPLACE")
-beulen.texture = textur
-beulen.strength = 0.025
-beulen.mid_level = 0.5
-bpy.ops.object.modifier_apply(modifier=beulen.name)
-for polygon in koerper.data.polygons:
-    polygon.use_smooth = True
+koerper = baer_form.koerper("Baer", aufloesung=0.03)
 
 # ---------------------------------------------------------------------------
 # Materialien
@@ -165,21 +106,16 @@ def kugel(name, ort, radius, mat, skalierung=(1, 1, 1)):
 
 
 kugel("Nase", (0, -1.475, 0.915), 0.04, nase, (1.35, 0.75, 0.85))
-# Augen genau auf die Kopfoberfläche setzen (Strahl von vorne auf den Kopf)
-augen_orte = []
-for x in (-1, 1):
-    start = Vector((0.11 * x, -2.0, 1.04))
-    treffer, ort, normale, _ = koerper.ray_cast(start, Vector((0, 1, 0)))
-    ort = ort if treffer else Vector((0.125 * x, -1.2, 1.06))
-    ort = ort - normale * 0.008
-    augen_orte.append(ort)
-    kugel(f"Auge{x}", ort, 0.021, auge)
+# Augen genau auf die Kopfoberfläche
+augen_orte = baer_form.augen_orte(koerper)
+for i, ort in enumerate(augen_orte):
+    kugel(f"Auge{i}", ort, 0.021, auge)
 
 # ---------------------------------------------------------------------------
 # Fell als Haar-Partikel
 # ---------------------------------------------------------------------------
 # Wo Fell wächst und wie lang: kurz an Schnauze, Tatzen und rund um die Augen.
-nasen_ort = Vector((0, -1.475, 0.915))
+nasen_ort = baer_form.NASE
 gruppe = koerper.vertex_groups.new(name="Felllaenge")
 for v in koerper.data.vertices:
     p = v.co
