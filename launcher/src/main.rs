@@ -179,6 +179,8 @@ impl LauncherApp {
     fn play(&self, ctx: &egui::Context) {
         let Some(manifest) = self.shared.lock().expect("Zustand").manifest.clone() else { return };
         let exe = game_dir().join(&manifest.executable);
+        // Unter macOS/Linux muss das Spiel ausführbar sein (Downloads sind es nicht automatisch).
+        install::make_executable(&exe);
         match std::process::Command::new(&exe).current_dir(game_dir()).spawn() {
             Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Err(e) => self.shared.lock().expect("Zustand").phase = Phase::Failed(format!("Spiel ließ sich nicht starten: {e}")),

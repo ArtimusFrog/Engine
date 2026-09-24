@@ -39,8 +39,16 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 /// Läuft gerade der installierte Launcher (nicht der frisch heruntergeladene)?
 pub fn is_installed_copy() -> bool {
+    if cfg!(target_os = "macos") {
+        // Auf dem Mac steckt der Launcher in „Engine JN.app/Contents/MacOS/“. Startet macOS die App
+        // aus einem schreibgeschützten Zwischenort (App Translocation, z. B. direkt aus „Downloads“),
+        // kann sie sich nicht selbst ersetzen – dann erst nach dem Verschieben in „Programme“.
+        return std::env::current_exe().is_ok_and(|exe| {
+            let path = exe.to_string_lossy();
+            path.contains(".app/Contents/MacOS/") && !path.contains("/AppTranslocation/")
+        });
+    }
     if !cfg!(windows) {
-        // Auf dem Mac liegt der Launcher als App im Programme-Ordner; Selbst-Update folgt später.
         return false;
     }
     std::env::current_exe().is_ok_and(|exe| same_file(&exe, &installed_launcher()))

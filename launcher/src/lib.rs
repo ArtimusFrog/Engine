@@ -242,12 +242,26 @@ pub fn apply_update(source: &dyn Source, manifest: &Manifest, game_dir: &Path, p
         // Erst daneben schreiben, dann austauschen: nie eine halbe Datei am Zielort.
         let temporary = with_suffix(&target, ".download");
         std::fs::write(&temporary, &data).map_err(|e| format!("{}: {e}", temporary.display()))?;
+        if entry.path == manifest.executable {
+            make_executable(&temporary);
+        }
         replace_file(&temporary, &target)?;
         state.files_done += 1;
         progress(&state);
     }
     remove_stale(manifest, game_dir);
     Ok(())
+}
+
+/// Unter macOS/Linux das Spielprogramm ausführbar machen.
+fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {

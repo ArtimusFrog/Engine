@@ -1,0 +1,43 @@
+# Baut die Mac-Version (Apple Silicon + Intel) als App und DMG.
+# Start von Hand: GitHub → Actions → „Mac bauen“ → „Run workflow“.
+# Ergebnis unter „Artifacts“ herunterladen und auf „Mac-Version hinzufuegen.bat“ ziehen –
+# signiert wird dann auf dem eigenen PC (der geheime Schlüssel kommt nie zu GitHub).
+name: Mac bauen
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests (Launcher-Kern)
+        run: cargo test -p launcher
+      - name: Bauen (Apple Silicon und Intel)
+        run: |
+          cargo build --release -p game -p launcher --target aarch64-apple-darwin
+          cargo build --release -p game -p launcher --target x86_64-apple-darwin
+      - name: Universal-Programme
+        run: |
+          mkdir -p out
+          for bin in game launcher; do
+            lipo -create -output "out/$bin" "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
+          done
+          file out/game out/launcher
+      - name: App und DMG
+        run: bash deploy/mac/paket.sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-jn-macos
+          path: |
+            out/game
+            out/launcher
+            out/EngineJN-macOS.dmg
+          retention-days: 14

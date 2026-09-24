@@ -1,10 +1,13 @@
 //! Release-Werkzeug (nur für die Entwickler, nicht für Spieler).
 //!
-//! - `release schluessel`  – legt einmalig den geheimen Signatur-Schlüssel an
+//! - `release schluessel` – legt einmalig den geheimen Signatur-Schlüssel an
 //!   (`%APPDATA%\EngineJN\release_signatur.key`, NIE hochladen oder einchecken!) und schreibt
 //!   den öffentlichen Schlüssel nach `launcher/release_public_key.txt`.
-//! - `release bauen --version 0.2.0 [--neu "Text"]...` – stellt aus dem Release-Build alles
-//!   für den Webspace in `dist/web/` zusammen: Webseite, Launcher-Download und signierte Updates.
+//! - `release bauen --version 0.2.0 [--neu "Text"]...` – stellt aus dem eigenen Release-Build
+//!   (Windows) alles für den Webspace in `dist/web/` zusammen: Webseite, Download, Updates.
+//! - `release mac --von <ordner>` – fügt die Mac-Version hinzu. Der Ordner ist das entpackte
+//!   Ergebnis des GitHub-Workflows „Mac bauen“ (`game`, `launcher`, `EngineJN-macOS.dmg`).
+//!   Signiert wird hier auf dem eigenen Rechner – der geheime Schlüssel kommt nie zu GitHub.
 //!
 //! Vorher bauen: `cargo build --release -p game -p launcher`.
 
@@ -26,8 +29,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("schluessel") => create_key(),
-        Some("bauen") => build(&args[1..]),
-        _ => Err("Aufruf: release schluessel | release bauen --version <x.y.z> [--neu \"Text\"]...".into()),
+        Some("bauen") => build_local(&args[1..]),
+        Some("mac") => add_mac(&args[1..]),
+        _ => Err("Aufruf: release schluessel | release bauen --version <x.y.z> [--neu \"Text\"]... | release mac --von <ordner>".into()),
     };
     if let Err(message) = result {
         eprintln!("FEHLER: {message}");
@@ -52,6 +56,16 @@ fn create_key() -> Result<(), String> {
     Ok(())
 }
 
+/// Geheimer Schlüssel – nur wenn er zum im Launcher eingebauten öffentlichen passt.
+fn secret_key() -> Result<String, String> {
+    let secret = std::fs::read_to_string(secret_key_path()).map_err(|_| "Kein Signatur-Schlüssel – erst `release schluessel` ausführen".to_string())?;
+    let secret = secret.trim().to_string();
+    if public_key(&secret)? != launcher::config::PUBLIC_KEY.trim() {
+        return Err("Der eingebaute öffentliche Schlüssel passt nicht zum geheimen – Launcher neu bauen (cargo build --release -p launcher).".into());
+    }
+    Ok(secret)
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     for file in walk(from) {
         let target = to.join(file.strip_prefix(from).expect("liegt im Ordner"));
@@ -61,84 +75,121 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn build(args: &[String]) -> Result<(), String> {
-    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
-    let version = value("--version").ok_or("--version fehlt, z. B. --version 0.2.0")?;
-    let news: Vec<String> = args.windows(2).filter(|w| w[0] == "--neu").map(|w| w[1].clone()).collect();
-    let date = value("--datum").unwrap_or_else(today);
+/// Was für eine Plattform veröffentlicht wird.
+struct Build<'a> {
+    platform: &'a str,
+    game: &'a Path,
+    /// Name der Spieldatei im Spielordner (`game.exe` bzw. `game`).
+    executable: &'a str,
+    launcher: &'a Path,
+    /// Datei für den Download-Knopf auf der Webseite.
+    download: &'a Path,
+    download_name: &'a str,
+}
 
-    let secret = std::fs::read_to_string(secret_key_path()).map_err(|_| "Kein Signatur-Schlüssel – erst `release schluessel` ausführen".to_string())?;
-    let public = public_key(secret.trim())?;
-    if public != launcher::config::PUBLIC_KEY.trim() {
-        return Err("Der eingebaute öffentliche Schlüssel passt nicht zum geheimen – Launcher neu bauen (cargo build --release -p launcher).".into());
-    }
-
-    let repo = repo();
-    let exe = if cfg!(windows) { ".exe" } else { "" };
-    let game_exe = repo.join("target/release").join(format!("game{exe}"));
-    let launcher_exe = repo.join("target/release").join(format!("launcher{exe}"));
-    for needed in [&game_exe, &launcher_exe] {
+/// Legt `dist/web/updates/<plattform>/` und den Download an und trägt ihn in version.json ein.
+fn publish(build: &Build, version: &str, date: &str, news: Vec<String>, secret: &str) -> Result<(), String> {
+    for needed in [build.game, build.launcher, build.download] {
         if !needed.exists() {
-            return Err(format!("{} fehlt – erst `cargo build --release -p game -p launcher`", needed.display()));
+            return Err(format!("{} fehlt", needed.display()));
         }
     }
+    let dist = repo().join("dist");
+    let web = dist.join("web");
 
-    // 1. Spieldateien zusammenstellen: game.exe + assets/
-    let dist = repo.join("dist");
-    let payload = dist.join(format!("spiel-{}", platform()));
+    // Spieldateien: Programm + assets/ (die Assets sind für alle Plattformen gleich).
+    let payload = dist.join(format!("spiel-{}", build.platform));
     let _ = std::fs::remove_dir_all(&payload);
     std::fs::create_dir_all(&payload).map_err(|e| e.to_string())?;
-    let executable = format!("game{exe}");
-    std::fs::copy(&game_exe, payload.join(&executable)).map_err(|e| e.to_string())?;
-    copy_dir(&repo.join("game/assets"), &payload.join("assets"))?;
+    std::fs::copy(build.game, payload.join(build.executable)).map_err(|e| e.to_string())?;
+    copy_dir(&repo().join("game/assets"), &payload.join("assets"))?;
 
-    // 2. Manifest mit allen Dateien und dem Launcher selbst
-    let mut manifest = manifest_from_dir(&payload, &version, &date, news, &executable).map_err(|e| e.to_string())?;
-    let launcher_size = std::fs::metadata(&launcher_exe).map_err(|e| e.to_string())?.len();
-    let launcher_hash = sha256_file(&launcher_exe).map_err(|e| e.to_string())?;
+    let mut manifest = manifest_from_dir(&payload, version, date, news, build.executable).map_err(|e| e.to_string())?;
+    let launcher_size = std::fs::metadata(build.launcher).map_err(|e| e.to_string())?.len();
+    let launcher_hash = sha256_file(build.launcher).map_err(|e| e.to_string())?;
     manifest.launcher = Some(FileEntry { path: "launcher".into(), size: launcher_size, sha256: launcher_hash.clone() });
 
-    // 3. Webseite + Updates: dist/web/
-    let web = dist.join("web");
-    let _ = std::fs::remove_dir_all(&web);
-    copy_dir(&repo.join("web"), &web)?;
-    let updates = web.join("updates").join(platform());
+    let updates = web.join("updates").join(build.platform);
+    let _ = std::fs::remove_dir_all(&updates);
     let blobs = updates.join("dateien");
     std::fs::create_dir_all(&blobs).map_err(|e| e.to_string())?;
     for entry in &manifest.files {
         std::fs::copy(payload.join(&entry.path), blobs.join(&entry.sha256)).map_err(|e| e.to_string())?;
     }
-    std::fs::copy(&launcher_exe, blobs.join(&launcher_hash)).map_err(|e| e.to_string())?;
-    std::fs::write(updates.join("manifest.signed"), signed_manifest(&manifest, secret.trim())?).map_err(|e| e.to_string())?;
+    std::fs::copy(build.launcher, blobs.join(&launcher_hash)).map_err(|e| e.to_string())?;
+    std::fs::write(updates.join("manifest.signed"), signed_manifest(&manifest, secret)?).map_err(|e| e.to_string())?;
 
-    // Download für die Webseite: der Launcher (installiert sich beim ersten Start selbst).
     let downloads = web.join("downloads");
     std::fs::create_dir_all(&downloads).map_err(|e| e.to_string())?;
-    let download_name = download_file_name();
-    std::fs::copy(&launcher_exe, downloads.join(&download_name)).map_err(|e| e.to_string())?;
+    std::fs::copy(build.download, downloads.join(build.download_name)).map_err(|e| e.to_string())?;
+    let download_size = std::fs::metadata(build.download).map_err(|e| e.to_string())?.len();
 
-    // Infos für die Webseite (Version, Datum, Neuigkeiten, Download-Größe).
-    let info = serde_json::json!({
-        "name": GAME_NAME,
-        "version": manifest.version,
-        "date": manifest.date,
-        "news": manifest.news,
-        "downloads": { platform(): { "file": format!("downloads/{download_name}"), "size": launcher_size } },
-    });
-    std::fs::write(web.join("version.json"), serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    // version.json für die Webseite – Einträge anderer Plattformen bleiben erhalten.
+    let info_path = web.join("version.json");
+    let mut info: serde_json::Value = std::fs::read(&info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}));
+    info["name"] = GAME_NAME.into();
+    info["version"] = manifest.version.clone().into();
+    info["date"] = manifest.date.clone().into();
+    info["news"] = manifest.news.clone().into();
+    info["downloads"][build.platform] = serde_json::json!({ "file": format!("downloads/{}", build.download_name), "size": download_size });
+    std::fs::write(&info_path, serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
 
     let total: u64 = manifest.files.iter().map(|f| f.size).sum();
-    println!("Release {version} ({date}) für {}: {} Dateien, {:.1} MB", platform(), manifest.files.len(), total as f64 / 1e6);
+    println!("Release {version} ({date}) für {}: {} Dateien, {:.1} MB", build.platform, manifest.files.len(), total as f64 / 1e6);
+    Ok(())
+}
+
+/// Release für die eigene Plattform (Windows): baut die Webseite neu auf.
+fn build_local(args: &[String]) -> Result<(), String> {
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let version = value("--version").ok_or("--version fehlt, z. B. --version 0.2.0")?;
+    let news: Vec<String> = args.windows(2).filter(|w| w[0] == "--neu").map(|w| w[1].clone()).collect();
+    let date = value("--datum").unwrap_or_else(today);
+    let secret = secret_key()?;
+
+    let repo = repo();
+    let web = repo.join("dist").join("web");
+    let _ = std::fs::remove_dir_all(&web);
+    copy_dir(&repo.join("web"), &web)?;
+
+    let exe = if cfg!(windows) { ".exe" } else { "" };
+    let game = repo.join("target/release").join(format!("game{exe}"));
+    let launcher = repo.join("target/release").join(format!("launcher{exe}"));
+    let executable = format!("game{exe}");
+    let download_name = if cfg!(windows) { format!("{}-Windows.exe", GAME_NAME.replace(' ', "")) } else { format!("{}-{}", GAME_NAME.replace(' ', ""), platform()) };
+    // Unter Windows ist der Launcher selbst der Download (er installiert sich beim ersten Start).
+    let build = Build { platform: platform(), game: &game, executable: &executable, launcher: &launcher, download: &launcher, download_name: &download_name };
+    publish(&build, &version, &date, news, &secret)?;
     println!("Fertig in {}", web.display());
     Ok(())
 }
 
-fn download_file_name() -> String {
-    let base = GAME_NAME.replace(' ', "");
-    match platform() {
-        "windows" => format!("{base}-Windows.exe"),
-        other => format!("{base}-{other}"),
-    }
+/// Mac-Version aus dem GitHub-Workflow hinzufügen (gleiche Version wie das letzte `bauen`).
+fn add_mac(args: &[String]) -> Result<(), String> {
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let dir = PathBuf::from(value("--von").ok_or("--von <ordner> fehlt (entpacktes Ergebnis von „Mac bauen“)")?);
+    let secret = secret_key()?;
+    let info_path = repo().join("dist/web/version.json");
+    let info: serde_json::Value = std::fs::read(&info_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .ok_or("dist/web/version.json fehlt – erst die Windows-Version mit `release bauen` zusammenstellen")?;
+    let version = info["version"].as_str().unwrap_or_default().to_string();
+    let date = info["date"].as_str().unwrap_or_default().to_string();
+    let news: Vec<String> = info["news"].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default();
+
+    let download_name = format!("{}-macOS.dmg", GAME_NAME.replace(' ', ""));
+    let build = Build {
+        platform: "macos",
+        game: &dir.join("game"),
+        executable: "game",
+        launcher: &dir.join("launcher"),
+        download: &dir.join(&download_name),
+        download_name: &download_name,
+    };
+    publish(&build, &version, &date, news, &secret)?;
+    println!("Mac-Version {version} hinzugefügt.");
+    Ok(())
 }
 
 /// Heutiges Datum (UTC) als JJJJ-MM-TT, ohne zusätzliche Bibliothek.
