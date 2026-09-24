@@ -78,6 +78,11 @@ impl Assets {
         id
     }
 
+    /// Das Mesh mit diesem Namen, falls es schon angelegt wurde.
+    pub fn find_mesh(&self, name: &str) -> Option<MeshId> {
+        self.named.get(name).copied()
+    }
+
     /// Wie [`named_mesh`](Self::named_mesh), nur für Texturen.
     pub fn named_texture(&mut self, name: &str, build: impl FnOnce() -> Image) -> TextureId {
         if let Some(&id) = self.named_textures.get(name) {

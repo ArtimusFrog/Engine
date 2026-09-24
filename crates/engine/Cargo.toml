@@ -10,7 +10,7 @@ egui-wgpu = "0.36.2"
 egui-winit = "0.36.2"
 env_logger = "0.11.11"
 glam = "0.33.9"
-gltf = "1.4.1"
+gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 log = "0.4.34"
 pollster = "1.0.1"

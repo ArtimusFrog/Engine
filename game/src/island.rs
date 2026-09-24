@@ -6,6 +6,7 @@
 use engine::noise::{fbm, hash01, ridged, Rng};
 use engine::prelude::*;
 
+use crate::asset_files;
 use crate::models;
 
 pub const SEED: u32 = 20_260_924;
@@ -122,58 +123,75 @@ fn find_spawn(terrain: &Terrain) -> Vec3 {
     vec3(0.0, height(Vec2::ZERO), 0.0)
 }
 
+/// Ein Modell für die Insel: Mesh und optional ein leuchtendes Zusatzteil.
+type Variant = (MeshId, Option<MeshId>);
+
 struct Library {
-    oaks: Vec<MeshId>,
-    pines: Vec<MeshId>,
-    snowy_pines: Vec<MeshId>,
-    palms: Vec<MeshId>,
-    magic_trees: Vec<(MeshId, MeshId)>,
-    rocks: Vec<MeshId>,
-    bushes: Vec<MeshId>,
-    grass: Vec<MeshId>,
-    teal_grass: MeshId,
-    flowers: Vec<MeshId>,
-    magic_flowers: Vec<MeshId>,
-    red_mushroom: MeshId,
-    glow_mushroom: MeshId,
-    crystals: Vec<MeshId>,
+    oaks: Vec<Variant>,
+    pines: Vec<Variant>,
+    snowy_pines: Vec<Variant>,
+    palms: Vec<Variant>,
+    magic_trees: Vec<Variant>,
+    rocks: Vec<Variant>,
+    bushes: Vec<Variant>,
+    grass: Vec<Variant>,
+    teal_grass: Vec<Variant>,
+    flowers: Vec<Variant>,
+    magic_flowers: Vec<Variant>,
+    red_mushroom: Vec<Variant>,
+    glow_mushroom: Vec<Variant>,
+    crystals: Vec<Variant>,
 }
+
+/// Maßstab, in dem die Insel Felsen aufstellt (Mittelwert der Zufallsgrößen in `build`).
+/// Fels-Dateien werden dadurch geteilt, damit sie im Schnitt so groß sind wie in Blender.
+const ROCK_SCALE: Vec3 = vec3(2.0, 1.4, 2.0);
 
 impl Library {
     fn load(ctx: &mut Context) -> Self {
-        let a = &mut ctx.assets;
-        let many = |a: &mut Assets, name: &str, count: u32, build: &dyn Fn(u32) -> MeshData| {
-            (0..count).map(|i| a.named_mesh(&format!("{name}{i}"), || build(i + 1))).collect::<Vec<_>>()
+        // Liegen Dateien in game/assets/natur/<name>[_n].gltf, ersetzen sie das eingebaute Modell.
+        let slot = |ctx: &mut Context, name: &str, count: u32, build: &dyn Fn(u32) -> MeshData| -> Vec<Variant> {
+            let files = asset_files::load_variants(ctx, "natur", name, Vec3::ONE, 0.0);
+            if !files.is_empty() {
+                return files;
+            }
+            (0..count).map(|i| (ctx.assets.named_mesh(&format!("{name}{i}"), || build(i + 1)), None)).collect()
         };
-        Library {
-            oaks: many(a, "eiche", 3, &|s| models::oak(s * 17)),
-            pines: many(a, "tanne", 3, &|s| models::pine(s * 29, false)),
-            snowy_pines: many(a, "schneetanne", 2, &|s| models::pine(s * 31, true)),
-            palms: many(a, "palme", 2, &|s| models::palm(s * 13)),
-            magic_trees: (0..2)
+        let colored = |ctx: &mut Context, name: &str, colors: &[Vec3], build: &dyn Fn(Vec3) -> MeshData| -> Vec<Variant> {
+            slot(ctx, name, colors.len() as u32, &|i| build(colors[i as usize - 1]))
+        };
+
+        let mut rocks = asset_files::load_variants(ctx, "natur", "fels", ROCK_SCALE, 0.25);
+        if rocks.is_empty() {
+            rocks = (0..5).map(|i| (ctx.assets.named_mesh(&format!("fels{i}"), || models::rock((i + 1) * 7)), None)).collect();
+        }
+        let mut magic_trees = asset_files::load_variants(ctx, "natur", "zauberbaum", Vec3::ONE, 0.0);
+        if magic_trees.is_empty() {
+            magic_trees = (0..2)
                 .map(|i| {
                     let tree = models::magic_tree(i * 11 + 3);
                     let fruits = models::glow_fruits(i * 5 + 1, &tree);
-                    (a.named_mesh(&format!("zauberbaum{i}"), || tree), a.named_mesh(&format!("zauberfrucht{i}"), || fruits))
+                    let a = &mut ctx.assets;
+                    (a.named_mesh(&format!("zauberbaum{i}"), || tree), Some(a.named_mesh(&format!("zauberfrucht{i}"), || fruits)))
                 })
-                .collect(),
-            rocks: many(a, "fels", 5, &|s| models::rock(s * 7)),
-            bushes: many(a, "busch", 3, &|s| models::bush(s * 3)),
-            grass: many(a, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
-            teal_grass: a.named_mesh("zaubergras", || models::grass(99, vec3(0.05, 0.35, 0.3))),
-            flowers: [vec3(0.9, 0.75, 0.1), vec3(0.95, 0.95, 0.9), vec3(0.8, 0.12, 0.1), vec3(0.3, 0.35, 0.95)]
-                .iter()
-                .enumerate()
-                .map(|(i, &c)| a.named_mesh(&format!("blume{i}"), || models::flower(c)))
-                .collect(),
-            magic_flowers: [vec3(0.7, 0.2, 0.95), vec3(0.2, 0.8, 0.95)]
-                .iter()
-                .enumerate()
-                .map(|(i, &c)| a.named_mesh(&format!("zauberblume{i}"), || models::flower(c)))
-                .collect(),
-            red_mushroom: a.named_mesh("fliegenpilz", || models::mushroom(vec3(0.7, 0.06, 0.04), 1.0)),
-            glow_mushroom: a.named_mesh("leuchtpilz", || models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
-            crystals: many(a, "kristall", 2, &|s| models::crystals(s * 41)),
+                .collect();
+        }
+
+        Library {
+            oaks: slot(ctx, "eiche", 3, &|s| models::oak(s * 17)),
+            pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
+            snowy_pines: slot(ctx, "schneetanne", 2, &|s| models::pine(s * 31, true)),
+            palms: slot(ctx, "palme", 2, &|s| models::palm(s * 13)),
+            magic_trees,
+            rocks,
+            bushes: slot(ctx, "busch", 3, &|s| models::bush(s * 3)),
+            grass: slot(ctx, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
+            teal_grass: slot(ctx, "zaubergras", 1, &|_| models::grass(99, vec3(0.05, 0.35, 0.3))),
+            flowers: colored(ctx, "blume", &[vec3(0.9, 0.75, 0.1), vec3(0.95, 0.95, 0.9), vec3(0.8, 0.12, 0.1), vec3(0.3, 0.35, 0.95)], &models::flower),
+            magic_flowers: colored(ctx, "zauberblume", &[vec3(0.7, 0.2, 0.95), vec3(0.2, 0.8, 0.95)], &models::flower),
+            red_mushroom: slot(ctx, "fliegenpilz", 1, &|_| models::mushroom(vec3(0.7, 0.06, 0.04), 1.0)),
+            glow_mushroom: slot(ctx, "leuchtpilz", 1, &|_| models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
+            crystals: slot(ctx, "kristall", 2, &|s| models::crystals(s * 41)),
         }
     }
 }
@@ -227,25 +245,27 @@ pub fn build(ctx: &mut Context) -> Island {
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
-            let pick = |list: &[MeshId], rng: &mut Rng| list[(rng.next_u32() as usize) % list.len()];
+            let pick = |list: &[Variant], rng: &mut Rng| list[(rng.next_u32() as usize) % list.len()];
+            // Für Modelle ohne eigenen Zufallswurf: Auswahl über die Zellnummer.
+            let by_id = |list: &[Variant]| list[id as usize % list.len()];
 
             let wet = moisture(p);
             let enchanted = magic(p) > 0.62 && h < 18.0;
 
             // Bäume und Felsen (abbaubar)
-            let tree = |name: &'static str, mesh: MeshId, size: f32, health: u8| ResourceSpec {
+            let tree = |name: &'static str, (mesh, glow_part): Variant, size: f32, health: u8| ResourceSpec {
                 kind: ResourceKind::Wood,
                 name,
                 mesh,
                 transform: Transform::from_position(base - Vec3::Y * 0.15).with_rotation(yaw).with_scale(Vec3::splat(size)),
                 color: Vec4::ONE,
                 material: LEAVES,
-                glow_part: None,
+                glow_part,
                 collider: Shape::Capsule { radius: 0.4 * size, height: 4.0 * size },
                 collider_offset: Vec3::Y * 2.0 * size,
                 max_health: health,
             };
-            let rock = |mesh: MeshId, rng: &mut Rng| {
+            let rock = |(mesh, glow_part): Variant, rng: &mut Rng| {
                 let scale = vec3(rng.range(1.4, 2.6), rng.range(1.0, 1.8), rng.range(1.4, 2.6));
                 ResourceSpec {
                     kind: ResourceKind::Stone,
@@ -254,7 +274,7 @@ pub fn build(ctx: &mut Context) -> Island {
                     transform: Transform::from_position(base + Vec3::Y * scale.y * 0.12).with_rotation(yaw).with_scale(scale),
                     color: Vec4::ONE,
                     material: Material::Standard,
-                    glow_part: None,
+                    glow_part,
                     collider: Shape::Box { size: scale * vec3(0.9, 0.7, 0.9) },
                     collider_offset: Vec3::ZERO,
                     max_health: 6,
@@ -287,14 +307,11 @@ pub fn build(ctx: &mut Context) -> Island {
                     }
                 } else if enchanted {
                     if roll < 0.13 {
-                        let (tree_mesh, fruits) = lib.magic_trees[(rng.next_u32() % 2) as usize];
-                        let mut spec = tree("Zauberbaum", tree_mesh, size, 6);
-                        spec.glow_part = Some(fruits);
-                        found = Some(spec);
+                        found = Some(tree("Zauberbaum", pick(&lib.magic_trees, &mut rng), size, 6));
                     } else if roll < 0.16 {
                         decor(ctx, pick(&lib.crystals, &mut rng), base, yaw, size, vec4(0.55, 0.25, 1.0, 1.0), Material::Emissive { glow: 1.6 });
                     } else if roll < 0.28 {
-                        decor(ctx, lib.glow_mushroom, base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.9 });
+                        decor(ctx, by_id(&lib.glow_mushroom), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.9 });
                     } else if roll < 0.42 {
                         decor(ctx, pick(&lib.magic_flowers, &mut rng), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.5 });
                     }
@@ -306,7 +323,7 @@ pub fn build(ctx: &mut Context) -> Island {
                     } else if roll < 0.40 {
                         decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
                     } else if roll < 0.45 {
-                        decor(ctx, lib.red_mushroom, base, yaw, size, Vec4::ONE, Material::Standard);
+                        decor(ctx, by_id(&lib.red_mushroom), base, yaw, size, Vec4::ONE, Material::Standard);
                     } else if roll < 0.47 {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
@@ -327,7 +344,7 @@ pub fn build(ctx: &mut Context) -> Island {
 
             // Gras fast überall, wo es grün ist
             if h > 2.2 && h < 26.0 && slope < 0.45 && rng.chance(if wet > 0.52 { 0.35 } else { 0.55 }) {
-                let mesh = if enchanted { lib.teal_grass } else { pick(&lib.grass, &mut rng) };
+                let mesh = if enchanted { by_id(&lib.teal_grass) } else { pick(&lib.grass, &mut rng) };
                 decor(ctx, mesh, base, yaw, rng.range(0.8, 1.4), Vec4::ONE, GRASS);
             }
         }
@@ -338,11 +355,11 @@ pub fn build(ctx: &mut Context) -> Island {
     Island { terrain, resources, spawn }
 }
 
-fn decor(ctx: &mut Context, mesh: MeshId, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
-    ctx.scene.spawn(
-        Entity::new("Deko", mesh)
-            .with_transform(Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size)))
-            .with_color(color)
-            .with_material(material),
-    );
+fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
+    let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size));
+    ctx.scene.spawn(Entity::new("Deko", mesh).with_transform(transform).with_color(color).with_material(material));
+    // Leuchtende Teile aus Blender-Modellen (Material mit Emission) glühen nachts.
+    if let Some(glow) = glow {
+        ctx.scene.spawn(Entity::new("Deko-Leuchten", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.2 }));
+    }
 }

@@ -1,6 +1,7 @@
 // Im Release-Build kein schwarzes Konsolenfenster neben dem Spiel öffnen.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod asset_files;
 mod blender;
 mod characters;
 mod client;

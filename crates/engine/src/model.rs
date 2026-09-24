@@ -90,11 +90,13 @@ pub struct MaterialInfo {
     pub base_color: [f32; 4],
     pub alpha_cutout: bool,
     pub double_sided: bool,
+    /// Selbstleuchten (0 = aus), aus `emissiveFactor` mal `KHR_materials_emissive_strength`.
+    pub emissive: f32,
 }
 
 impl Default for MaterialInfo {
     fn default() -> Self {
-        MaterialInfo { image: None, base_color: [1.0; 4], alpha_cutout: false, double_sided: false }
+        MaterialInfo { image: None, base_color: [1.0; 4], alpha_cutout: false, double_sided: false, emissive: 0.0 }
     }
 }
 
@@ -153,6 +155,7 @@ impl Model {
                     base_color: pbr.base_color_factor(),
                     alpha_cutout: m.alpha_mode() == gltf::material::AlphaMode::Mask,
                     double_sided: m.double_sided(),
+                    emissive: m.emissive_factor().into_iter().fold(0.0, f32::max) * m.emissive_strength().unwrap_or(1.0),
                 }
             }))
             .collect();
@@ -313,6 +316,12 @@ impl Model {
     /// damit jedes seine eigene Textur, Beidseitigkeit und Ausschnitt-Maske behält.
     /// `textures` stammen aus [`register_textures`](Self::register_textures).
     pub fn static_meshes(&self, textures: &[TextureId]) -> Vec<MeshData> {
+        self.static_mesh_groups(textures).into_iter().map(|(_, mesh)| mesh).collect()
+    }
+
+    /// Wie [`static_meshes`](Self::static_meshes), aber mit dem Material jeder Gruppe
+    /// (z. B. um leuchtende Teile getrennt zu zeichnen).
+    pub fn static_mesh_groups(&self, textures: &[TextureId]) -> Vec<(MaterialInfo, MeshData)> {
         let mut globals = Vec::new();
         self.global_matrices(&self.rest_pose(), &mut globals);
         let joint_matrices: Vec<Mat4> = self.joints.iter().map(|&(node, inverse)| globals[node] * inverse).collect();
@@ -357,7 +366,7 @@ impl Model {
                 append_part(mesh, part, |p| m.transform_point3(p), |n| (normal * n).normalize_or_zero());
             }
         }
-        meshes.into_iter().map(|(_, mesh)| mesh).collect()
+        meshes.into_iter().map(|(material, mesh)| (self.materials.get(material).copied().unwrap_or_default(), mesh)).collect()
     }
 
     /// Namen aller Knoten mit starrer Geometrie (Anbauteile wie Helm, Waffen, Schilde).
