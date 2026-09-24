@@ -5,6 +5,7 @@ use engine::prelude::*;
 use crate::client::Replica;
 use crate::characters::Action;
 use crate::protocol::{Hello, Inventory, PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
+use crate::save;
 use crate::server::Authority;
 use crate::world::World;
 
@@ -30,19 +31,25 @@ pub struct Session {
 impl Session {
     /// Leert die Welt und startet eine neue Runde.
     pub fn start(ctx: &mut Context, mode: Mode, hello: &Hello) -> Result<Session, String> {
+        let save_path = save::default_path(matches!(mode, Mode::Server { .. }));
+        Self::start_with_save(ctx, mode, hello, save_path)
+    }
+
+    /// Wie `start`, mit festem Speicherort für den Spielstand (`None` = nicht speichern).
+    pub fn start_with_save(ctx: &mut Context, mode: Mode, hello: &Hello, save_path: Option<std::path::PathBuf>) -> Result<Session, String> {
         ctx.reset_world();
         let is_client = matches!(mode, Mode::Join { .. });
         // Beim Client bewegt der Server die Objekte, nicht die eigene Physik.
         ctx.physics.set_replica(is_client);
 
         let (authority, replica) = match &mode {
-            Mode::Offline => (Some(Authority::new(None)), None),
+            Mode::Offline => (Some(Authority::new(None, save_path)), None),
             Mode::Host { port } | Mode::Server { port } => {
                 let max_clients = if matches!(mode, Mode::Host { .. }) { 16 } else { 32 };
                 let net = NetServer::listen(*port, PROTOCOL_ID, max_clients)
                     .map_err(|e| format!("Port {port} lässt sich nicht öffnen: {e}"))?;
                 log::info!("Server läuft an Port {}", net.port());
-                (Some(Authority::new(Some(net))), None)
+                (Some(Authority::new(Some(net), save_path)), None)
             }
             Mode::Join { address } => {
                 let replica = Replica::connect(address, hello).map_err(|e| format!("{address} ist nicht erreichbar: {e}"))?;
@@ -52,9 +59,16 @@ impl Session {
         };
 
         let mut world = World::new(ctx);
+        let mut authority = authority;
+        if let Some(authority) = &mut authority {
+            authority.restore(ctx, &mut world);
+        }
         if matches!(mode, Mode::Offline | Mode::Host { .. }) {
             let spawn = world.spawn;
             world.spawn_player(ctx, HOST_PLAYER, &hello.name, hello.class, spawn);
+            if let Some(authority) = &mut authority {
+                authority.welcome_back(&mut world, HOST_PLAYER);
+            }
         }
         Ok(Session { mode, world, authority, replica })
     }
@@ -148,6 +162,15 @@ impl Session {
             replica.tick(ctx, &mut self.world, input)?;
         }
         Ok(())
+    }
+}
+
+/// Beim Verlassen der Runde (Menü, Fenster zu, Server-Stopp) den Stand sichern.
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(authority) = &mut self.authority {
+            authority.save(&self.world);
+        }
     }
 }
 
@@ -347,6 +370,33 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn spielstand_ueberlebt_neustart() {
+        let path = std::env::temp_dir().join(format!("welt_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let tree = {
+            let mut ctx = Context::headless();
+            let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("Nils"), Some(path.clone())).unwrap();
+            let world = session.world_mut();
+            let tree = world.resources.iter().find(|(_, r)| r.spec.kind == ResourceKind::Wood).map(|(&id, _)| id).unwrap();
+            world.resource_hit(&mut ctx, tree, 0, false);
+            world.inventories.insert(HOST_PLAYER, Inventory { wood: 9, stone: 2 });
+            world.day.hour = 21.5;
+            tree
+            // Ende des Blocks: Session wird geschlossen und speichert.
+        };
+        assert!(path.exists(), "kein Spielstand geschrieben");
+
+        let mut ctx = Context::headless();
+        let session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("nils"), Some(path.clone())).unwrap();
+        let world = session.world();
+        assert_eq!(world.inventories.get(&HOST_PLAYER), Some(&Inventory { wood: 9, stone: 2 }), "Inventar (Name ohne Groß/klein)");
+        assert!(!world.resources[&tree].is_present(), "gefällter Baum steht wieder");
+        assert!((world.day.hour - 21.5).abs() < 0.01);
+        drop(session);
+        std::fs::remove_file(&path).ok();
+    }
     #[test]
     fn belegter_port_liefert_fehlermeldung() {
         let mut ctx = Context::headless();

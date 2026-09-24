@@ -97,6 +97,13 @@ Die Engine lädt glTF-Modelle (`.glb`) mit Skelett, Textur und Animationen
 
 Test-Schalter für Screenshots: `--figur barbar`, `--kamera-vorne`, `--demo-hacken`.
 
+## Spielstand
+
+Der Server speichert alle 30 Sekunden, wenn jemand geht, und beim Beenden (Strg+C bzw.
+`systemctl stop`): Tageszeit, gefällte und beschädigte Rohstoffe und die Inventare der
+Spieler (nach Namen). Ablage: `%APPDATA%\EngineJN\welt.json` (eigenes Spiel oder Host) bzw.
+`welt_server.json` (dedizierter Server), oder frei wählbar mit `--welt <datei>`.
+
 ## Eigene Assets (Blender)
 
 Modelle entstehen in Blender, siehe [art/README.md](art/README.md). Zum Ansehen ein Modell oder

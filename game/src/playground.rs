@@ -625,6 +625,13 @@ impl Game for Playground {
     }
 
     fn fixed_update(&mut self, ctx: &mut Context) {
+        if crate::STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            log::info!("Beende Server, speichere Spielstand …");
+            // Die Runde schließen: dabei wird gespeichert.
+            self.session = None;
+            ctx.exit();
+            return;
+        }
         let input = self.build_input(ctx);
         let Some(session) = &mut self.session else { return };
         if let Err(reason) = session.fixed_update(ctx, input) {

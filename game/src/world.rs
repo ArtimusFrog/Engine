@@ -46,15 +46,15 @@ pub struct Resource {
     pub health: u8,
     entity: Option<EntityId>,
     body: Option<RigidBodyHandle>,
-    /// Seit welchem Takt der Rohstoff abgebaut ist.
-    pub gone_since: Option<u64>,
+    /// Abgebaut: in welchem Takt der Rohstoff nachwächst.
+    pub regrows_at: Option<u64>,
     /// Restzeit des Wackelns nach einem Treffer (Sekunden).
     shake: f32,
 }
 
 impl Resource {
     pub fn is_present(&self) -> bool {
-        self.gone_since.is_none()
+        self.regrows_at.is_none()
     }
 
     /// Ungefährer Radius am Boden (für die Reichweite).
@@ -113,7 +113,7 @@ impl World {
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
-            world.resources.insert(id, Resource { spec, health, entity: None, body: None, gone_since: None, shake: 0.0 });
+            world.resources.insert(id, Resource { spec, health, entity: None, body: None, regrows_at: None, shake: 0.0 });
             world.place_resource(ctx, id);
         }
         world
@@ -266,7 +266,7 @@ impl World {
             hit_particles(ctx, &resource.spec, health == 0);
         }
         if health == 0 {
-            resource.gone_since = Some(ctx.time.tick);
+            resource.regrows_at = Some(ctx.time.tick + RESPAWN_TICKS);
             self.remove_resource_visual(ctx, id);
         }
     }
@@ -285,7 +285,7 @@ impl World {
         if resource.is_present() {
             return;
         }
-        resource.gone_since = None;
+        resource.regrows_at = None;
         resource.health = resource.spec.max_health;
         self.place_resource(ctx, id);
     }

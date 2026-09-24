@@ -1,14 +1,16 @@
 //! Die Seite, die das Sagen hat: rechnet die echte Physik und verteilt den Zustand.
 //! Läuft beim Host, auf dem dedizierten Server und im Einzelspieler (dann ohne Netzwerk).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use engine::prelude::*;
 
 use crate::characters::Action;
 use crate::protocol::*;
-use crate::world::{World, FIRST_RUNTIME_ID, HARVEST_COOLDOWN_TICKS, RESPAWN_TICKS, THROW_COOLDOWN_TICKS, THROW_SPEED};
+use crate::save::{player_key, WorldSave};
+use crate::world::{World, FIRST_RUNTIME_ID, HARVEST_COOLDOWN_TICKS, THROW_COOLDOWN_TICKS, THROW_SPEED};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -20,6 +22,8 @@ const MAX_QUEUED_INPUTS: usize = 12;
 const MAX_INPUT_CREDIT: u32 = 8;
 /// Geworfene Bälle; die ältesten verschwinden.
 const MAX_THROWN: usize = 30;
+/// Alle wie viele Takte der Spielstand gespeichert wird (30 Sekunden).
+const SAVE_INTERVAL: u64 = 60 * 30;
 
 struct RemoteClient {
     inputs: VecDeque<PlayerInput>,
@@ -35,11 +39,26 @@ pub struct Authority {
     next_object_id: NetId,
     thrown: VecDeque<NetId>,
     send_full_snapshot: bool,
+    /// Wohin der Spielstand geschrieben wird (`None` = gar nicht, z. B. in Tests).
+    save_path: Option<PathBuf>,
+    /// Inventare aller bekannten Spieler nach Namen, auch wenn sie gerade nicht da sind.
+    inventories: BTreeMap<String, Inventory>,
+    /// Aktueller Server-Takt (für das Speichern beim Beenden).
+    tick: u64,
 }
 
 impl Authority {
-    pub fn new(net: Option<NetServer>) -> Self {
-        Authority { net, clients: HashMap::new(), next_object_id: FIRST_RUNTIME_ID, thrown: VecDeque::new(), send_full_snapshot: true }
+    pub fn new(net: Option<NetServer>, save_path: Option<PathBuf>) -> Self {
+        Authority {
+            net,
+            clients: HashMap::new(),
+            next_object_id: FIRST_RUNTIME_ID,
+            thrown: VecDeque::new(),
+            send_full_snapshot: true,
+            save_path,
+            inventories: BTreeMap::new(),
+            tick: 0,
+        }
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -52,6 +71,7 @@ impl Authority {
 
     /// Ein Takt. `local_input` ist die Eingabe des Hosts (fehlt beim dedizierten Server).
     pub fn tick(&mut self, ctx: &mut Context, world: &mut World, local_input: Option<PlayerInput>) {
+        self.tick = ctx.time.tick;
         if self.net.is_some() {
             if ctx.time.tick % SNAPSHOT_INTERVAL == 0 {
                 self.send_snapshot(ctx, world);
@@ -84,12 +104,15 @@ impl Authority {
 
         world.day.advance(Physics::FIXED_DT);
         world.think_animals(ctx);
+        if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
+            self.save(world);
+        }
 
         // Nachwachsen: abgebaute Rohstoffe kommen nach einer Weile zurück.
         let regrown: Vec<u32> = world
             .resources
             .iter()
-            .filter(|(_, r)| r.gone_since.is_some_and(|t| ctx.time.tick >= t + RESPAWN_TICKS))
+            .filter(|(_, r)| r.regrows_at.is_some_and(|t| ctx.time.tick >= t))
             .map(|(&id, _)| id)
             .collect();
         for id in regrown {
@@ -181,6 +204,9 @@ impl Authority {
     fn receive(&mut self, ctx: &mut Context, world: &mut World) {
         let Some(net) = &mut self.net else { return };
         let dt = Duration::from_secs_f32(Physics::FIXED_DT);
+        // Erst nach dem Empfangen erledigen (solange `net` ausgeliehen ist, geht es nicht).
+        let mut deferred_welcome = Vec::new();
+        let mut left = false;
 
         for event in net.receive(dt) {
             match event {
@@ -189,6 +215,7 @@ impl Authority {
                     let hello = Hello::parse(&net.hello(id));
                     let (name, class) = (hello.name, hello.class);
                     world.spawn_player(ctx, id, &name, class, spawn);
+                    let returning = self.inventories.contains_key(&player_key(&name));
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
                     let mut intro = vec![ServerMessage::Welcome { player_id: id, tick: ctx.time.tick as u32 }];
                     intro.extend(
@@ -217,12 +244,19 @@ impl Authority {
                         id,
                         RemoteClient { inputs: VecDeque::new(), last_received: 0, last_processed: 0, credit: 0 },
                     );
+                    if returning {
+                        deferred_welcome.push(id);
+                    }
                     self.send_full_snapshot = true;
                 }
                 ServerEvent::Disconnected(id, reason) => {
                     log::info!("Verbindung zu {id} getrennt: {reason}");
                     self.clients.remove(&id);
+                    if let (Some(avatar), Some(inventory)) = (world.players.get(&id), world.inventories.get(&id)) {
+                        self.inventories.insert(player_key(&avatar.name), *inventory);
+                    }
                     world.remove_player(ctx, id);
+                    left = true;
                     net.broadcast(Channel::Reliable, encode(&ServerMessage::PlayerLeft { player_id: id }));
                 }
             }
@@ -241,6 +275,56 @@ impl Authority {
             while client.inputs.len() > MAX_QUEUED_INPUTS {
                 client.inputs.pop_front();
             }
+        }
+
+        for id in deferred_welcome {
+            self.welcome_back(world, id);
+        }
+        if left {
+            self.save(world);
+        }
+    }
+
+    // ---------- Spielstand ----------
+
+    /// Lädt den gespeicherten Stand in die frisch gebaute Welt (Tageszeit, Rohstoffe, Inventare).
+    pub fn restore(&mut self, ctx: &mut Context, world: &mut World) {
+        let Some(save) = self.save_path.as_deref().and_then(WorldSave::load) else { return };
+        world.day.hour = save.hour;
+        world.day.day = save.day;
+        for &(id, health) in &save.damaged {
+            world.resource_hit(ctx, id, health, false);
+        }
+        for &(id, remaining) in &save.gone {
+            world.resource_hit(ctx, id, 0, false);
+            if let Some(resource) = world.resources.get_mut(&id) {
+                resource.regrows_at = Some(ctx.time.tick + remaining);
+            }
+        }
+        log::info!("Spielstand geladen: Tag {}, {} Spieler bekannt, {} Rohstoffe abgebaut", save.day, save.inventories.len(), save.gone.len());
+        self.inventories = save.inventories;
+    }
+
+    /// Gibt einem (wieder)kommenden Spieler sein altes Inventar zurück.
+    pub fn welcome_back(&mut self, world: &mut World, player: PlayerId) {
+        let Some(avatar) = world.players.get(&player) else { return };
+        let Some(&inventory) = self.inventories.get(&player_key(&avatar.name)) else { return };
+        world.inventories.insert(player, inventory);
+        if player != HOST_PLAYER {
+            if let Some(net) = &mut self.net {
+                net.send(player, Channel::Reliable, encode(&ServerMessage::Inventory(inventory)));
+            }
+        }
+    }
+
+    /// Schreibt den Spielstand (falls ein Speicherort festgelegt ist).
+    pub fn save(&mut self, world: &World) {
+        let Some(path) = &self.save_path else { return };
+        let save = WorldSave::capture(world, self.tick, &self.inventories);
+        self.inventories = save.inventories.clone();
+        match save.store(path) {
+            Ok(()) => log::debug!("Spielstand gespeichert: {}", path.display()),
+            Err(e) => log::error!("Spielstand {} lässt sich nicht speichern: {e}", path.display()),
         }
     }
 

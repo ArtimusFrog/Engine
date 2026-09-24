@@ -11,6 +11,7 @@ mod models;
 mod playground;
 mod protocol;
 mod server;
+mod save;
 mod session;
 mod settings;
 mod ui;
@@ -22,6 +23,10 @@ use engine::prelude::*;
 use playground::Playground;
 use protocol::DEFAULT_PORT;
 use session::Mode;
+
+/// Wird gesetzt, wenn der Server beendet werden soll (Strg+C oder `systemctl stop`).
+/// Das Spiel beendet dann den Takt sauber und speichert.
+pub static STOP_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Kommandozeile (ohne Angabe startet das Hauptmenü):
 /// - `--offline`: direkt allein spielen
@@ -56,7 +61,11 @@ fn main() {
     let headless = matches!(mode, Some(Mode::Server { .. }));
     let game = Playground::new(mode, args.iter().any(|a| a == "--autopilot"));
     if headless {
+        if let Err(e) = ctrlc::set_handler(|| STOP_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst)) {
+            log::warn!("Strg+C lässt sich nicht abfangen: {e}");
+        }
         run_headless(game);
+        log::info!("Server beendet");
     } else {
         run(EngineConfig { title: "Spielplatz".into(), ..Default::default() }, game);
     }
