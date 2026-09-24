@@ -158,62 +158,166 @@ fn sky_band(hour: f32) -> Color32 {
     Color32::from_rgb(mix(0), mix(1), mix(2))
 }
 
-/// Zeitleiste oben in der Mitte: Tagesverlauf, Sonne bzw. Mond an der aktuellen Uhrzeit,
-/// dazu Uhr, Tageszeit und Tageszähler.
+
+const GOLD: Color32 = Color32::from_rgb(214, 178, 96);
+const GOLD_DARK: Color32 = Color32::from_rgb(120, 92, 42);
+
+fn darken(color: Color32, factor: f32) -> Color32 {
+    let f = |c: u8| (c as f32 * factor).clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(f(color.r()), f(color.g()), f(color.b()))
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)) as u8;
+    Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
+}
+
+/// Raute als Zierelement.
+fn diamond(painter: &egui::Painter, center: egui::Pos2, size: f32, fill: Color32) {
+    let points = vec![
+        center + egui::vec2(0.0, -size),
+        center + egui::vec2(size, 0.0),
+        center + egui::vec2(0.0, size),
+        center + egui::vec2(-size, 0.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(points, fill, Stroke::new(1.0, GOLD_DARK)));
+}
+
+/// Runder Himmelsausschnitt: Farbverlauf der Tageszeit, Hügel, Sonne bzw. Mond auf ihrer
+/// Bahn, nachts Sterne.
+fn sky_medallion(painter: &egui::Painter, center: egui::Pos2, radius: f32, day: &DayCycle) {
+    let horizon = sky_band(day.hour);
+    let zenith = if day.is_night() { darken(horizon, 0.45) } else { lerp_color(horizon, Color32::from_rgb(40, 90, 190), 0.55) };
+
+    // Himmel als Fächer mit Farbverlauf von oben nach unten
+    let mut sky = egui::Mesh::default();
+    sky.colored_vertex(center, lerp_color(zenith, horizon, 0.5));
+    let segments = 48;
+    for i in 0..=segments {
+        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
+        let p = center + egui::vec2(a.cos(), a.sin()) * radius;
+        let t = (p.y - (center.y - radius)) / (2.0 * radius);
+        sky.colored_vertex(p, lerp_color(zenith, horizon, t));
+        if i > 0 {
+            sky.add_triangle(0, i as u32, i as u32 + 1);
+        }
+    }
+    painter.add(egui::Shape::mesh(sky));
+
+    if day.is_night() {
+        for (x, y) in [(-0.45, -0.5), (0.2, -0.62), (0.55, -0.3), (-0.15, -0.2), (-0.62, -0.1), (0.38, -0.7), (0.05, -0.45)] {
+            painter.circle_filled(center + egui::vec2(x, y) * radius, 0.9, Color32::from_white_alpha(210));
+        }
+    }
+
+    // Sonne bzw. Mond auf einem Bogen: links auf, oben am höchsten, rechts unter.
+    let (angle, is_sun) = if day.is_night() {
+        (((day.hour - 18.0).rem_euclid(24.0)) / 12.0 * std::f32::consts::PI, false)
+    } else {
+        ((day.hour - 6.0) / 12.0 * std::f32::consts::PI, true)
+    };
+    let body = center + egui::vec2(-angle.cos() * radius * 0.62, -angle.sin() * radius * 0.62 + radius * 0.18);
+    if is_sun {
+        painter.circle_filled(body, 9.0, Color32::from_rgba_unmultiplied(255, 190, 70, 60));
+        painter.circle_filled(body, 5.5, Color32::from_rgb(255, 214, 90));
+    } else {
+        painter.circle_filled(body, 8.0, Color32::from_white_alpha(28));
+        painter.circle_filled(body, 5.0, Color32::from_rgb(232, 236, 250));
+        painter.circle_filled(body + egui::vec2(2.2, -1.6), 4.2, lerp_color(zenith, horizon, 0.3));
+    }
+
+    // Hügel-Silhouette, unten vom Kreis begrenzt
+    let hill = if day.is_night() {
+        Color32::from_rgb(10, 14, 22)
+    } else {
+        darken(lerp_color(horizon, Color32::from_rgb(30, 60, 30), 0.7), 0.7)
+    };
+    let mut ground = egui::Mesh::default();
+    let columns = 32;
+    for i in 0..=columns {
+        let x = -radius + 2.0 * radius * i as f32 / columns as f32;
+        let bottom = (radius * radius - x * x).max(0.0).sqrt();
+        let wave = radius * (0.34 + 0.08 * (x / radius * 5.0).sin() + 0.05 * (x / radius * 11.0).cos());
+        let top = wave.min(bottom);
+        ground.colored_vertex(center + egui::vec2(x, top), hill);
+        ground.colored_vertex(center + egui::vec2(x, bottom), hill);
+        if i > 0 {
+            let v = (i * 2) as u32;
+            ground.add_triangle(v - 2, v - 1, v);
+            ground.add_triangle(v - 1, v + 1, v);
+        }
+    }
+    painter.add(egui::Shape::mesh(ground));
+
+    // Rahmen: dunkler Außenrand, Goldring, feiner Innenring, Rauten an den Seiten
+    painter.circle_stroke(center, radius + 3.5, Stroke::new(2.0, Color32::from_black_alpha(200)));
+    painter.circle_stroke(center, radius + 1.5, Stroke::new(2.5, GOLD));
+    painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 240, 200, 70)));
+    for angle in [0.0f32, 90.0, 180.0, 270.0] {
+        let a = angle.to_radians();
+        diamond(painter, center + egui::vec2(a.cos(), a.sin()) * (radius + 1.5), 3.5, GOLD);
+    }
+}
+
+/// Zeitleiste im MMORPG-Stil oben in der Mitte: Himmels-Medaillon mit Sonne bzw. Mond,
+/// links die Tageszeit mit Tagesfortschritt, rechts Uhrzeit und Tag.
 pub fn time_bar(ctx: &egui::Context, day: &DayCycle) {
-    egui::Area::new(egui::Id::new("zeitleiste"))
-        .anchor(Align2::CENTER_TOP, [0.0, 10.0])
-        .interactable(false)
-        .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(Color32::from_black_alpha(155))
-                .corner_radius(10.0)
-                .inner_margin(egui::Margin::symmetric(16, 8))
-                .show(ui, |ui| {
-                    let width = 340.0;
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.0), egui::Sense::hover());
-                    let painter = ui.painter();
-                    let muted = TEXT.gamma_multiply(0.85);
-                    let top = rect.top() + 9.0;
-                    painter.text(egui::pos2(rect.left(), top), Align2::LEFT_CENTER, day.phase().label(), FontId::proportional(14.0), muted);
-                    painter.text(egui::pos2(rect.center().x, top), Align2::CENTER_CENTER, day.clock(), FontId::proportional(21.0), Color32::WHITE);
-                    painter.text(egui::pos2(rect.right(), top), Align2::RIGHT_CENTER, format!("Tag {}", day.day), FontId::proportional(14.0), muted);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("zeitleiste")));
+    let screen = ctx.content_rect();
+    let center = egui::pos2(screen.center().x, screen.top() + 44.0);
+    let (half_width, half_height, chamfer) = (200.0, 20.0, 12.0);
 
-                    // Farbverlauf über 24 Stunden
-                    let bar = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + 27.0), egui::vec2(width, 10.0));
-                    let x_at = |hour: f32| bar.left() + hour / 24.0 * width;
-                    let mut mesh = egui::Mesh::default();
-                    let steps = 48;
-                    for i in 0..=steps {
-                        let hour = i as f32 / steps as f32 * 24.0;
-                        let color = sky_band(hour);
-                        mesh.colored_vertex(egui::pos2(x_at(hour), bar.top()), color);
-                        mesh.colored_vertex(egui::pos2(x_at(hour), bar.bottom()), color);
-                        if i > 0 {
-                            let v = (i * 2) as u32;
-                            mesh.add_triangle(v - 2, v - 1, v);
-                            mesh.add_triangle(v - 1, v + 1, v);
-                        }
-                    }
-                    painter.add(egui::Shape::mesh(mesh));
-                    painter.rect_stroke(bar, 3.0, Stroke::new(1.0, Color32::from_white_alpha(45)), egui::StrokeKind::Outside);
-                    for hour in [6.0, 12.0, 18.0] {
-                        let x = x_at(hour);
-                        painter.line_segment([egui::pos2(x, bar.bottom() + 2.0), egui::pos2(x, bar.bottom() + 6.0)], Stroke::new(1.0, Color32::from_white_alpha(90)));
-                    }
+    // Goldene Zierlinien mit Rauten links und rechts
+    for side in [-1.0f32, 1.0] {
+        let start = center + egui::vec2(side * (half_width + 4.0), 0.0);
+        let end = center + egui::vec2(side * (half_width + 46.0), 0.0);
+        painter.line_segment([start, end], Stroke::new(1.5, GOLD.gamma_multiply(0.8)));
+        diamond(&painter, end, 4.5, GOLD);
+        diamond(&painter, start + egui::vec2(side * 14.0, 0.0), 2.5, GOLD_DARK);
+    }
 
-                    // Sonne oder Mond an der aktuellen Uhrzeit
-                    let center = egui::pos2(x_at(day.hour), bar.center().y);
-                    if day.is_night() {
-                        painter.circle_filled(center, 12.0, Color32::from_white_alpha(22));
-                        painter.circle_filled(center, 7.5, Color32::from_rgb(228, 232, 248));
-                        // Sichel: ein Teil wird mit der Nachtfarbe überdeckt
-                        painter.circle_filled(center + egui::vec2(3.2, -2.2), 6.2, sky_band(day.hour));
-                    } else {
-                        painter.circle_filled(center, 13.0, Color32::from_rgba_unmultiplied(255, 200, 80, 55));
-                        painter.circle_filled(center, 7.5, Color32::from_rgb(255, 208, 72));
-                        painter.circle_stroke(center, 7.5, Stroke::new(1.5, Color32::from_rgb(255, 240, 180)));
-                    }
-                });
-        });
+    // Banner mit abgeschrägten Ecken, dunkles Glas mit Goldkante
+    let banner = |inset: f32| {
+        let (w, h, c) = (half_width - inset, half_height - inset, chamfer - inset * 0.6);
+        vec![
+            center + egui::vec2(-w + c, -h),
+            center + egui::vec2(w - c, -h),
+            center + egui::vec2(w, -h + c),
+            center + egui::vec2(w, h - c),
+            center + egui::vec2(w - c, h),
+            center + egui::vec2(-w + c, h),
+            center + egui::vec2(-w, h - c),
+            center + egui::vec2(-w, -h + c),
+        ]
+    };
+    painter.add(egui::Shape::convex_polygon(banner(-3.0), Color32::from_black_alpha(90), Stroke::NONE));
+    painter.add(egui::Shape::convex_polygon(banner(0.0), Color32::from_rgba_unmultiplied(12, 14, 22, 240), Stroke::new(1.5, GOLD)));
+    painter.add(egui::Shape::closed_line(banner(3.5), Stroke::new(1.0, Color32::from_rgba_unmultiplied(214, 178, 96, 60))));
+    // Glanzlinie oben
+    let shine_y = -half_height + 5.0;
+    painter.line_segment(
+        [center + egui::vec2(-half_width + chamfer + 6.0, shine_y), center + egui::vec2(half_width - chamfer - 6.0, shine_y)],
+        Stroke::new(1.0, Color32::from_white_alpha(18)),
+    );
+
+    // Links: Tageszeit und Fortschritt des Tages
+    let left = center.x - half_width + 22.0;
+    let text_right = center.x - 40.0;
+    let phase = day.phase().label().to_uppercase();
+    painter.text(egui::pos2(left, center.y - 6.0), Align2::LEFT_CENTER, phase, FontId::proportional(13.0), GOLD);
+    let track = egui::Rect::from_min_max(egui::pos2(left, center.y + 7.0), egui::pos2(text_right, center.y + 9.5));
+    painter.rect_filled(track, 1.5, Color32::from_white_alpha(25));
+    let mut fill = track;
+    fill.set_width(track.width() * day.hour / 24.0);
+    painter.rect_filled(fill, 1.5, GOLD.gamma_multiply(0.85));
+    diamond(&painter, egui::pos2(fill.right(), track.center().y), 3.5, Color32::from_rgb(255, 230, 160));
+
+    // Rechts: Uhrzeit groß, darunter der Tag
+    let right = center.x + half_width - 22.0;
+    let clock_color = Color32::from_rgb(248, 244, 232);
+    painter.text(egui::pos2(right, center.y - 5.0), Align2::RIGHT_CENTER, day.clock(), FontId::proportional(22.0), clock_color);
+    painter.text(egui::pos2(right, center.y + 11.0), Align2::RIGHT_CENTER, format!("TAG {}", day.day), FontId::proportional(11.0), GOLD);
+
+    // Mitte: Himmels-Medaillon, ragt über das Banner hinaus
+    sky_medallion(&painter, center, 29.0, day);
 }
