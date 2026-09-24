@@ -52,6 +52,9 @@ PALETTE = {
     "fell_orange": "#D9772F",
     "fell_weiss": "#F1EDE4",
     "fell_braun": "#8A5A36",
+    "baer": "#6B4428",
+    "baer_dunkel": "#46291A",
+    "baer_schnauze": "#B68A5E",
     "schwarz": "#1E1E22",
     "kristall": "#7FE0F0",
     "magie": "#B07CFF",
@@ -242,6 +245,93 @@ def ursprung_unten(obj):
     obj.location = Vector((0, 0, 0))
     obj.data.update()
     return obj
+
+
+# ---------------------------------------------------------------------------
+# Skelett und Animation (für Tiere und Figuren)
+#
+# Vorgehen: Körperteile als einzelne Objekte bauen, jedes mit `knochen_zuweisen` einem
+# Knochen zuordnen (starre Zuordnung – passt zum Low-Poly-Stil), mit `vereinen` zu einem
+# Mesh machen, `skelett` anlegen, `binden`, dann je Animation `animation`.
+# ---------------------------------------------------------------------------
+def knochen_zuweisen(obj, knochen):
+    """Alle Eckpunkte von `obj` bewegen sich mit dem Knochen `knochen`."""
+    gruppe = obj.vertex_groups.new(name=knochen)
+    gruppe.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
+    return obj
+
+
+def skelett(name, knochen):
+    """Legt ein Skelett an. `knochen` = Liste von (Name, Kopf, Ende, Eltern, Oben).
+
+    `Oben` ist die Weltrichtung, in die die lokale Z-Achse des Knochens zeigen soll –
+    so ist klar, um welche Achse sich ein Knochen dreht:
+    - Beine (zeigen nach unten), Oben = (0, 1, 0): Drehung um X schwingt sie vor und zurück.
+    - Rumpf/Kopf (zeigen nach vorne, -Y), Oben = (0, 0, 1): Drehung um X nickt, um Z schaut zur Seite.
+    """
+    daten = bpy.data.armatures.new(name)
+    obj = bpy.data.objects.new(name, daten)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    angelegt = {}
+    for knochen_name, kopf, ende, eltern, oben in knochen:
+        k = daten.edit_bones.new(knochen_name)
+        k.head = Vector(kopf)
+        k.tail = Vector(ende)
+        k.align_roll(Vector(oben))
+        if eltern:
+            k.parent = angelegt[eltern]
+        angelegt[knochen_name] = k
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for pose in obj.pose.bones:
+        pose.rotation_mode = "XYZ"
+    return obj
+
+
+def binden(mesh_obj, armatur):
+    """Hängt das Mesh an das Skelett (Vertex-Gruppen = Knochennamen)."""
+    mesh_obj.parent = armatur
+    modifier = mesh_obj.modifiers.new("Skelett", "ARMATURE")
+    modifier.object = armatur
+    return mesh_obj
+
+
+def animation(armatur, name, laenge, schluessel):
+    """Eine Animation (glTF-Clip) als Blender-Aktion.
+
+    `laenge` in Bildern (30 pro Sekunde). `schluessel` = Liste von
+    (Bild, Knochen, "rot" oder "pos", (x, y, z)) – Drehung in Grad (lokale Achsen), Position in
+    Metern. Für Schleifen muss das letzte Bild dem ersten gleichen.
+    """
+    armatur.animation_data_create()
+    aktion = bpy.data.actions.new(name)
+    aktion.use_fake_user = True
+    armatur.animation_data.action = aktion
+    for pose in armatur.pose.bones:
+        pose.rotation_euler = (0, 0, 0)
+        pose.location = (0, 0, 0)
+    for bild, knochen_name, art, wert in sorted(schluessel, key=lambda s: s[0]):
+        pose = armatur.pose.bones[knochen_name]
+        if art == "rot":
+            pose.rotation_euler = [math.radians(w) for w in wert]
+            pose.keyframe_insert(data_path="rotation_euler", frame=bild)
+        else:
+            pose.location = wert
+            pose.keyframe_insert(data_path="location", frame=bild)
+    aktion.frame_range = (0, laenge)
+    return aktion
+
+
+def ruhepose(armatur):
+    """Nach dem Animieren: Skelett in Grundstellung, keine aktive Aktion."""
+    for pose in armatur.pose.bones:
+        pose.rotation_euler = (0, 0, 0)
+        pose.location = (0, 0, 0)
+    if armatur.animation_data:
+        armatur.animation_data.action = None
 
 
 # ---------------------------------------------------------------------------

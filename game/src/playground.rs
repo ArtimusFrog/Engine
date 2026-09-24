@@ -636,6 +636,12 @@ impl Game for Playground {
             ctx.camera.pitch = 0.45;
             ctx.camera.yaw = -1.9;
         }
+        // Nur für Screenshots: Blickrichtung in Grad (0 = Norden, negativ = links).
+        if let Some(winkel) = args.iter().position(|a| a == "--kamera-winkel").and_then(|i| args.get(i + 1)).and_then(|w| w.parse::<f32>().ok()) {
+            ctx.camera.yaw = winkel.to_radians();
+            ctx.camera.pitch = -0.12;
+            self.orbit.distance = 3.0;
+        }
         if args.iter().any(|a| a == "--kamera-vorne") {
             ctx.camera.yaw = std::f32::consts::PI;
             ctx.camera.pitch = -0.15;

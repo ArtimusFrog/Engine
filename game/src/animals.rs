@@ -1,4 +1,4 @@
-//! Tiere auf der Insel: Hasen, Füchse und Hirsche.
+//! Tiere auf der Insel: Hasen, Füchse, Hirsche und Bären.
 //!
 //! Der Server steuert sie (grasen, umherstreifen, vor Spielern fliehen) und schickt ihre
 //! Lage in jedem Snapshot mit. Clients zeigen sie nur an.
@@ -27,6 +27,7 @@ pub enum AnimalKind {
     Hare,
     Fox,
     Deer,
+    Bear,
 }
 
 /// Wie sich eine Tierart verhält.
@@ -39,16 +40,20 @@ struct Traits {
     calm: f32,
     /// Größe des Platzhalters (Schulterhöhe in Metern).
     height: f32,
+    /// Abspieltempo der Lauf- und Renn-Animation, damit die Füße nicht rutschen.
+    stride: (f32, f32),
 }
 
 impl AnimalKind {
-    pub const ALL: [AnimalKind; 3] = [AnimalKind::Hare, AnimalKind::Fox, AnimalKind::Deer];
+    pub const ALL: [AnimalKind; 4] = [AnimalKind::Hare, AnimalKind::Fox, AnimalKind::Deer, AnimalKind::Bear];
 
     fn traits(self) -> Traits {
         match self {
-            AnimalKind::Hare => Traits { walk: 1.6, run: 8.5, flee: 7.0, calm: 20.0, height: 0.35 },
-            AnimalKind::Fox => Traits { walk: 2.2, run: 9.5, flee: 10.0, calm: 26.0, height: 0.45 },
-            AnimalKind::Deer => Traits { walk: 1.8, run: 11.0, flee: 14.0, calm: 32.0, height: 1.1 },
+            AnimalKind::Hare => Traits { walk: 1.6, run: 8.5, flee: 7.0, calm: 20.0, height: 0.35, stride: (1.0, 1.0) },
+            AnimalKind::Fox => Traits { walk: 2.2, run: 9.5, flee: 10.0, calm: 26.0, height: 0.45, stride: (1.0, 1.0) },
+            AnimalKind::Deer => Traits { walk: 1.8, run: 11.0, flee: 14.0, calm: 32.0, height: 1.1, stride: (1.0, 1.0) },
+            // Bären sind gemächlich und lassen Spieler nah heran, bevor sie davontrotten.
+            AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (0.9, 1.5) },
         }
     }
 
@@ -58,6 +63,7 @@ impl AnimalKind {
             AnimalKind::Hare => "hase",
             AnimalKind::Fox => "fuchs",
             AnimalKind::Deer => "hirsch",
+            AnimalKind::Bear => "baer",
         }
     }
 
@@ -66,6 +72,7 @@ impl AnimalKind {
             AnimalKind::Hare => "Hase",
             AnimalKind::Fox => "Fuchs",
             AnimalKind::Deer => "Hirsch",
+            AnimalKind::Bear => "Bär",
         }
     }
 }
@@ -258,8 +265,8 @@ impl Animal {
                 if near {
                     let (clips, speed): (&[&str], f32) = match self.gait {
                         Gait::Idle => (&["Idle", "Stehen"], 1.0),
-                        Gait::Walk => (&["Laufen", "Walk"], 1.0),
-                        Gait::Run => (&["Rennen", "Run", "Laufen"], 1.0),
+                        Gait::Walk => (&["Laufen", "Walk"], self.kind.traits().stride.0),
+                        Gait::Run => (&["Rennen", "Run", "Laufen"], self.kind.traits().stride.1),
                     };
                     if !clips.iter().any(|clip| animator.current() == Some(*clip)) {
                         for clip in clips {
@@ -323,7 +330,7 @@ impl Visual {
 /// Liest das Blender-Modell einer Tierart (einmal pro Programmlauf).
 fn load_model(kind: AnimalKind) -> Option<Arc<Model>> {
     use std::sync::OnceLock;
-    static CACHE: [OnceLock<Option<Arc<Model>>>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static CACHE: [OnceLock<Option<Arc<Model>>>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
     let index = AnimalKind::ALL.iter().position(|&k| k == kind)?;
     CACHE[index]
         .get_or_init(|| {
@@ -391,6 +398,19 @@ fn placeholder(kind: AnimalKind) -> MeshData {
                 add(MeshData::cylinder(0.02, 0.01, 0.2, 4, antler), vec3(side * 0.16, h * 1.8, -0.48), Vec3::ONE);
             }
         }
+        AnimalKind::Bear => {
+            let fur = vec3(0.14, 0.07, 0.03);
+            let muzzle = vec3(0.45, 0.28, 0.14);
+            add(ball(fur), vec3(0.0, h * 0.85, 0.0), vec3(1.0, 0.9, 1.9));
+            add(ball(fur), vec3(0.0, h * 1.05, -1.0), vec3(0.62, 0.6, 0.65));
+            add(ball(muzzle), vec3(0.0, h * 0.95, -1.3), vec3(0.3, 0.26, 0.36));
+            for side in [-1.0, 1.0] {
+                add(ball(fur), vec3(side * 0.2, h * 1.3, -0.95), vec3(0.18, 0.18, 0.1));
+                for end in [-0.6, 0.6] {
+                    add(MeshData::cylinder(0.16, 0.2, h * 0.75, 6, fur), vec3(side * 0.3, 0.0, end), Vec3::ONE);
+                }
+            }
+        }
     }
     mesh.flat_shaded()
 }
@@ -399,19 +419,21 @@ fn placeholder(kind: AnimalKind) -> MeshData {
 pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec2) -> f32) -> Vec<Animal> {
     let mut rng = Rng::new(seed as u64 ^ 0xA41A_A15);
     let mut animals = Vec::new();
-    // (Art, Anzahl, passt der Ort?) – Hasen auf Wiesen, Füchse im Wald, Hirsche überall im Grünen.
-    let groups: [(AnimalKind, usize, &dyn Fn(Vec2, f32) -> bool); 3] = [
-        (AnimalKind::Hare, 16, &|p, h| h < 14.0 && moisture(p) < 0.52),
-        (AnimalKind::Fox, 7, &|p, h| h < 16.0 && moisture(p) >= 0.48),
-        (AnimalKind::Deer, 8, &|_, h| (4.0..20.0).contains(&h)),
+    // (Art, Anzahl, davon beim Startpunkt, passt der Ort?) – Hasen auf Wiesen, Füchse im Wald,
+    // Hirsche überall im Grünen, Bären im Wald.
+    let groups: [(AnimalKind, usize, usize, &dyn Fn(Vec2, f32) -> bool); 4] = [
+        (AnimalKind::Hare, 16, 2, &|p, h| h < 14.0 && moisture(p) < 0.52),
+        (AnimalKind::Fox, 7, 2, &|p, h| h < 16.0 && moisture(p) >= 0.48),
+        (AnimalKind::Deer, 8, 2, &|_, h| (4.0..20.0).contains(&h)),
+        (AnimalKind::Bear, 4, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
     ];
-    for (kind, count, fits) in groups {
+    for (kind, count, near, fits) in groups {
         let mut placed = 0;
         let mut tries = 0;
         while placed < count && tries < 4000 {
             tries += 1;
             // Ein paar Tiere in Sichtweite des Startpunkts, der Rest verteilt.
-            let near_spawn = placed < 2;
+            let near_spawn = placed < near;
             let p = if near_spawn {
                 vec2(spawn.x, spawn.z) + Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)) * rng.range(18.0, 40.0)
             } else {
@@ -464,6 +486,20 @@ mod tests {
         assert!(walked, "Fuchs ist in 30 Sekunden nie gelaufen");
     }
 
+
+    #[test]
+    fn baeren_leben_im_wald_und_einer_beim_start() {
+        let mut ctx = Context::headless();
+        let world = crate::world::World::new(&mut ctx);
+        let bears: Vec<_> = world.animals.iter().filter(|a| a.kind == AnimalKind::Bear).collect();
+        assert_eq!(bears.len(), 4, "Bären fehlen");
+        let spawn = world.spawn;
+        for bear in &bears {
+            let offset = bear.position - spawn;
+            println!("Bär bei {:.0} / {:.0} m vom Start (Winkel {:.0}°)", offset.x, offset.z, offset.x.atan2(-offset.z).to_degrees());
+        }
+        assert!(bears.iter().any(|b| b.position.distance(spawn) < 45.0), "kein Bär in Sichtweite des Startpunkts");
+    }
     #[test]
     fn verteilung_ist_deterministisch() {
         let terrain = flat_island();
