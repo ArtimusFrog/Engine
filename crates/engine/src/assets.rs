@@ -18,6 +18,8 @@ pub struct Image {
 
 pub(crate) struct MeshSlot {
     pub data: MeshData,
+    /// Hüllkugel im Raum des Meshs (Mittelpunkt, Radius).
+    pub bounds: (glam::Vec3, f32),
     /// Wird bei jeder Änderung erhöht, damit der Renderer neu hochlädt.
     pub version: u64,
 }
@@ -29,6 +31,8 @@ pub struct Assets {
     textures: Vec<Image>,
     named: HashMap<String, MeshId>,
     named_textures: HashMap<String, TextureId>,
+    /// Detailstufen je Mesh, nach Entfernung sortiert.
+    lods: HashMap<MeshId, Vec<Lod>>,
     cube: MeshId,
     plane: MeshId,
     sphere: MeshId,
@@ -41,6 +45,7 @@ impl Assets {
             textures: Vec::new(),
             named: HashMap::new(),
             named_textures: HashMap::new(),
+            lods: HashMap::new(),
             cube: MeshId(0),
             plane: MeshId(0),
             sphere: MeshId(0),
@@ -52,13 +57,15 @@ impl Assets {
     }
 
     pub fn add_mesh(&mut self, mesh: MeshData) -> MeshId {
-        self.meshes.push(MeshSlot { data: mesh, version: 0 });
+        let bounds = mesh.bounds();
+        self.meshes.push(MeshSlot { data: mesh, bounds, version: 0 });
         MeshId(self.meshes.len() as u32 - 1)
     }
 
     /// Ersetzt die Geometrie eines Meshs (z. B. jede Frame bei animierten Figuren).
     pub fn update_mesh(&mut self, id: MeshId, mesh: MeshData) {
         let slot = &mut self.meshes[id.0 as usize];
+        slot.bounds = mesh.bounds();
         slot.data = mesh;
         slot.version += 1;
     }
@@ -110,11 +117,55 @@ impl Assets {
         self.sphere
     }
 
+    /// Legt fest, welches Mesh ab welcher Entfernung zur Kamera statt `mesh` gezeichnet
+    /// wird (`None` = gar nicht mehr). Gilt für alle Objekte mit diesem Mesh.
+    pub fn set_lods(&mut self, mesh: MeshId, mut levels: Vec<Lod>) {
+        levels.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        self.lods.insert(mesh, levels);
+    }
+
+    /// Hat dieses Mesh schon Detailstufen?
+    pub fn has_lods(&self, mesh: MeshId) -> bool {
+        self.lods.contains_key(&mesh)
+    }
+
+    /// Das Mesh, das in `distance` Metern Entfernung gezeichnet wird.
+    pub fn mesh_at_distance(&self, mesh: MeshId, distance: f32) -> Option<MeshId> {
+        match self.lods.get(&mesh).and_then(|levels| levels.iter().rev().find(|l| distance >= l.distance)) {
+            Some(level) => level.mesh,
+            None => Some(mesh),
+        }
+    }
+
     pub(crate) fn mesh_slots(&self) -> &[MeshSlot] {
         &self.meshes
     }
 
     pub(crate) fn textures(&self) -> &[Image] {
         &self.textures
+    }
+}
+
+/// Eine Detailstufe: ab `distance` Metern wird `mesh` gezeichnet (`None` = ausgeblendet).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lod {
+    pub distance: f32,
+    pub mesh: Option<MeshId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detailstufen_nach_entfernung() {
+        let mut assets = Assets::new();
+        let full = assets.add_mesh(MeshData::icosphere(2, glam::Vec3::ONE));
+        let coarse = assets.add_mesh(MeshData::icosphere(0, glam::Vec3::ONE));
+        assets.set_lods(full, vec![Lod { distance: 120.0, mesh: None }, Lod { distance: 40.0, mesh: Some(coarse) }]);
+        assert_eq!(assets.mesh_at_distance(full, 10.0), Some(full));
+        assert_eq!(assets.mesh_at_distance(full, 50.0), Some(coarse));
+        assert_eq!(assets.mesh_at_distance(full, 500.0), None);
+        assert_eq!(assets.mesh_at_distance(coarse, 500.0), Some(coarse));
     }
 }

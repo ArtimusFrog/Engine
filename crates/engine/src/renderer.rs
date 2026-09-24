@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::app::Context;
+use crate::assets::MeshId;
 use crate::mesh::Vertex;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -541,6 +542,7 @@ impl Renderer {
         let aspect = self.config.width as f32 / self.config.height as f32;
         let texel_world = 2.0 * env.shadow_range / SHADOW_MAP_SIZE as f32;
         let view_proj = ctx.camera.view_projection(aspect);
+        let light_view_proj = sun_view_projection(ctx);
         // Die nächsten Punktlichter zur Kamera
         let mut nearby: Vec<_> = ctx.lights.iter().collect();
         nearby.sort_by(|a, b| {
@@ -556,7 +558,7 @@ impl Renderer {
         }
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
-            light_view_proj: sun_view_projection(ctx).to_cols_array_2d(),
+            light_view_proj: light_view_proj.to_cols_array_2d(),
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             camera_pos: ctx.camera.position.extend(1.0).into(),
             sun_dir: env.sun_direction.normalize().extend(0.0).into(),
@@ -573,24 +575,39 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
-        // Objekte nach Mesh sortieren, damit jedes Mesh mit einem einzigen Draw-Call
-        // (Instancing) gezeichnet wird.
-        let mut visible: Vec<_> = ctx.scene.iter_world().filter(|(e, _)| e.visible).collect();
-        visible.sort_by_key(|(e, _)| e.mesh);
-        let mut instances: Vec<Instance> = visible
-            .iter()
-            .map(|&(e, model)| instance(model, e.color, e.material.shader_params()))
-            .collect();
-
-        // Zusammenhängende Bereiche mit gleichem Mesh
-        let mut batches = Vec::new();
-        let mut start = 0;
-        while start < visible.len() {
-            let mesh_id = visible[start].0.mesh;
-            let end = start + visible[start..].iter().take_while(|(e, _)| e.mesh == mesh_id).count();
-            batches.push((mesh_id.0 as usize, start as u32..end as u32));
-            start = end;
+        // Nur zeichnen, was im Blickfeld liegt (bzw. für den Schatten im Bereich der Sonne),
+        // und zwar in der Detailstufe, die zur Entfernung passt.
+        let camera_planes = frustum_planes(view_proj);
+        let shadow_planes = frustum_planes(light_view_proj);
+        let slots = ctx.assets.mesh_slots();
+        let mut main_list: Vec<(MeshId, Instance)> = Vec::new();
+        let mut shadow_list: Vec<(MeshId, Instance)> = Vec::new();
+        for (entity, model) in ctx.scene.iter_world().filter(|(e, _)| e.visible) {
+            let (center, radius) = slots[entity.mesh.0 as usize].bounds;
+            let world_center = model.transform_point3(center);
+            let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
+            // Etwas Luft für Wind und Wellen, die der Shader noch verschiebt.
+            let world_radius = radius * scale + 1.0;
+            let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
+            let seen = sphere_visible(&camera_planes, world_center, world_radius);
+            let casts_shadow = sphere_visible(&shadow_planes, world_center, world_radius);
+            if !seen && !casts_shadow {
+                continue;
+            }
+            let item = (mesh, instance(model, entity.color, entity.material.shader_params()));
+            if seen {
+                main_list.push(item);
+            }
+            if casts_shadow {
+                shadow_list.push(item);
+            }
         }
+
+        // Nach Mesh sortiert: jedes Mesh mit einem einzigen Draw-Call (Instancing).
+        let mut instances: Vec<Instance> = Vec::with_capacity(main_list.len() + shadow_list.len());
+        let mut shadow_batches = batch(&mut shadow_list, &mut instances);
+        let mut batches = batch(&mut main_list, &mut instances);
+        let drawn = main_list.len();
 
         // Partikel als zwei eigene Stapel: kleine Würfel und runde Puffs
         for (round, mesh) in [(false, ctx.assets.cube()), (true, ctx.assets.sphere())] {
@@ -601,6 +618,7 @@ impl Renderer {
             }));
             if instances.len() as u32 > first {
                 batches.push((mesh.0 as usize, first..instances.len() as u32));
+                shadow_batches.push((mesh.0 as usize, first..instances.len() as u32));
             }
         }
         if instances.len() > self.instance_capacity {
@@ -627,7 +645,7 @@ impl Renderer {
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches, true);
+            self.draw_batches(&mut pass, &shadow_batches, true);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -658,7 +676,7 @@ impl Renderer {
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &batches, false);
         }
-        self.stats = RenderStats { instances: instances.len(), draw_calls: batches.len() * 2 };
+        self.stats = RenderStats { instances: drawn, draw_calls: batches.len() + shadow_batches.len() };
 
         // Benutzeroberfläche über die 3D-Szene legen.
         if let Some(ui) = ui {
@@ -879,4 +897,47 @@ fn texture_bind_group(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     })
+}
+
+/// Die sechs Ebenen des Sichtkörpers einer Projektion (Normalen zeigen nach innen).
+/// Tiefe wie bei wgpu von 0 bis 1.
+fn frustum_planes(view_proj: Mat4) -> [glam::Vec4; 6] {
+    let (r0, r1, r2, r3) = (view_proj.row(0), view_proj.row(1), view_proj.row(2), view_proj.row(3));
+    [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2].map(|p| p / p.truncate().length().max(1e-6))
+}
+
+/// Liegt die Kugel zumindest teilweise im Sichtkörper?
+fn sphere_visible(planes: &[glam::Vec4; 6], center: glam::Vec3, radius: f32) -> bool {
+    planes.iter().all(|p| p.truncate().dot(center) + p.w >= -radius)
+}
+
+/// Sortiert nach Mesh, hängt die Instanzen an und liefert die Stapel (Mesh, Instanzbereich).
+fn batch(list: &mut [(MeshId, Instance)], instances: &mut Vec<Instance>) -> Vec<(usize, std::ops::Range<u32>)> {
+    list.sort_by_key(|(mesh, _)| *mesh);
+    let mut batches: Vec<(usize, std::ops::Range<u32>)> = Vec::new();
+    for (mesh, instance) in list.iter() {
+        let index = instances.len() as u32;
+        instances.push(*instance);
+        match batches.last_mut() {
+            Some((last, range)) if *last == mesh.0 as usize => range.end = index + 1,
+            _ => batches.push((mesh.0 as usize, index..index + 1)),
+        }
+    }
+    batches
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sichtpruefung_mit_kamera() {
+        let camera = crate::camera::Camera { position: glam::Vec3::ZERO, ..Default::default() };
+        let planes = frustum_planes(camera.view_projection(16.0 / 9.0));
+        assert!(sphere_visible(&planes, glam::Vec3::new(0.0, 0.0, -10.0), 1.0), "vor der Kamera");
+        assert!(!sphere_visible(&planes, glam::Vec3::new(0.0, 0.0, 10.0), 1.0), "hinter der Kamera");
+        assert!(!sphere_visible(&planes, glam::Vec3::new(100.0, 0.0, -10.0), 1.0), "weit rechts daneben");
+        assert!(sphere_visible(&planes, glam::Vec3::new(0.0, 0.0, 1.0), 2.0), "Kugel um die Kamera herum");
+        assert!(!sphere_visible(&planes, glam::Vec3::new(0.0, 0.0, -5000.0), 1.0), "hinter der Sichtweite");
+    }
 }

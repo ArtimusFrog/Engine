@@ -177,7 +177,7 @@ impl Library {
                 .collect();
         }
 
-        Library {
+        let library = Library {
             oaks: slot(ctx, "eiche", 3, &|s| models::oak(s * 17)),
             pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
             snowy_pines: slot(ctx, "schneetanne", 2, &|s| models::pine(s * 31, true)),
@@ -192,6 +192,51 @@ impl Library {
             red_mushroom: slot(ctx, "fliegenpilz", 1, &|_| models::mushroom(vec3(0.7, 0.06, 0.04), 1.0)),
             glow_mushroom: slot(ctx, "leuchtpilz", 1, &|_| models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
             crystals: slot(ctx, "kristall", 2, &|s| models::crystals(s * 41)),
+        };
+
+        // In der Ferne einfachere Modelle, Kleinkram verschwindet ganz (spart viel Grafikleistung).
+        // Neue Bäume/Felsen aus Blender bekommen das automatisch mit.
+        let trees = [&library.oaks, &library.pines, &library.snowy_pines, &library.palms, &library.magic_trees];
+        for variants in trees {
+            add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9))]);
+        }
+        add_lods(ctx, &library.rocks, &[Level(60.0, Some(0.3))]);
+        add_lods(ctx, &library.bushes, &[Level(40.0, Some(0.25)), Level(150.0, None)]);
+        for variants in [&library.grass, &library.teal_grass, &library.flowers] {
+            add_lods(ctx, variants, &[Level(85.0, None)]);
+        }
+        add_lods(ctx, &library.magic_flowers, &[Level(110.0, None)]);
+        add_lods(ctx, &library.red_mushroom, &[Level(70.0, None)]);
+        add_lods(ctx, &library.glow_mushroom, &[Level(110.0, None)]);
+        library
+    }
+}
+
+/// Detailstufe für die Insel: ab `distance` Metern vereinfacht (Zellgröße in Metern
+/// des Modells) oder, bei `None`, gar nicht mehr gezeichnet.
+struct Level(f32, Option<f32>);
+
+/// Hinterlegt für alle Varianten eines Modells die Detailstufen. Leuchtende Zusatzteile
+/// verschwinden mit der letzten Stufe.
+fn add_lods(ctx: &mut Context, variants: &[Variant], levels: &[Level]) {
+    for &(mesh, glow) in variants {
+        // Die Insel wird öfter neu gebaut (Menü, Runde) – Stufen nur einmal anlegen.
+        if ctx.assets.has_lods(mesh) {
+            continue;
+        }
+        let lods = levels
+            .iter()
+            .map(|&Level(distance, cell)| Lod {
+                distance,
+                mesh: cell.map(|cell| {
+                    let coarse = ctx.assets.mesh(mesh).simplified(cell);
+                    ctx.assets.add_mesh(coarse)
+                }),
+            })
+            .collect();
+        ctx.assets.set_lods(mesh, lods);
+        if let (Some(glow), Some(last)) = (glow, levels.last()) {
+            ctx.assets.set_lods(glow, vec![Lod { distance: last.0.max(90.0), mesh: None }]);
         }
     }
 }

@@ -252,6 +252,60 @@ impl MeshData {
         mesh
     }
 
+    /// Hüllkugel (Mittelpunkt, Radius) – für das Aussortieren unsichtbarer Objekte.
+    pub fn bounds(&self) -> (Vec3, f32) {
+        if self.vertices.is_empty() {
+            return (Vec3::ZERO, 0.0);
+        }
+        let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for v in &self.vertices {
+            min = min.min(v.position.into());
+            max = max.max(v.position.into());
+        }
+        let center = (min + max) * 0.5;
+        let radius = self.vertices.iter().map(|v| center.distance(v.position.into())).fold(0.0, f32::max);
+        (center, radius)
+    }
+
+    /// Vereinfachte Fassung für große Entfernungen: Eckpunkte in Würfeln der Kantenlänge
+    /// `cell` werden zusammengelegt, dabei entartete Dreiecke fallen weg. Ergebnis ist flach
+    /// schattiert (passt zum Low-Poly-Stil).
+    pub fn simplified(&self, cell: f32) -> MeshData {
+        use std::collections::HashMap;
+        let key = |p: Vec3| {
+            let c = (p / cell).floor().as_ivec3();
+            (c.x, c.y, c.z)
+        };
+        // Mittelpunkt aller Eckpunkte je Zelle
+        let mut sums: HashMap<(i32, i32, i32), (Vec3, u32)> = HashMap::new();
+        for v in &self.vertices {
+            let p = Vec3::from(v.position);
+            let entry = sums.entry(key(p)).or_insert((Vec3::ZERO, 0));
+            entry.0 += p;
+            entry.1 += 1;
+        }
+        let snap = |p: Vec3| {
+            let (sum, count) = sums[&key(p)];
+            sum / count as f32
+        };
+        let mut mesh = MeshData { texture: self.texture, double_sided: self.double_sided, alpha_cutout: self.alpha_cutout, ..Default::default() };
+        for tri in self.indices.chunks_exact(3) {
+            let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| self.vertices[i as usize]);
+            let [pa, pb, pc] = [a, b, c].map(|v| snap(v.position.into()));
+            if (pb - pa).cross(pc - pa).length_squared() < 1e-10 {
+                continue;
+            }
+            let color = (Vec3::from(a.color) + Vec3::from(b.color) + Vec3::from(c.color)) / 3.0;
+            let normal = (pb - pa).cross(pc - pa).normalize();
+            let base = mesh.vertices.len() as u32;
+            for (p, v) in [(pa, a), (pb, b), (pc, c)] {
+                mesh.vertices.push(Vertex { position: p.into(), normal: normal.into(), color: color.into(), uv: v.uv });
+            }
+            mesh.indices.extend([base, base + 1, base + 2]);
+        }
+        mesh
+    }
+
     fn push_quad(&mut self, center: Vec3, u: Vec3, v: Vec3, normal: Vec3, color: Vec3) {
         let base = self.vertices.len() as u32;
         for corner in [center - u - v, center + u - v, center + u + v, center - u + v] {
@@ -264,6 +318,16 @@ impl MeshData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vereinfachen_spart_dreiecke_und_behaelt_die_form() {
+        let detailed = MeshData::icosphere(3, Vec3::ONE).flat_shaded();
+        let coarse = detailed.simplified(0.25);
+        let (tris_before, tris_after) = (detailed.indices.len() / 3, coarse.indices.len() / 3);
+        assert!(tris_after > 8 && tris_after < tris_before / 3, "{tris_before} → {tris_after}");
+        let (center, radius) = coarse.bounds();
+        assert!(center.length() < 0.05 && (radius - 0.5).abs() < 0.08, "Form verloren: {center} {radius}");
+    }
 
     /// Jedes Dreieck muss vom Mittelpunkt `center` weg zeigen (sonst wird es weggeschnitten).
     fn assert_outward(name: &str, mesh: &MeshData, center: Vec3) {
