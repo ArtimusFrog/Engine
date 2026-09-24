@@ -107,6 +107,78 @@ pub fn load_variants(ctx: &mut Context, folder: &str, name: &str, scale: Vec3, s
     result
 }
 
+/// Regeln für Assets je Ordner (siehe art/README.md). Fremde Pakete wie die
+/// KayKit-Figuren in `characters/` werden nicht geprüft.
+struct Rules {
+    max_triangles: usize,
+    required_clips: &'static [&'static str],
+}
+
+fn rules_for(path: &Path) -> Option<Rules> {
+    let folder = path.parent()?.file_name()?.to_str()?;
+    match folder {
+        "natur" => Some(Rules { max_triangles: 2000, required_clips: &[] }),
+        "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"] }),
+        "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
+        _ => None,
+    }
+}
+
+/// Prüft ein geladenes Modell gegen die Regeln seines Ordners. Leer = alles in Ordnung.
+pub fn check_model(path: &Path, model: &Model) -> Vec<String> {
+    let Some(rules) = rules_for(path) else { return Vec::new() };
+    let mut problems = Vec::new();
+    let meshes = if model.clips.is_empty() {
+        model.static_meshes(&[])
+    } else {
+        vec![Animator::new(std::sync::Arc::new(model.clone())).skinned_mesh(None)]
+    };
+    let triangles: usize = meshes.iter().map(|m| m.indices.len() / 3).sum();
+    if triangles == 0 {
+        problems.push("enthält keine Geometrie".into());
+    }
+    if triangles > rules.max_triangles {
+        problems.push(format!("{triangles} Dreiecke, erlaubt sind {}", rules.max_triangles));
+    }
+    let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for v in meshes.iter().flat_map(|m| &m.vertices) {
+        min = min.min(v.position.into());
+        max = max.max(v.position.into());
+    }
+    if triangles > 0 {
+        if min.y.abs() > 0.05 {
+            problems.push(format!("Ursprung nicht am Boden (Unterkante bei {:.2} m)", min.y));
+        }
+        let center = (min + max) * 0.5;
+        let size = (max - min).max_element();
+        if vec2(center.x, center.z).length() > size * 0.5 + 0.1 {
+            problems.push(format!("Ursprung nicht unter dem Modell (Mitte bei {:.2}, {:.2})", center.x, center.z));
+        }
+    }
+    for clip in rules.required_clips {
+        if model.clip(clip).is_none() {
+            problems.push(format!("Animation „{clip}“ fehlt"));
+        }
+    }
+    problems
+}
+
+/// Alle Modelldateien unter einem Ordner (rekursiv).
+#[cfg(test)]
+fn all_models(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(all_models(&path));
+        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("gltf" | "glb")) {
+            found.push(path);
+        }
+    }
+    found.sort();
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +191,29 @@ mod tests {
         for no in ["eiche_gross.gltf", "eiche_1.bin", "zaubereiche.gltf", "eiche_.gltf"] {
             assert!(!is_variant(Path::new(no), "eiche"), "{no}");
         }
+    }
+
+    /// Jedes Asset im Repo lässt sich laden und hält die Regeln ein.
+    #[test]
+    fn alle_assets_halten_die_regeln() {
+        let dir = asset_dir().expect("Asset-Ordner fehlt");
+        let mut problems = Vec::new();
+        for path in all_models(&dir) {
+            match Model::from_file(&path) {
+                Ok(model) => problems.extend(check_model(&path, &model).into_iter().map(|p| format!("{}: {p}", path.display()))),
+                Err(message) => problems.push(message),
+            }
+        }
+        assert!(problems.is_empty(), "Asset-Regeln verletzt:\n{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn regeln_greifen() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/characters/axe_1handed.gltf");
+        let model = Model::from_file(path).unwrap();
+        assert!(check_model(Path::new(path), &model).is_empty(), "characters/ wird nicht geprüft");
+        let problems = check_model(Path::new("assets/tiere/axt.gltf"), &model);
+        assert!(problems.iter().any(|p| p.contains("Boden")), "{problems:?}");
+        assert!(problems.iter().any(|p| p.contains("Idle")), "{problems:?}");
     }
 }

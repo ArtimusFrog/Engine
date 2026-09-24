@@ -35,6 +35,8 @@ struct Shown {
     max: Vec3,
     vertices: usize,
     triangles: usize,
+    /// Verstöße gegen die Asset-Regeln (siehe art/README.md).
+    problems: Vec<String>,
 }
 
 pub struct Viewer {
@@ -171,6 +173,7 @@ impl Viewer {
         }
         let first = self.shown.is_none() && self.reloaded_at.is_none();
         self.shown = Some(Shown {
+            problems: crate::asset_files::check_model(&self.path, &model),
             model,
             entities,
             animated,
@@ -387,8 +390,11 @@ impl Game for Viewer {
                 if let Some(shown) = &mut self.shown {
                     let size = shown.max - shown.min;
                     ui.label(format!("Größe: {:.2} × {:.2} × {:.2} m (B × H × T)", size.x, size.y, size.z));
-                    ui.label(RichText::new(format!("Boden bei {:.2} m", shown.min.y)).color(if shown.min.y.abs() > 0.02 { ui::ERROR } else { ui::MUTED }));
+                    ui.label(RichText::new(format!("Unterkante bei {:.2} m", shown.min.y)).color(ui::MUTED));
                     ui.label(format!("{} Dreiecke, {} Eckpunkte", shown.triangles, shown.vertices));
+                    for problem in &shown.problems {
+                        ui.label(RichText::new(format!("⚠ {problem}")).color(ui::ERROR));
+                    }
                     ui.label(format!(
                         "{} Materialien, {} Texturen",
                         shown.model.materials.len().saturating_sub(1),
