@@ -48,15 +48,15 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":5460,
+			"count":4252,
 			"max":[
 				4.516842365264893,
 				2.5819289684295654,
-				3.63616681098938
+				2.7426671981811523
 			],
 			"min":[
-				-4.516842365264893,
-				-1.9755098819732666,
+				-4.307830333709717,
+				-2.9802322387695312e-08,
 				-3.4032270908355713
 			],
 			"type":"VEC3"
@@ -64,51 +64,51 @@
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":5460,
+			"count":4252,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":5460,
+			"count":4252,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
 			"componentType":5123,
-			"count":8820,
+			"count":6852,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":65520,
+			"byteLength":51024,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":65520,
-			"byteOffset":65520,
+			"byteLength":51024,
+			"byteOffset":51024,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":65520,
-			"byteOffset":131040,
+			"byteLength":51024,
+			"byteOffset":102048,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":17640,
-			"byteOffset":196560,
+			"byteLength":13704,
+			"byteOffset":153072,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":214200,
+			"byteLength":166776,
 			"uri":"schiffswrack.bin"
 		}
 	]

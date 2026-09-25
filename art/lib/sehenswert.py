@@ -336,6 +336,12 @@ def schiffswrack(seed=36):
     obj = fertig("Schiffswrack", teile)
     obj.data.transform(Matrix.Rotation(math.radians(24), 4, "X"))
     obj.data.transform(Matrix.Translation((0, 0, -0.55)))
+    # Was unter dem Sand liegt, abschneiden: dann beginnt das Modell am Boden (Asset-Regel)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, 0, 0), plane_no=(0, 0, 1), clear_inner=True)
+    bm.to_mesh(obj.data)
+    bm.free()
     obj.data.update()
     return obj
 
