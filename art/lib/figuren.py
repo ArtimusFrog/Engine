@@ -838,3 +838,17 @@ def _magier_animationen(armatur):
                    (bild, "Brust", "rot", (brust_x, brust_y, 0)), (bild, "Bauch", "rot", (brust_x * 0.3, brust_y * 0.5, 0)),
                    (bild, "Hut", "rot", (-brust_x * 0.6, 0, 0))]
     animation(armatur, "Werfen", 30, werfen)
+
+    # Zaubern: Stab hochreißen, Kraft sammeln, dann den Stab nach vorne stoßen; die linke Hand
+    # zeigt mit gespreizter Handfläche aufs Ziel. Das Geschoss fliegt bei Bild 9 los (0,22 s bei Tempo 1,35).
+    zaubern = []
+    for bild, arm_r, ell_r, arm_l, ell_l, brust_x, brust_y, kopf_x in (
+            (0, 0, -6, 0, -12, 0, 0, 0), (5, -115, -55, -30, -40, -8, 18, -6), (9, -85, -8, -80, -8, 12, -10, 4),
+            (14, -80, -6, -75, -10, 14, -12, 4), (20, -40, -10, -35, -20, 6, -5, 2), (28, 0, -6, 0, -12, 0, 0, 0)):
+        zaubern += [(bild, "Oberarm.R", "rot", (arm_r, 0, 0)), (bild, "Unterarm.R", "rot", (ell_r, 0, 0)),
+                    (bild, "Oberarm.L", "rot", (arm_l, 0, 12)), (bild, "Unterarm.L", "rot", (ell_l, 0, 0)),
+                    (bild, "Brust", "rot", (brust_x, brust_y, 0)), (bild, "Bauch", "rot", (brust_x * 0.4, brust_y * 0.4, 0)),
+                    (bild, "Kopf", "rot", (kopf_x, 0, 0)), (bild, "Hut", "rot", (-brust_x * 0.6, 0, 0)),
+                    (bild, "Oberschenkel.L", "rot", (-brust_x * 0.8, 0, 0)), (bild, "Unterschenkel.L", "rot", (6 + abs(brust_x), 0, 0)),
+                    (bild, "Oberschenkel.R", "rot", (brust_x * 0.5, 0, 0)), (bild, "Unterschenkel.R", "rot", (6 + abs(brust_x) * 0.5, 0, 0))]
+    animation(armatur, "Zaubern", 28, zaubern)

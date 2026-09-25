@@ -11,24 +11,27 @@ use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, Pl
 
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_SPEED: f32 = 9.0;
-pub const THROW_SPEED: f32 = 18.0;
-/// Takte zwischen zwei Würfen desselben Spielers.
-pub const THROW_COOLDOWN_TICKS: u64 = 15;
+/// Takte zwischen zwei Zaubern desselben Spielers (0,7 s).
+pub const CAST_COOLDOWN_TICKS: u64 = 42;
+/// So weit fliegt ein Zauber (Meter).
+pub const CAST_RANGE: f32 = 45.0;
+/// Tempo des Zaubergeschosses (m/s).
+pub const BOLT_SPEED: f32 = 34.0;
+/// So lange holt der Magier aus, bevor das Geschoss losfliegt (Sekunden, passt zur Animation).
+pub const CAST_DELAY: f32 = 0.22;
 /// Takte zwischen zwei Schlägen auf einen Rohstoff.
 pub const HARVEST_COOLDOWN_TICKS: u64 = 22;
 /// Wie nah man einem Rohstoff sein muss (Meter vom Rand).
 pub const HARVEST_REACH: f32 = 2.2;
 /// Nach dieser Zeit wachsen Bäume nach und Felsen tauchen wieder auf (2 Minuten).
 pub const RESPAWN_TICKS: u64 = 60 * 120;
-/// Zur Laufzeit erzeugte Objekte (geworfene Bälle) bekommen IDs ab hier.
-pub const FIRST_RUNTIME_ID: NetId = 10_000;
 
 pub struct Avatar {
     pub entity: EntityId,
     pub character: CharacterId,
     /// Blickrichtung (Yaw in Radiant), folgt der Laufrichtung.
     pub facing: f32,
-    pub last_throw_tick: u64,
+    pub last_cast_tick: u64,
     pub last_harvest_tick: u64,
     pub name: String,
     pub class: CharacterClass,
@@ -71,8 +74,20 @@ impl Resource {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SoundEvent {
     Hit { kind: ResourceKind, at: Vec3, finished: bool },
-    Throw { player: PlayerId },
+    Cast { player: PlayerId },
+    /// Ein Zauber schlägt ein; `animal` = in ein Tier (sonst Boden, Baum oder Luft).
+    Impact { at: Vec3, animal: bool, killed: bool },
     Step { at: Vec3, sand: bool, running: bool },
+}
+
+/// Ein fliegendes Zaubergeschoss (nur Optik; ob es trifft, entscheidet der Server).
+struct Bolt {
+    entity: EntityId,
+    origin: Vec3,
+    target: Vec3,
+    /// Sekunden seit dem Zaubern (erst nach `CAST_DELAY` fliegt es los).
+    age: f32,
+    hit: bool,
 }
 
 pub struct World {
@@ -99,6 +114,8 @@ pub struct World {
     pub sound_events: Vec<SoundEvent>,
     /// Zurückgelegte Strecke seit dem letzten Schritt je Spieler.
     stride: HashMap<PlayerId, (Vec3, f32)>,
+    /// Fliegende Zaubergeschosse (nur mit Fenster).
+    bolts: Vec<Bolt>,
 }
 
 impl World {
@@ -124,6 +141,7 @@ impl World {
             capsule,
             sound_events: Vec::new(),
             stride: HashMap::new(),
+            bolts: Vec::new(),
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -161,7 +179,7 @@ impl World {
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
         self.players.insert(
             id,
-            Avatar { entity, character, facing: 0.0, last_throw_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
+            Avatar { entity, character, facing: 0.0, last_cast_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
         );
         self.inventories.entry(id).or_default();
         log::info!("{name} ({id}) ist da");
@@ -187,15 +205,187 @@ impl World {
         if wish.length_squared() > 0.01 {
             avatar.facing = wish.x.atan2(-wish.z);
         }
+        // Beim Zaubern zum Ziel drehen.
+        if let Some(target) = input.cast {
+            let from = ctx.physics.character_position(avatar.character);
+            let to = target - from;
+            if vec2(to.x, to.z).length_squared() > 0.01 {
+                avatar.facing = to.x.atan2(-to.z);
+            }
+        }
     }
 
     /// Lässt die Figur eines Spielers eine Aktion ausführen (nur Optik).
     pub fn play_action(&mut self, player: PlayerId, action: Action) {
         if let Some(puppet) = self.puppets.get_mut(&player) {
             puppet.act(action);
-            if action == Action::Throw {
-                self.sound_events.push(SoundEvent::Throw { player });
+            if action == Action::Cast {
+                self.sound_events.push(SoundEvent::Cast { player });
             }
+        }
+    }
+
+    // ---------- Zauber ----------
+
+    /// Wo der Zauber losfliegt: an der Spitze des Stabs, rechts vor dem Magier.
+    pub fn cast_origin(&self, ctx: &Context, player: PlayerId, target: Vec3) -> Option<Vec3> {
+        let avatar = self.players.get(&player)?;
+        let center = ctx.physics.character_position(avatar.character);
+        let to = target - center;
+        let facing = if vec2(to.x, to.z).length_squared() > 0.01 { to.x.atan2(-to.z) } else { avatar.facing };
+        let forward = vec3(facing.sin(), 0.0, -facing.cos());
+        let right = vec3(facing.cos(), 0.0, facing.sin());
+        Some(center + Vec3::Y * 0.75 + forward * 0.65 + right * 0.3)
+    }
+
+    /// Verfolgt einen Strahl bis zum ersten Treffer: Tier, Boden, Baum oder Fels.
+    /// Liefert den Punkt und – falls es ein Tier war – dessen ID.
+    pub fn spell_target(&self, ctx: &Context, from: Vec3, direction: Vec3, max_distance: f32, ignore: Option<PlayerId>) -> (Vec3, Option<u16>) {
+        let direction = direction.normalize_or(Vec3::NEG_Z);
+        let ignore = ignore.and_then(|p| self.players.get(&p)).map(|a| a.character);
+        let mut nearest = ctx.physics.raycast(from, direction, max_distance, ignore).map_or(max_distance, |(_, d)| d);
+        let mut animal = None;
+        for (id, candidate) in self.animals.iter().enumerate().filter(|(_, a)| a.is_alive()) {
+            let (center, radius) = candidate.hit_sphere();
+            let along = (center - from).dot(direction);
+            if along <= 0.0 || along - radius > nearest {
+                continue;
+            }
+            let miss = (from + direction * along).distance_squared(center);
+            if miss < radius * radius {
+                let entry = (along - (radius * radius - miss).sqrt()).max(0.0);
+                if entry < nearest {
+                    nearest = entry;
+                    animal = Some(id as u16);
+                }
+            }
+        }
+        (from + direction * nearest, animal)
+    }
+
+    /// Ein Spieler zaubert (nur Optik): Animation, Klang und das fliegende Geschoss.
+    pub fn cast_spell(&mut self, ctx: &mut Context, player: PlayerId, origin: Vec3, target: Vec3, hit: bool, animate: bool) {
+        if animate {
+            self.play_action(player, Action::Cast);
+        } else {
+            self.sound_events.push(SoundEvent::Cast { player });
+        }
+        if ctx.is_headless() {
+            return;
+        }
+        let mut entity = Entity::new("Zauber", ctx.assets.sphere())
+            .with_transform(Transform::from_position(origin).with_scale(Vec3::splat(0.0)))
+            .with_color(vec4(0.14, 0.2, 1.0, 1.0))
+            .with_material(Material::Emissive { glow: 1.6 });
+        entity.visible = false;
+        let entity = ctx.scene.spawn(entity);
+        self.bolts.push(Bolt { entity, origin, target, age: 0.0, hit });
+    }
+
+    /// Ein Tier wurde getroffen: Lebensstand übernehmen und – falls gewünscht – Effekte zeigen.
+    pub fn animal_hit(&mut self, ctx: &mut Context, id: u16, health: u8, effects: bool) {
+        let Some(animal) = self.animals.get_mut(id as usize) else { return };
+        animal.set_health(health, effects);
+        if !effects || ctx.is_headless() {
+            return;
+        }
+        let (center, radius) = animal.hit_sphere();
+        let killed = health == 0;
+        ctx.particles.burst(Burst {
+            position: center,
+            count: if killed { 40 } else { 18 },
+            color: vec3(0.6, 0.45, 1.0),
+            color_variation: 0.35,
+            speed: if killed { 4.0 } else { 3.0 },
+            direction: Vec3::Y * 0.5,
+            size: 0.1 + radius * 0.05,
+            life: 0.9,
+            gravity: 0.5,
+            glow: 4.0,
+            grow: 0.0,
+            round: true,
+        });
+        self.sound_events.push(SoundEvent::Impact { at: center, animal: true, killed });
+    }
+
+    /// Zaubergeschosse bewegen, leuchten lassen und am Ziel verpuffen lassen.
+    fn update_bolts(&mut self, ctx: &mut Context) {
+        let dt = ctx.time.delta;
+        let mut finished = Vec::new();
+        for (index, bolt) in self.bolts.iter_mut().enumerate() {
+            bolt.age += dt;
+            let length = bolt.origin.distance(bolt.target).max(0.01);
+            let flight = bolt.age - CAST_DELAY;
+            if flight < 0.0 {
+                // Ausholen: Funken sammeln sich an der Stabspitze.
+                if self.effects_rng.chance(0.6) {
+                    ctx.particles.burst(Burst {
+                        position: bolt.origin,
+                        count: 2,
+                        color: vec3(0.5, 0.6, 1.0),
+                        color_variation: 0.3,
+                        speed: 0.8,
+                        direction: Vec3::ZERO,
+                        size: 0.06,
+                        life: 0.3,
+                        gravity: -0.5,
+                        glow: 5.0,
+                        grow: 0.0,
+                        round: true,
+                    });
+                }
+                ctx.lights.push(PointLight { position: bolt.origin, color: vec3(0.6, 0.7, 2.0) * (bolt.age / CAST_DELAY), radius: 4.0 });
+                continue;
+            }
+            let progress = (flight * BOLT_SPEED / length).min(1.0);
+            let position = bolt.origin.lerp(bolt.target, progress);
+            let pulse = 1.0 + (bolt.age * 40.0).sin() * 0.15;
+            if let Some(entity) = ctx.scene.try_get_mut(bolt.entity) {
+                entity.visible = true;
+                entity.transform.position = position;
+                entity.transform.scale = Vec3::splat(0.42 * pulse);
+            }
+            ctx.lights.push(PointLight { position, color: vec3(0.7, 0.8, 3.0), radius: 7.0 });
+            // Leuchtspur
+            ctx.particles.burst(Burst {
+                position,
+                count: 5,
+                color: vec3(0.45, 0.4, 1.0),
+                color_variation: 0.4,
+                speed: 0.6,
+                direction: Vec3::ZERO,
+                size: 0.14,
+                life: 0.45,
+                gravity: -0.2,
+                glow: 4.0,
+                grow: 0.0,
+                round: true,
+            });
+            if progress >= 1.0 {
+                finished.push(index);
+                if !bolt.hit {
+                    // Verpufft am Boden, an einem Baum oder in der Luft.
+                    ctx.particles.burst(Burst {
+                        position,
+                        count: 16,
+                        color: vec3(0.55, 0.6, 1.0),
+                        color_variation: 0.3,
+                        speed: 2.5,
+                        direction: Vec3::Y * 0.3,
+                        size: 0.08,
+                        life: 0.6,
+                        gravity: 1.0,
+                        glow: 4.0,
+                        grow: 0.0,
+                        round: true,
+                    });
+                    self.sound_events.push(SoundEvent::Impact { at: position, animal: false, killed: false });
+                }
+            }
+        }
+        for index in finished.into_iter().rev() {
+            let bolt = self.bolts.swap_remove(index);
+            ctx.scene.despawn(bolt.entity);
         }
     }
 
@@ -353,6 +543,7 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
         self.fireflies(ctx);
+        self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);
         }

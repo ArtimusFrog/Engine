@@ -126,10 +126,7 @@ impl Replica {
                 world.spawn_player(ctx, player_id, &name, class, spawn);
             }
             ServerMessage::PlayerLeft { player_id } => world.remove_player(ctx, player_id),
-            ServerMessage::Spawn { id, kind, position, velocity, by } => {
-                if let Some(thrower) = by.filter(|&p| Some(p) != self.local_id) {
-                    world.play_action(thrower, Action::Throw);
-                }
+            ServerMessage::Spawn { id, kind, position, velocity, by: _ } => {
                 if !world.objects.contains_key(&id) {
                     world.spawn_object(ctx, id, kind, position, velocity);
                 }
@@ -165,6 +162,11 @@ impl Replica {
                     world.inventories.insert(local, inventory);
                 }
             }
+            ServerMessage::SpellCast { by, origin, target, hit } => {
+                // Die eigene Zauber-Animation lief schon beim Klicken.
+                world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id);
+            }
+            ServerMessage::AnimalHit { id, health, by: _ } => world.animal_hit(ctx, id, health, true),
         }
     }
 
@@ -290,15 +292,17 @@ impl Replica {
         for start in &from.animals {
             if to.animals.iter().all(|a| a.id != start.id) {
                 if let Some(animal) = world.animals.get_mut(start.id as usize) {
-                    animal.apply(start.position, start.facing, start.gait);
+                    animal.apply(start.position, start.facing, start.gait, start.health);
                 }
             }
         }
         for target in &to.animals {
             let Some(animal) = world.animals.get_mut(target.id as usize) else { continue };
             match from.animals.iter().find(|a| a.id == target.id) {
-                Some(start) => animal.apply(start.position.lerp(target.position, t), lerp_angle(start.facing, target.facing, t), target.gait),
-                None => animal.apply(target.position, target.facing, target.gait),
+                Some(start) => {
+                    animal.apply(start.position.lerp(target.position, t), lerp_angle(start.facing, target.facing, t), target.gait, target.health)
+                }
+                None => animal.apply(target.position, target.facing, target.gait, target.health),
             }
         }
     }

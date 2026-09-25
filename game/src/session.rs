@@ -98,10 +98,10 @@ impl Session {
         }
     }
 
-    /// Wurf-Animation der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
-    pub fn preview_throw(&mut self) {
+    /// Zauber-Animation der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
+    pub fn preview_cast(&mut self) {
         if let Some(local) = self.replica.as_ref().and_then(Replica::local_id) {
-            self.world.play_action(local, Action::Throw);
+            self.world.play_action(local, Action::Cast);
         }
     }
 
@@ -190,6 +190,7 @@ mod tests {
         session: Session,
         autopilot: bool,
         harvest: Option<u32>,
+        cast: Option<Vec3>,
     }
 
     impl Game for TestGame {
@@ -200,6 +201,7 @@ mod tests {
                 wish: if self.autopilot { vec2(0.0, -1.0) } else { Vec2::ZERO },
                 jump: self.autopilot && ctx.time.tick % 120 == 60,
                 harvest: self.harvest,
+                cast: self.cast.take(),
                 ..Default::default()
             };
             self.session.fixed_update(ctx, input).expect("Verbindung verloren");
@@ -221,12 +223,12 @@ mod tests {
             let mut server_ctx = Context::headless();
             let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, &hello("Server")).unwrap();
             let port = session.port().expect("Server hat keinen Port");
-            let server = TestGame { session, autopilot: false, harvest: None };
+            let server = TestGame { session, autopilot: false, harvest: None, cast: None };
 
             let mut client_ctx = Context::headless();
             let address = format!("127.0.0.1:{port}");
             let session = Session::start(&mut client_ctx, Mode::Join { address }, &hello("Testerin")).unwrap();
-            let client = TestGame { session, autopilot: client_autopilot, harvest: None };
+            let client = TestGame { session, autopilot: client_autopilot, harvest: None, cast: None };
             Pair { server, server_ctx, client, client_ctx }
         }
 
@@ -280,6 +282,46 @@ mod tests {
         // Der Client ist dem Server um die Netzwerk-Laufzeit voraus.
         assert!(on_server.distance(on_client) < 1.5, "Server {on_server} und Client {on_client} liegen zu weit auseinander");
         assert_eq!(pair.client.session.corrections(), 0, "Vorhersage weicht vom Server ab");
+    }
+
+    #[test]
+    fn schaf_mit_zaubern_erlegen_im_multiplayer() {
+        use crate::animals::AnimalKind;
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let player = pair.client.session.local_player().unwrap();
+
+        // Das Schaf, das dem Startpunkt am nächsten ist; die Figur 4 m daneben stellen.
+        let world = pair.server.session.world();
+        let (sheep, animal) = world
+            .animals
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.kind == AnimalKind::Sheep)
+            .min_by(|a, b| a.1.position.distance(world.spawn).total_cmp(&b.1.position.distance(world.spawn)))
+            .expect("Kein Schaf auf der Insel");
+        let stand = animal.position + vec3(4.0, 0.0, 0.0);
+        let stand = vec3(stand.x, world.terrain.height_at(stand.x, stand.z) + 1.0, stand.z);
+        let character = world.players[&player].character;
+        pair.server_ctx.physics.teleport_character(character, stand);
+        pair.run(5);
+
+        let max = AnimalKind::Sheep.max_health();
+        let mut ticks = 0;
+        while pair.server.session.world().animals[sheep].is_alive() && ticks < 60 * 12 {
+            // Immer auf die Stelle zielen, an der das Schaf auf dem Server gerade steht.
+            pair.client.cast = Some(pair.server.session.world().animals[sheep].hit_sphere().0);
+            pair.run(1);
+            ticks += 1;
+        }
+        pair.run(60);
+
+        assert!(!pair.server.session.world().animals[sheep].is_alive(), "Schaf lebt auf dem Server noch");
+        assert_eq!(pair.client.session.world().animals[sheep].health, 0, "Schaf lebt beim Client noch");
+        // Drei Treffer mit 0,7 s Abklingzeit dazwischen.
+        assert!(ticks >= (max as u32 - 1) * 42, "Zauber zu schnell hintereinander: {ticks} Takte");
+        let inventory = pair.client.session.local_inventory();
+        assert_eq!((inventory.meat, inventory.wool, inventory.pelt), (2, 3, 0), "Beute im Inventar");
     }
 
     #[test]
@@ -381,7 +423,7 @@ mod tests {
             let world = session.world_mut();
             let tree = world.resources.iter().find(|(_, r)| r.spec.kind == ResourceKind::Wood).map(|(&id, _)| id).unwrap();
             world.resource_hit(&mut ctx, tree, 0, false);
-            world.inventories.insert(HOST_PLAYER, Inventory { wood: 9, stone: 2 });
+            world.inventories.insert(HOST_PLAYER, Inventory { wood: 9, stone: 2, ..Default::default() });
             world.day.hour = 21.5;
             tree
             // Ende des Blocks: Session wird geschlossen und speichert.
@@ -391,7 +433,7 @@ mod tests {
         let mut ctx = Context::headless();
         let session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("nils"), Some(path.clone())).unwrap();
         let world = session.world();
-        assert_eq!(world.inventories.get(&HOST_PLAYER), Some(&Inventory { wood: 9, stone: 2 }), "Inventar (Name ohne Groß/klein)");
+        assert_eq!(world.inventories.get(&HOST_PLAYER), Some(&Inventory { wood: 9, stone: 2, ..Default::default() }), "Inventar (Name ohne Groß/klein)");
         assert!(!world.resources[&tree].is_present(), "gefällter Baum steht wieder");
         assert!((world.day.hour - 21.5).abs() < 0.01);
         drop(session);

@@ -14,6 +14,7 @@ use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::asset_files;
+use crate::protocol::Item;
 
 /// Um diesen Radius (Meter) zieht ein Tier beim Umherstreifen um sein Revier.
 const WANDER_RADIUS: f32 = 16.0;
@@ -21,6 +22,10 @@ const WANDER_RADIUS: f32 = 16.0;
 const ANIMATION_DISTANCE: f32 = 70.0;
 /// Tiefer als das gilt als Wasser oder Strand – da gehen Tiere nicht hin.
 const MIN_GROUND: f32 = 1.4;
+/// So lange (Sekunden) bleibt ein erlegtes Tier weg, dann kommt ein neues in sein Revier.
+const RESPAWN_SECONDS: f32 = 90.0;
+/// Nach einem Treffer flieht ein Tier mindestens so lange (Sekunden), egal wie weit der Angreifer ist.
+const PANIC_SECONDS: f32 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnimalKind {
@@ -88,6 +93,36 @@ impl AnimalKind {
         }
     }
 
+    /// Wie viele Treffer das Tier aushält.
+    pub fn max_health(self) -> u8 {
+        match self {
+            AnimalKind::Hare => 2,
+            AnimalKind::Fox => 3,
+            AnimalKind::Deer => 4,
+            AnimalKind::Sheep => 3,
+            AnimalKind::Wolf => 5,
+            AnimalKind::Bear => 10,
+        }
+    }
+
+    /// Was ein erlegtes Tier einbringt.
+    pub fn loot(self) -> &'static [(Item, u32)] {
+        match self {
+            AnimalKind::Hare => &[(Item::Meat, 1), (Item::Pelt, 1)],
+            AnimalKind::Fox => &[(Item::Meat, 1), (Item::Pelt, 2)],
+            AnimalKind::Deer => &[(Item::Meat, 3), (Item::Pelt, 2)],
+            AnimalKind::Sheep => &[(Item::Meat, 2), (Item::Wool, 3)],
+            AnimalKind::Wolf => &[(Item::Meat, 2), (Item::Pelt, 2)],
+            AnimalKind::Bear => &[(Item::Meat, 5), (Item::Pelt, 3)],
+        }
+    }
+
+    /// Trefferkugel relativ zu den Füßen: (Höhe des Mittelpunkts, Radius).
+    pub fn hit_sphere(self) -> (f32, f32) {
+        let h = self.traits().height;
+        (h * 0.65, (h * 0.8).max(0.4))
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             AnimalKind::Hare => "Hase",
@@ -116,6 +151,7 @@ pub struct AnimalState {
     pub position: Vec3,
     pub facing: f32,
     pub gait: Gait,
+    pub health: u8,
 }
 
 /// Was ein Tier vorhat (nur auf dem Server).
@@ -134,6 +170,14 @@ pub struct Animal {
     pub gait: Gait,
     /// Hat sich seit dem letzten Snapshot bewegt?
     pub moved: bool,
+    /// Verbleibende Treffer; 0 = erlegt (unsichtbar, bis es nachkommt).
+    pub health: u8,
+    /// Server: Uhrzeit (`clock`), zu der ein erlegtes Tier wiederkommt.
+    respawn_at: Option<f32>,
+    /// Server: bis wann das Tier nach einem Treffer auf jeden Fall flieht.
+    panic_until: f32,
+    /// Wo das Tier am Anfang stand (dort kommt es nach dem Erlegen wieder).
+    origin: Vec3,
     home: Vec2,
     plan: Plan,
     clock: f32,
@@ -148,6 +192,10 @@ struct Visual {
     /// Dargestellte Position (weich nachgeführt) und Hüpf-Phase des Platzhalters.
     shown: Vec3,
     phase: f32,
+    /// Restzeit des roten Aufleuchtens nach einem Treffer (Sekunden).
+    flash: f32,
+    /// Zeit seit dem Erlegen: das Tier kippt um und versinkt, bevor es verschwindet.
+    dying: Option<f32>,
 }
 
 enum Body {
@@ -168,6 +216,10 @@ impl Animal {
             facing,
             gait: Gait::Idle,
             moved: true,
+            health: kind.max_health(),
+            respawn_at: None,
+            panic_until: 0.0,
+            origin: position,
             home: vec2(position.x, position.z),
             plan: Plan::Rest { until },
             clock: 0.0,
@@ -177,19 +229,82 @@ impl Animal {
     }
 
     pub fn state(&self, id: u16) -> AnimalState {
-        AnimalState { id, position: self.position, facing: self.facing, gait: self.gait }
+        AnimalState { id, position: self.position, facing: self.facing, gait: self.gait, health: self.health }
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.health > 0
     }
 
     /// Übernimmt die Lage vom Server (Clients).
-    pub fn apply(&mut self, position: Vec3, facing: f32, gait: Gait) {
+    pub fn apply(&mut self, position: Vec3, facing: f32, gait: Gait, health: u8) {
         self.position = position;
         self.facing = facing;
         self.gait = gait;
+        self.set_health(health, false);
+    }
+
+    /// Neuer Lebensstand; `effects` = rot aufleuchten lassen (Treffer gerade gesehen).
+    pub fn set_health(&mut self, health: u8, effects: bool) {
+        if let Some(visual) = &mut self.visual {
+            if effects && health < self.health {
+                visual.flash = 0.25;
+            }
+            if health == 0 && self.health > 0 {
+                visual.dying = Some(0.0);
+            } else if health > 0 && self.health == 0 {
+                // Nachgekommen: ohne Umfallen sofort an der neuen Stelle zeigen.
+                visual.dying = None;
+                visual.shown = self.position;
+            }
+        }
+        self.health = health;
+    }
+
+    /// Mittelpunkt und Radius der Trefferkugel.
+    pub fn hit_sphere(&self) -> (Vec3, f32) {
+        let (height, radius) = self.kind.hit_sphere();
+        (self.position + Vec3::Y * height, radius)
+    }
+
+    /// Wo das Tier gerade zu sehen ist (weich nachgeführt, für Lebensbalken).
+    pub fn shown_position(&self) -> Vec3 {
+        self.visual.as_ref().map_or(self.position, |v| v.shown)
+    }
+
+    /// Ein Treffer (nur auf dem Server): ein Leben weniger, dann weg vom Angreifer.
+    /// Liefert den neuen Lebensstand.
+    pub fn hit(&mut self, from: Vec3) -> u8 {
+        if !self.is_alive() {
+            return 0;
+        }
+        self.set_health(self.health - 1, true);
+        if self.health == 0 {
+            self.respawn_at = Some(self.clock + RESPAWN_SECONDS);
+            self.gait = Gait::Idle;
+        } else {
+            self.plan = Plan::Flee { from: vec2(from.x, from.z) };
+            self.panic_until = self.clock + PANIC_SECONDS;
+        }
+        self.moved = true;
+        self.health
     }
 
     /// Ein Takt Verhalten (nur auf dem Server). `players` = Positionen aller Spieler.
     pub fn think(&mut self, dt: f32, players: &[Vec3], terrain: &Terrain) {
         self.clock += dt;
+        if let Some(at) = self.respawn_at {
+            if self.clock >= at {
+                // Ein neues Tier derselben Art kommt dort, wo es am Anfang stand.
+                self.respawn_at = None;
+                self.position = self.origin;
+                self.home = vec2(self.origin.x, self.origin.z);
+                self.plan = Plan::Rest { until: self.clock + 2.0 };
+                self.set_health(self.kind.max_health(), false);
+                self.moved = true;
+            }
+            return;
+        }
         let traits = self.kind.traits();
         let here = vec2(self.position.x, self.position.z);
         let nearest = players.iter().map(|p| vec2(p.x, p.z)).min_by(|a, b| a.distance_squared(here).total_cmp(&b.distance_squared(here)));
@@ -197,6 +312,7 @@ impl Animal {
 
         self.plan = match (self.plan, threat) {
             (_, Some(from)) => Plan::Flee { from },
+            (Plan::Flee { from }, None) if self.clock < self.panic_until => Plan::Flee { from },
             (Plan::Flee { from }, None) => {
                 let from = nearest.unwrap_or(from);
                 if from.distance(here) > traits.calm {
@@ -275,11 +391,34 @@ impl Animal {
         }
         let Some(visual) = &mut self.visual else { return };
         let dt = ctx.time.delta;
+        // Erlegt: umkippen, kurz liegen bleiben, im Boden versinken, dann ausblenden.
+        let mut fallen = 0.0f32;
+        let mut sink = 0.0f32;
+        if let Some(time) = &mut visual.dying {
+            *time += dt;
+            fallen = (*time / 0.45).min(1.0);
+            sink = ((*time - 2.5) / 1.5).clamp(0.0, 1.0);
+            let hidden = sink >= 1.0;
+            if let Some(entity) = ctx.scene.try_get_mut(visual.entity) {
+                entity.visible = !hidden;
+            }
+            if hidden {
+                return;
+            }
+        } else if self.health == 0 {
+            // Schon tot, als wir es zum ersten Mal gesehen haben.
+            if let Some(entity) = ctx.scene.try_get_mut(visual.entity) {
+                entity.visible = false;
+            }
+            return;
+        } else if let Some(entity) = ctx.scene.try_get_mut(visual.entity) {
+            entity.visible = true;
+        }
         visual.shown = visual.shown.lerp(self.position, (dt * 15.0).min(1.0));
         if visual.shown.distance(self.position) > 5.0 {
             visual.shown = self.position;
         }
-        let near = visual.shown.distance(ctx.camera.position) < ANIMATION_DISTANCE;
+        let near = visual.shown.distance(ctx.camera.position) < ANIMATION_DISTANCE && visual.dying.is_none();
 
         let mut position = visual.shown;
         let mut tilt = Quat::IDENTITY;
@@ -317,14 +456,21 @@ impl Animal {
             }
         }
 
+        // Treffer: kurz rot aufleuchten.
+        visual.flash = (visual.flash - dt).max(0.0);
+        let flash = visual.flash / 0.25;
         let Some(entity) = ctx.scene.try_get_mut(visual.entity) else { return };
-        entity.transform.position = position;
+        let height = self.kind.traits().height;
+        let eased = 1.0 - (1.0 - fallen) * (1.0 - fallen);
+        entity.transform.position = position + Vec3::Y * (eased * height * 0.1 - sink * height * 1.4);
+        entity.color = Vec4::ONE.lerp(vec4(2.2, 0.35, 0.3, 1.0), flash);
         let base = match &visual.body {
             // Blender-Modelle schauen nach +Z, unsere Tiere nach -Z.
             Body::Animated { .. } => Quat::from_rotation_y(std::f32::consts::PI),
             Body::Placeholder => Quat::IDENTITY,
         };
-        entity.transform.rotation = Quat::from_rotation_y(-self.facing) * tilt * base;
+        let fall = Quat::from_rotation_z(eased * std::f32::consts::FRAC_PI_2 * 0.95);
+        entity.transform.rotation = Quat::from_rotation_y(-self.facing) * fall * tilt * base;
     }
 }
 
@@ -346,7 +492,7 @@ impl Visual {
             Body::Placeholder => ctx.assets.named_mesh(&format!("tier_platzhalter_{}", kind.file_name()), || placeholder(kind)),
         };
         let entity = ctx.scene.spawn(Entity::new(kind.label(), mesh).with_transform(Transform::from_position(position)));
-        Visual { entity, body, shown: position, phase: 0.0 }
+        Visual { entity, body, shown: position, phase: 0.0, flash: 0.0, dying: None }
     }
 }
 
@@ -540,6 +686,37 @@ mod tests {
         }
         assert!(hare.position.distance(player) > start.distance(player) + 3.0, "Hase ist nicht geflohen: {:?}", hare.position);
         assert!(terrain.height_at(hare.position.x, hare.position.z) > MIN_GROUND, "Hase ist ins Wasser gelaufen");
+    }
+
+    #[test]
+    fn getroffenes_tier_flieht_stirbt_und_kommt_wieder() {
+        let terrain = flat_island();
+        let mut deer = Animal::new(AnimalKind::Deer, vec3(0.0, 5.0, 0.0), 3);
+        let start = deer.position;
+        // Angreifer weit weg: das Reh flieht trotzdem.
+        let attacker = vec3(-30.0, 5.0, 0.0);
+        assert_eq!(deer.hit(attacker), AnimalKind::Deer.max_health() - 1);
+        for _ in 0..60 {
+            deer.think(1.0 / 60.0, &[], &terrain);
+        }
+        assert_eq!(deer.gait, Gait::Run, "Reh flieht nach dem Treffer nicht");
+        assert!(deer.position.x > start.x + 3.0, "Reh flieht nicht vom Angreifer weg: {:?}", deer.position);
+
+        while deer.is_alive() {
+            deer.hit(attacker);
+        }
+        assert_eq!(deer.hit(attacker), 0, "Totes Tier nimmt weiter Schaden");
+        let dead_at = deer.position;
+        for _ in 0..60 * 10 {
+            deer.think(1.0 / 60.0, &[], &terrain);
+        }
+        assert_eq!(deer.position, dead_at, "Totes Tier läuft weiter");
+        for _ in 0..(60.0 * RESPAWN_SECONDS) as usize {
+            deer.think(1.0 / 60.0, &[], &terrain);
+        }
+        assert!(deer.is_alive(), "Reh kommt nicht wieder");
+        assert_eq!(deer.health, AnimalKind::Deer.max_health());
+        assert!(deer.position.distance(start) < WANDER_RADIUS + 2.0, "Neues Reh erscheint nicht in seinem alten Revier: {:?}", deer.position);
     }
 
     #[test]

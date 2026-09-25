@@ -3,7 +3,7 @@
 use engine::egui::{self, Align2, Color32, RichText};
 use engine::prelude::*;
 
-use crate::protocol::{PlayerInput, DEFAULT_PORT, MAX_NAME_CHARS};
+use crate::protocol::{Item, PlayerInput, DEFAULT_PORT, MAX_NAME_CHARS};
 use crate::session::{Mode, Session};
 use crate::settings::Settings;
 use crate::sounds::Sounds;
@@ -12,6 +12,12 @@ use crate::world::World;
 
 /// Nach so vielen Sekunden ohne Antwort gibt der Verbindungsaufbau auf.
 const CONNECT_TIMEOUT: f32 = 10.0;
+/// Plätze im Inventar-Fenster (Spalten × Reihen).
+const INVENTORY_COLUMNS: usize = 6;
+const INVENTORY_ROWS: usize = 4;
+/// Bis zu dieser Entfernung (Meter) haben Tiere einen Lebensbalken, verletzte auch weiter.
+const HEALTH_BAR_DISTANCE: f32 = 24.0;
+const HEALTH_BAR_DISTANCE_HURT: f32 = 45.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
@@ -43,11 +49,17 @@ pub struct Playground {
     free_camera: bool,
     // Eingaben, die zwischen zwei Takten fallen, bis zum nächsten Takt merken.
     jump_requested: bool,
-    throw_requested: bool,
+    /// Zielpunkt eines Zaubers, der im nächsten Takt losgeschickt wird.
+    cast_requested: Option<Vec3>,
     harvest_requested: Option<u32>,
     /// Rohstoff unter dem Fadenkreuz, der in Reichweite ist.
     aim: Option<u32>,
+    /// Tier unter dem Fadenkreuz (in Zauber-Reichweite).
+    aim_animal: Option<u16>,
     last_harvest: f32,
+    last_cast: f32,
+    /// Inventar-Fenster offen (Taste I)?
+    inventory_open: bool,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -55,6 +67,8 @@ pub struct Playground {
     local_ip: Option<std::net::IpAddr>,
     /// Nur zum Testen: Figur hackt regelmäßig in die Luft.
     demo_chop: bool,
+    /// Nur zum Testen: Kamera schaut aufs nächste Tier, die Figur zaubert jede Sekunde darauf.
+    demo_cast: bool,
     /// Geräusche und Klangkulisse (nur mit Fenster).
     sounds: Option<Sounds>,
     /// Asset-Galerie, solange sie offen ist.
@@ -78,14 +92,18 @@ impl Playground {
             fly: FlyController::default(),
             free_camera: false,
             jump_requested: false,
-            throw_requested: false,
+            cast_requested: None,
             harvest_requested: None,
             aim: None,
+            aim_animal: None,
             last_harvest: 0.0,
+            last_cast: -10.0,
+            inventory_open: false,
             autopilot,
             themed: false,
             local_ip: None,
             demo_chop: false,
+            demo_cast: false,
             sounds: None,
             gallery: None,
         }
@@ -107,6 +125,7 @@ impl Playground {
                 self.error = None;
                 self.connect_started = ctx.time.elapsed;
                 self.local_ip = ui::local_ip();
+                self.inventory_open = false;
                 self.orbit.distance = 6.0;
                 ctx.camera.pitch = -0.35;
                 ctx.cursor_locked = self.screen == Screen::Playing && !ctx.is_headless();
@@ -163,29 +182,58 @@ impl Playground {
             wish: wish.normalize_or_zero(),
             sprint: playing && ctx.input.key(KeyCode::ShiftLeft),
             jump: self.jump_requested,
-            throw: self.throw_requested.then(|| ctx.camera.forward()),
+            cast: self.cast_requested.take(),
             harvest: self.harvest_requested.take(),
         };
         self.jump_requested = false;
-        self.throw_requested = false;
         input
+    }
+
+    /// Wohin ein Zauber jetzt fliegen würde: erster Treffer entlang des Fadenkreuzes.
+    fn spell_aim(&self, ctx: &Context) -> Option<(Vec3, Option<u16>)> {
+        let session = self.session.as_ref()?;
+        let local = session.local_player()?;
+        let world = session.world();
+        let player = world.player_position(ctx, local)?;
+        let reach = ctx.camera.position.distance(player) + crate::world::CAST_RANGE;
+        let (point, animal) = world.spell_target(ctx, ctx.camera.position, ctx.camera.forward(), reach, Some(local));
+        // Ziele hinter der Reichweite des Magiers zählen nicht.
+        let animal = animal.filter(|_| point.distance(player) <= crate::world::CAST_RANGE);
+        Some((point, animal))
+    }
+
+    fn toggle_inventory(&mut self, ctx: &mut Context) {
+        self.inventory_open = !self.inventory_open;
+        ctx.cursor_locked = !self.inventory_open;
     }
 
     fn handle_game_keys(&mut self, ctx: &mut Context) {
         let escape = ctx.input.key_pressed(KeyCode::Escape);
         match self.screen {
             Screen::Playing => {
+                if escape && self.inventory_open {
+                    self.toggle_inventory(ctx);
+                    return;
+                }
                 if escape {
                     self.screen = Screen::Paused;
                     ctx.cursor_locked = false;
                     return;
                 }
-                if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera {
+                if ctx.input.key_pressed(KeyCode::KeyI) && !self.free_camera {
+                    self.toggle_inventory(ctx);
+                }
+                // Linksklick: Zauber aufs Fadenkreuz (im Takt der Abklingzeit).
+                let cast_cooldown = crate::world::CAST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT + 0.05;
+                if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open {
                     ctx.cursor_locked = true;
-                } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
-                    self.throw_requested = true;
-                    if let Some(session) = &mut self.session {
-                        session.preview_throw();
+                } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && ctx.time.elapsed - self.last_cast >= cast_cooldown {
+                    if let Some((target, _)) = self.spell_aim(ctx) {
+                        self.last_cast = ctx.time.elapsed;
+                        self.cast_requested = Some(target);
+                        if let Some(session) = &mut self.session {
+                            session.preview_cast();
+                        }
                     }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
@@ -213,7 +261,7 @@ impl Playground {
             }
             Screen::Paused if escape => {
                 self.screen = Screen::Playing;
-                ctx.cursor_locked = true;
+                ctx.cursor_locked = !self.inventory_open;
             }
             Screen::Settings if escape => self.close_settings(ctx),
             Screen::Join if escape => self.screen = Screen::MainMenu,
@@ -251,9 +299,11 @@ impl Playground {
     /// Welcher Rohstoff liegt unter dem Fadenkreuz und ist nah genug?
     fn update_aim(&mut self, ctx: &Context) {
         self.aim = None;
+        self.aim_animal = None;
         if self.screen != Screen::Playing || self.free_camera {
             return;
         }
+        self.aim_animal = self.spell_aim(ctx).and_then(|(_, animal)| animal);
         let Some(session) = &self.session else { return };
         let Some(local) = session.local_player() else { return };
         let Some(avatar) = session.world().players.get(&local) else { return };
@@ -263,6 +313,7 @@ impl Playground {
         }
     }
 
+    /// Kleine Übersicht unten rechts: was man dabei hat (ohne das Fenster zu öffnen).
     fn inventory_hud(&self, egui_ctx: &egui::Context) {
         let Some(session) = &self.session else { return };
         let inventory = session.local_inventory();
@@ -272,33 +323,130 @@ impl Playground {
             .show(egui_ctx, |ui| {
                 egui::Frame::new().fill(Color32::from_black_alpha(160)).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (label, count, color) in [
-                            ("Holz", inventory.wood, Color32::from_rgb(150, 98, 52)),
-                            ("Stein", inventory.stone, Color32::from_rgb(140, 142, 150)),
-                        ] {
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
-                            if label == "Holz" {
-                                ui.painter().rect_filled(rect.shrink2(egui::vec2(1.0, 6.0)), 4.0, color);
-                                ui.painter().circle_stroke(
-                                    rect.right_center() - egui::vec2(4.0, 0.0),
-                                    5.0,
-                                    egui::Stroke::new(2.0, Color32::from_rgb(90, 55, 25)),
-                                );
-                            } else {
-                                ui.painter().circle_filled(rect.center(), 11.0, color);
-                                ui.painter().circle_filled(rect.center() + egui::vec2(-3.0, -3.0), 4.0, Color32::from_rgb(175, 177, 185));
-                            }
-                            ui.label(RichText::new(format!("{count}")).size(22.0).strong().color(Color32::WHITE));
-                            ui.label(RichText::new(label).size(14.0).color(ui::TEXT.gamma_multiply(0.8)));
-                            ui.add_space(10.0);
+                        // Holz und Stein immer, Beute erst, wenn man welche hat.
+                        let shown = Item::ALL.into_iter().filter(|&item| matches!(item, Item::Wood | Item::Stone) || inventory.count(item) > 0);
+                        for item in shown {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+                            ui::item_icon(ui.painter(), rect, item);
+                            ui.label(RichText::new(format!("{}", inventory.count(item))).size(22.0).strong().color(Color32::WHITE));
+                            ui.add_space(8.0);
                         }
+                        ui.label(RichText::new("[I]").size(14.0).strong().color(ui::ACCENT));
                     });
                 });
             });
     }
 
-    /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff anvisiert ist.
+    /// Das Inventar-Fenster (Taste I): alle Gegenstände in Plätzen mit Anzahl.
+    fn inventory_window(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let Some(session) = &self.session else { return };
+        let inventory = session.local_inventory();
+        let name = session.local_player().and_then(|id| session.world().players.get(&id)).map(|a| a.name.clone()).unwrap_or_default();
+        let items: Vec<(Item, u32)> = inventory.items().collect();
+        let mut close = false;
+        ui::dim_background(egui_ctx, 70);
+        ui::center_panel(egui_ctx, "inventar_fenster", INVENTORY_COLUMNS as f32 * 74.0, |ui| {
+            ui.horizontal(|ui| {
+                ui::heading(ui, "Inventar");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(RichText::new("Schließen").size(15.0)).on_hover_text("Taste I oder Esc").clicked() {
+                        close = true;
+                    }
+                    ui.label(RichText::new(&name).size(16.0).color(ui::MUTED));
+                });
+            });
+            ui.add_space(4.0);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+            egui::Grid::new("inventar_plaetze").spacing([8.0, 8.0]).show(ui, |ui| {
+                for slot in 0..INVENTORY_COLUMNS * INVENTORY_ROWS {
+                    let (rect, response) = ui.allocate_exact_size(egui::vec2(66.0, 66.0), egui::Sense::hover());
+                    let painter = ui.painter();
+                    let filled = items.get(slot);
+                    let hovered = response.hovered() && filled.is_some();
+                    painter.rect_filled(rect, 8.0, if hovered { Color32::from_rgb(52, 58, 72) } else { Color32::from_rgb(30, 34, 44) });
+                    painter.rect_stroke(
+                        rect,
+                        8.0,
+                        egui::Stroke::new(1.0, if hovered { ui::ACCENT } else { Color32::from_white_alpha(30) }),
+                        egui::StrokeKind::Inside,
+                    );
+                    if let Some(&(item, count)) = filled {
+                        ui::item_icon(painter, rect.shrink(12.0).translate(egui::vec2(0.0, -3.0)), item);
+                        let text = format!("{count}");
+                        let corner = rect.right_bottom() - egui::vec2(6.0, 3.0);
+                        let font = egui::FontId::proportional(17.0);
+                        painter.text(corner + egui::vec2(1.0, 1.0), Align2::RIGHT_BOTTOM, &text, font.clone(), Color32::BLACK);
+                        painter.text(corner, Align2::RIGHT_BOTTOM, &text, font, Color32::WHITE);
+                        response.on_hover_ui(|ui| {
+                            ui.label(RichText::new(item.label()).size(18.0).strong().color(Color32::WHITE));
+                            ui.label(RichText::new(item.description()).size(14.0).color(ui::MUTED));
+                        });
+                    }
+                    if slot % INVENTORY_COLUMNS == INVENTORY_COLUMNS - 1 {
+                        ui.end_row();
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            let hint = if items.is_empty() {
+                "Noch leer. Rechtsklick baut Holz und Stein ab, Linksklick zaubert – erlegte Tiere geben Fleisch, Fell und Wolle."
+            } else {
+                "Rechtsklick: Holz und Stein abbauen · Linksklick: Zauber auf Tiere"
+            };
+            ui.label(RichText::new(hint).size(14.0).color(ui::MUTED));
+        });
+        if close {
+            self.toggle_inventory(ctx);
+        }
+    }
+
+    /// Kleine Lebensbalken über Tieren in der Nähe (verletzte auch weiter weg), nur im Spiel.
+    fn animal_bars_visible(&self, ctx: &Context, egui_ctx: &egui::Context) {
+        if self.screen != Screen::Playing {
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        let world = session.world();
+        let ignore = session.local_player().and_then(|id| world.players.get(&id)).map(|a| a.character);
+        let painter = egui_ctx.layer_painter(egui::LayerId::background());
+        for (id, animal) in world.animals.iter().enumerate() {
+            if !animal.is_alive() {
+                continue;
+            }
+            let max = animal.kind.max_health();
+            let hurt = animal.health < max;
+            let (height, radius) = animal.kind.hit_sphere();
+            let top = animal.shown_position() + Vec3::Y * (height + radius + 0.3);
+            let distance = ctx.camera.position.distance(top);
+            let limit = if hurt || self.aim_animal == Some(id as u16) { HEALTH_BAR_DISTANCE_HURT } else { HEALTH_BAR_DISTANCE };
+            if distance > limit {
+                continue;
+            }
+            let Some(screen) = ctx.world_to_screen(top) else { continue };
+            // Hinter Bäumen, Felsen oder Hügeln verborgen?
+            let to = top - ctx.camera.position;
+            if ctx.physics.raycast(ctx.camera.position, to / distance, distance - 0.3, ignore).is_some() {
+                continue;
+            }
+            let alpha = ((limit - distance) / 5.0).clamp(0.0, 1.0);
+            let width = (46.0 * (12.0 / distance.max(6.0)).sqrt()).clamp(26.0, 56.0);
+            ui::health_bar(&painter, egui::pos2(screen.x, screen.y), width, animal.health as f32 / max as f32, alpha);
+        }
+    }
+
+    /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff oder Tier anvisiert ist.
     fn aim_hud(&self, egui_ctx: &egui::Context) {
+        if let (None, Some(id), Some(session)) = (self.aim, self.aim_animal, &self.session) {
+            let Some(animal) = session.world().animals.get(id as usize) else { return };
+            let center = egui_ctx.content_rect().center();
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, animal.kind.label(), egui::FontId::proportional(18.0), Color32::WHITE);
+            let action = "Linksklick: Zauber";
+            painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, action, egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
+            let fraction = animal.health as f32 / animal.kind.max_health() as f32;
+            ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, fraction, 1.0);
+            return;
+        }
         let (Some(id), Some(session)) = (self.aim, &self.session) else { return };
         let Some(resource) = session.world().resources.get(&id) else { return };
         let center = egui_ctx.content_rect().center();
@@ -589,7 +737,9 @@ impl Playground {
         }
 
         let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · Rechtsklick Abbauen · Linksklick Werfen · Tab Spieler · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · Linksklick Zaubern · Rechtsklick Abbauen · I Inventar · Tab Spieler · Esc Menü"
+        } else if self.inventory_open {
+            ""
         } else {
             "Klicken zum Spielen"
         };
@@ -633,6 +783,7 @@ impl Game for Playground {
             }
         }
         self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
+        self.demo_cast = args.iter().any(|a| a == "--demo-zaubern");
         match self.start.take() {
             Some(mode) => self.start_session(ctx, mode),
             None => self.show_menu(ctx, None),
@@ -665,6 +816,19 @@ impl Game for Playground {
             ctx.camera.yaw = winkel.to_radians();
             ctx.camera.pitch = -0.12;
             self.orbit.distance = 3.0;
+        }
+        // Nur für Screenshots: Inventar mit etwas Beute geöffnet zeigen.
+        if args.iter().any(|a| a == "--demo-inventar") {
+            if let Some(session) = &mut self.session {
+                if let Some(local) = session.local_player() {
+                    let inventory = session.world_mut().inventories.entry(local).or_default();
+                    for (item, amount) in [(Item::Wood, 23), (Item::Stone, 11), (Item::Meat, 5), (Item::Pelt, 3), (Item::Wool, 6)] {
+                        inventory.add_item(item, amount);
+                    }
+                }
+            }
+            self.inventory_open = true;
+            ctx.cursor_locked = false;
         }
         if args.iter().any(|a| a == "--kamera-vorne") {
             ctx.camera.yaw = std::f32::consts::PI;
@@ -721,6 +885,30 @@ impl Game for Playground {
         }
 
         if let Some(session) = &mut self.session {
+            if self.demo_cast {
+                let world = session.world();
+                let player = session.local_player().and_then(|id| world.player_position(ctx, id));
+                let nearest = player.and_then(|p| {
+                    world
+                        .animals
+                        .iter()
+                        .filter(|a| a.is_alive() && a.position.distance(p) < 35.0)
+                        .min_by(|a, b| a.position.distance(p).total_cmp(&b.position.distance(p)))
+                        .map(|a| (p, a.hit_sphere().0))
+                });
+                if let Some((player, target)) = nearest {
+                    // Kamera hinter die Figur, Blick aufs Tier.
+                    let to = target - player;
+                    ctx.camera.yaw = to.x.atan2(-to.z) + 0.25;
+                    ctx.camera.pitch = -0.2;
+                    if ctx.time.elapsed - self.last_cast > 1.0 {
+                        self.last_cast = ctx.time.elapsed;
+                        self.cast_requested = Some(target);
+                        session.preview_cast();
+                        log::debug!("Demo-Zauber: Bild {}, {:.2} s", ctx.time.frame, ctx.time.elapsed);
+                    }
+                }
+            }
             if self.demo_chop && (ctx.time.elapsed % 1.2) < ctx.time.delta {
                 if let Some(local) = session.local_player() {
                     session.world_mut().play_action(local, crate::characters::Action::Chop);
@@ -734,7 +922,7 @@ impl Game for Playground {
         if let Some(sounds) = &mut self.sounds {
             if let Some(session) = &mut self.session {
                 let inventory = session.local_inventory();
-                let items = session.local_player().map(|_| inventory.wood + inventory.stone);
+                let items = session.local_player().map(|_| inventory.total());
                 sounds.update(ctx, session.world_mut(), items);
             } else if let Some(world) = &mut self.menu_world {
                 world.sound_events.clear();
@@ -753,6 +941,9 @@ impl Game for Playground {
             ui::apply_theme(egui_ctx);
             self.themed = true;
         }
+        if !self.inventory_open {
+            self.animal_bars_visible(ctx, egui_ctx);
+        }
         self.hud(ctx, egui_ctx);
         match self.screen {
             Screen::MainMenu => self.main_menu(ctx, egui_ctx),
@@ -765,6 +956,7 @@ impl Game for Playground {
             Screen::Settings => self.settings_menu(ctx, egui_ctx),
             Screen::Connecting => self.connecting_screen(ctx, egui_ctx),
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
+            Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
             Screen::Playing => {}
         }
     }

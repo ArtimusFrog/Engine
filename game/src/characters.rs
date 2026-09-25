@@ -1,5 +1,5 @@
 //! Spielfigur: der Magier aus Blender (`art/modelle/figuren/magier.py` → `figuren/magier.gltf`)
-//! mit Skelett-Animationen: Idle, Laufen, Rennen, Springen, Hieb, Werfen.
+//! mit Skelett-Animationen: Idle, Laufen, Rennen, Springen, Hieb, Werfen, Zaubern.
 //!
 //! Die Figur hat echte Maße (etwa 1,85 m, mit Hut mehr) und wird nicht skaliert.
 
@@ -37,7 +37,7 @@ fn model() -> Option<Arc<Model>> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Chop,
-    Throw,
+    Cast,
 }
 
 /// Die sichtbare, animierte Figur eines Spielers.
@@ -82,14 +82,17 @@ impl Puppet {
         ctx.scene.get_mut(self.figure).visible = visible && self.animator.is_some();
     }
 
-    /// Spielt eine einmalige Aktion ab: Hieb mit dem Stab (Holz hacken) oder Werfen.
+    /// Spielt eine einmalige Aktion ab: Hieb mit dem Stab (Holz hacken) oder Zaubern.
     pub fn act(&mut self, action: Action) {
         let Some(animator) = &mut self.animator else { return };
         let (clip, speed) = match action {
             Action::Chop => ("Hieb", 1.3),
-            Action::Throw => ("Werfen", 1.3),
+            Action::Cast => ("Zaubern", 1.35),
         };
-        animator.play(clip, false, 0.08);
+        // Ältere Modelle ohne „Zaubern“: dann eben die Wurfbewegung.
+        if !animator.play(clip, false, 0.08) {
+            animator.play("Werfen", false, 0.08);
+        }
         animator.set_speed(speed);
         self.acting = true;
     }

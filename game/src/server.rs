@@ -10,7 +10,7 @@ use engine::prelude::*;
 use crate::characters::Action;
 use crate::protocol::*;
 use crate::save::{player_key, WorldSave};
-use crate::world::{World, FIRST_RUNTIME_ID, HARVEST_COOLDOWN_TICKS, THROW_COOLDOWN_TICKS, THROW_SPEED};
+use crate::world::{World, BOLT_SPEED, CAST_COOLDOWN_TICKS, CAST_DELAY, CAST_RANGE, HARVEST_COOLDOWN_TICKS};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -20,8 +20,7 @@ const FULL_SNAPSHOT_INTERVAL: u64 = 60;
 const MAX_QUEUED_INPUTS: usize = 12;
 /// Wie viele verspätete Eingaben ein Client auf einmal nachholen darf.
 const MAX_INPUT_CREDIT: u32 = 8;
-/// Geworfene Bälle; die ältesten verschwinden.
-const MAX_THROWN: usize = 30;
+
 /// Alle wie viele Takte der Spielstand gespeichert wird (30 Sekunden).
 const SAVE_INTERVAL: u64 = 60 * 30;
 
@@ -33,11 +32,18 @@ struct RemoteClient {
     credit: u32,
 }
 
+/// Ein Zauber ist unterwegs und trifft in Takt `due` das Tier `animal`.
+struct PendingHit {
+    due: u64,
+    animal: u16,
+    by: PlayerId,
+    from: Vec3,
+}
+
 pub struct Authority {
     net: Option<NetServer>,
     clients: HashMap<ClientId, RemoteClient>,
-    next_object_id: NetId,
-    thrown: VecDeque<NetId>,
+    pending_hits: Vec<PendingHit>,
     send_full_snapshot: bool,
     /// Wohin der Spielstand geschrieben wird (`None` = gar nicht, z. B. in Tests).
     save_path: Option<PathBuf>,
@@ -52,8 +58,7 @@ impl Authority {
         Authority {
             net,
             clients: HashMap::new(),
-            next_object_id: FIRST_RUNTIME_ID,
-            thrown: VecDeque::new(),
+            pending_hits: Vec::new(),
             send_full_snapshot: true,
             save_path,
             inventories: BTreeMap::new(),
@@ -104,6 +109,7 @@ impl Authority {
 
         world.day.advance(Physics::FIXED_DT);
         world.think_animals(ctx);
+        self.land_hits(ctx, world);
         if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
             self.save(world);
         }
@@ -142,8 +148,8 @@ impl Authority {
         if let Some(id) = input.harvest {
             self.harvest(ctx, world, player, id);
         }
-        if let Some(aim) = input.throw {
-            self.throw_ball(ctx, world, player, aim);
+        if let Some(target) = input.cast {
+            self.cast(ctx, world, player, target);
         }
     }
 
@@ -170,34 +176,61 @@ impl Authority {
         let inventory = world.inventories.entry(player).or_default();
         inventory.add(kind, if health == 0 { 4 } else { 1 });
         let inventory = *inventory;
-        if player != HOST_PLAYER {
-            if let Some(net) = &mut self.net {
-                net.send(player, Channel::Reliable, encode(&ServerMessage::Inventory(inventory)));
+        self.send_inventory(player, inventory);
+    }
+
+    /// Ein Zauber Richtung `target`. Der Server rechnet selbst nach, was getroffen wird;
+    /// der Client liefert nur die Richtung (und höchstens `CAST_RANGE` weit).
+    fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
+        let Some(avatar) = world.players.get_mut(&player) else { return };
+        if ctx.time.tick < avatar.last_cast_tick + CAST_COOLDOWN_TICKS || !target.is_finite() {
+            return;
+        }
+        avatar.last_cast_tick = ctx.time.tick;
+        let Some(origin) = world.cast_origin(ctx, player, target) else { return };
+        let direction = (target - origin).normalize_or(Vec3::NEG_Z);
+        let range = origin.distance(target).min(CAST_RANGE) + 0.5;
+        let (point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
+
+        world.cast_spell(ctx, player, origin, point, animal.is_some(), true);
+        self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: animal.is_some() });
+        if let Some(animal) = animal {
+            let flight = CAST_DELAY + origin.distance(point) / BOLT_SPEED;
+            let due = ctx.time.tick + (flight / Physics::FIXED_DT).round() as u64;
+            self.pending_hits.push(PendingHit { due, animal, by: player, from: origin });
+        }
+    }
+
+    /// Zauber, die jetzt ankommen: Schaden, bei erlegten Tieren Beute für den Zaubernden.
+    fn land_hits(&mut self, ctx: &mut Context, world: &mut World) {
+        let tick = ctx.time.tick;
+        let (landed, waiting): (Vec<_>, Vec<_>) = self.pending_hits.drain(..).partition(|h| h.due <= tick);
+        self.pending_hits = waiting;
+        for hit in landed {
+            let Some(animal) = world.animals.get_mut(hit.animal as usize) else { continue };
+            if !animal.is_alive() {
+                continue;
+            }
+            let kind = animal.kind;
+            let health = animal.hit(hit.from);
+            world.animal_hit(ctx, hit.animal, health, true);
+            self.broadcast(ServerMessage::AnimalHit { id: hit.animal, health, by: hit.by });
+            if health == 0 {
+                let inventory = world.inventories.entry(hit.by).or_default();
+                for &(item, amount) in kind.loot() {
+                    inventory.add_item(item, amount);
+                }
+                let inventory = *inventory;
+                self.send_inventory(hit.by, inventory);
             }
         }
     }
 
-    fn throw_ball(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, aim: Vec3) {
-        let Some(avatar) = world.players.get_mut(&player) else { return };
-        if ctx.time.tick < avatar.last_throw_tick + THROW_COOLDOWN_TICKS {
-            return;
-        }
-        avatar.last_throw_tick = ctx.time.tick;
-        let aim = aim.normalize_or(Vec3::NEG_Z);
-        let position = ctx.physics.character_position(avatar.character) + Vec3::Y * 0.5 + aim * 0.9;
-        let velocity = aim * THROW_SPEED + Vec3::Y * 2.0;
-
-        let id = self.next_object_id;
-        self.next_object_id += 1;
-        world.spawn_object(ctx, id, ObjectKind::Ball, position, velocity);
-        world.play_action(player, Action::Throw);
-        self.broadcast(ServerMessage::Spawn { id, kind: ObjectKind::Ball, position, velocity, by: Some(player) });
-
-        self.thrown.push_back(id);
-        if self.thrown.len() > MAX_THROWN {
-            let old = self.thrown.pop_front().expect("Liste ist nicht leer");
-            world.remove_object(ctx, old);
-            self.broadcast(ServerMessage::Despawn { id: old });
+    fn send_inventory(&mut self, player: PlayerId, inventory: Inventory) {
+        if player != HOST_PLAYER {
+            if let Some(net) = &mut self.net {
+                net.send(player, Channel::Reliable, encode(&ServerMessage::Inventory(inventory)));
+            }
         }
     }
 

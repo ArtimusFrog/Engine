@@ -4,6 +4,8 @@ use engine::egui::{self, Align2, Color32, FontId, RichText, Stroke};
 use engine::prelude::*;
 use engine::daycycle::DayCycle;
 
+use crate::protocol::Item;
+
 pub const ACCENT: Color32 = Color32::from_rgb(255, 150, 40);
 pub const TEXT: Color32 = Color32::from_rgb(235, 238, 245);
 pub const MUTED: Color32 = Color32::from_rgb(150, 158, 175);
@@ -320,4 +322,93 @@ pub fn time_bar(ctx: &egui::Context, day: &DayCycle) {
 
     // Mitte: Himmels-Medaillon, ragt über das Banner hinaus
     sky_medallion(&painter, center, 29.0, day);
+}
+
+/// Kleiner Lebensbalken: grün bei voller Gesundheit, über Gelb nach Rot.
+pub fn health_bar(painter: &egui::Painter, center: egui::Pos2, width: f32, fraction: f32, alpha: f32) {
+    let fraction = fraction.clamp(0.0, 1.0);
+    let bar = egui::Rect::from_center_size(center, egui::vec2(width, 6.0));
+    painter.rect_filled(bar.expand(1.5), 3.0, Color32::from_black_alpha((190.0 * alpha) as u8));
+    let mut fill = bar;
+    fill.set_width(bar.width() * fraction);
+    let (r, g) = if fraction > 0.5 { ((1.0 - fraction) * 2.0, 1.0) } else { (1.0, fraction * 2.0) };
+    let color = Color32::from_rgb((70.0 + r * 185.0) as u8, (60.0 + g * 160.0) as u8, 50);
+    painter.rect_filled(fill, 2.0, color.gamma_multiply(alpha));
+    // Heller Streifen oben für etwas Glanz
+    let mut shine = fill;
+    shine.set_height(2.0);
+    painter.rect_filled(shine, 1.0, Color32::from_white_alpha((60.0 * alpha) as u8));
+}
+
+/// Gemaltes Symbol für einen Gegenstand im Inventar.
+pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height()) / 40.0;
+    let v = |x: f32, y: f32| c + egui::vec2(x * s, y * s);
+    let outline = Stroke::new(1.5 * s, Color32::from_black_alpha(120));
+    match item {
+        Item::Wood => {
+            // Zwei gestapelte Holzscheite mit Jahresringen
+            for (dy, dx) in [(7.0, -2.0), (-5.0, 3.0)] {
+                let log = egui::Rect::from_center_size(v(dx - 2.0, dy), egui::vec2(28.0 * s, 11.0 * s));
+                painter.rect_filled(log, 5.0 * s, Color32::from_rgb(130, 82, 42));
+                painter.rect_filled(log.shrink2(egui::vec2(3.0 * s, 4.0 * s)).translate(egui::vec2(0.0, -2.0 * s)), 2.0 * s, Color32::from_rgb(160, 104, 56));
+                let end = v(dx + 12.0, dy);
+                painter.circle_filled(end, 6.0 * s, Color32::from_rgb(222, 184, 128));
+                painter.circle_stroke(end, 3.5 * s, Stroke::new(1.2 * s, Color32::from_rgb(170, 120, 70)));
+                painter.circle_filled(end, 1.2 * s, Color32::from_rgb(150, 100, 55));
+                painter.circle_stroke(end, 6.0 * s, Stroke::new(1.5 * s, Color32::from_rgb(90, 55, 25)));
+            }
+        }
+        Item::Stone => {
+            let points = [v(-13.0, 8.0), v(-11.0, -5.0), v(-2.0, -12.0), v(10.0, -9.0), v(14.0, 2.0), v(9.0, 11.0), v(-6.0, 12.0)];
+            painter.add(egui::Shape::convex_polygon(points.to_vec(), Color32::from_rgb(128, 131, 140), outline));
+            let top = [v(-11.0, -5.0), v(-2.0, -12.0), v(10.0, -9.0), v(3.0, -3.0), v(-7.0, -1.0)];
+            painter.add(egui::Shape::convex_polygon(top.to_vec(), Color32::from_rgb(170, 173, 182), Stroke::NONE));
+            painter.line_segment([v(3.0, -3.0), v(9.0, 11.0)], Stroke::new(1.2 * s, Color32::from_rgb(95, 97, 105)));
+        }
+        Item::Meat => {
+            // Keule: schräges, ovales Fleischstück mit herausstehendem Knochen
+            let bone = Color32::from_rgb(238, 232, 214);
+            painter.line_segment([v(0.0, 0.0), v(11.0, -11.0)], Stroke::new(4.5 * s, bone));
+            painter.circle_filled(v(11.0, -14.0), 3.2 * s, bone);
+            painter.circle_filled(v(14.0, -11.0), 3.2 * s, bone);
+            let oval = |center: egui::Pos2, a: f32, b: f32| -> Vec<egui::Pos2> {
+                let (u, w) = (egui::vec2(-0.707, 0.707), egui::vec2(0.707, 0.707));
+                (0..24)
+                    .map(|k| {
+                        let angle = k as f32 / 24.0 * std::f32::consts::TAU;
+                        center + u * a * s * angle.cos() + w * b * s * angle.sin()
+                    })
+                    .collect()
+            };
+            painter.add(egui::Shape::convex_polygon(oval(v(-5.0, 5.0), 13.0, 9.5), Color32::from_rgb(140, 62, 34), outline));
+            painter.add(egui::Shape::convex_polygon(oval(v(-6.0, 3.5), 10.0, 6.5), Color32::from_rgb(182, 92, 50), Stroke::NONE));
+            painter.add(egui::Shape::convex_polygon(oval(v(-8.0, 1.0), 4.0, 2.2), Color32::from_rgb(222, 150, 100), Stroke::NONE));
+        }
+        Item::Pelt => {
+            // Ausgebreitetes Fell mit vier Zipfeln
+            let fur = Color32::from_rgb(150, 98, 55);
+            for (x, y) in [(-12.0, -11.0), (12.0, -11.0), (-12.0, 11.0), (12.0, 11.0)] {
+                painter.circle_filled(v(x, y), 4.5 * s, fur);
+            }
+            let body = [v(-10.0, -12.0), v(0.0, -15.0), v(10.0, -12.0), v(12.0, 0.0), v(10.0, 12.0), v(0.0, 15.0), v(-10.0, 12.0), v(-12.0, 0.0)];
+            painter.add(egui::Shape::convex_polygon(body.to_vec(), fur, outline));
+            painter.circle_filled(v(0.0, 0.0), 7.0 * s, Color32::from_rgb(190, 140, 90));
+            for (x, y) in [(-4.0, -7.0), (5.0, 6.0), (-5.0, 7.0)] {
+                painter.line_segment([v(x, y), v(x + 2.5, y - 2.5)], Stroke::new(1.2 * s, Color32::from_rgb(110, 70, 38)));
+            }
+        }
+        Item::Wool => {
+            // Wollknäuel mit loser Strähne
+            let wool = Color32::from_rgb(236, 230, 214);
+            painter.line_segment([v(8.0, 9.0), v(16.0, 15.0)], Stroke::new(2.0 * s, wool));
+            painter.circle_filled(v(0.0, 0.0), 13.0 * s, wool);
+            painter.circle_stroke(v(0.0, 0.0), 13.0 * s, outline);
+            let thread = Stroke::new(1.3 * s, Color32::from_rgb(190, 180, 158));
+            for (from, to) in [((-11.0, -5.0), (6.0, 11.0)), ((-7.0, -10.0), (11.0, 6.0)), ((-12.0, 2.0), (-1.0, 12.0)), ((-2.0, -12.0), (12.0, -2.0))] {
+                painter.line_segment([v(from.0, from.1), v(to.0, to.1)], thread);
+            }
+        }
+    }
 }

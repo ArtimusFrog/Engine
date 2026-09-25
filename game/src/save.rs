@@ -93,7 +93,8 @@ impl WorldSave {
 /// Wo der Spielstand liegt: `--welt <datei>`, sonst im Einstellungsordner
 /// (`welt.json` beim Spielen am eigenen Rechner, `welt_server.json` für den Server).
 pub fn default_path(dedicated_server: bool) -> Option<PathBuf> {
-    if cfg!(test) {
+    // Tests und automatische Screenshots (mit Demo-Beute) sollen keinen echten Spielstand verändern.
+    if cfg!(test) || std::env::args().any(|a| a == "--screenshot") {
         return None;
     }
     let args: Vec<String> = std::env::args().collect();
@@ -112,7 +113,7 @@ mod tests {
     fn speichern_und_laden() {
         let path = std::env::temp_dir().join(format!("weltstand_{}.json", std::process::id()));
         let mut save = WorldSave { format: FORMAT, seed: WORLD_ID, hour: 13.5, day: 4, ..Default::default() };
-        save.inventories.insert(player_key(" Nils "), Inventory { wood: 12, stone: 3 });
+        save.inventories.insert(player_key(" Nils "), Inventory { wood: 12, stone: 3, ..Default::default() });
         save.gone.push((42, 900));
         save.damaged.push((7, 2));
         save.store(&path).unwrap();

@@ -17,7 +17,8 @@ pub struct Sounds {
     rock_breaks: SoundId,
     step_grass: SoundId,
     step_sand: SoundId,
-    throw: SoundId,
+    cast: SoundId,
+    impact: SoundId,
     pickup: SoundId,
     wind: LoopId,
     waves: LoopId,
@@ -61,7 +62,8 @@ impl Sounds {
             rock_breaks: sound(a, "fels_bricht", rock_breaks),
             step_grass: sound(a, "schritt_gras", || step(0.18, 3)),
             step_sand: sound(a, "schritt_sand", || step(0.45, 5)),
-            throw: sound(a, "werfen", throw),
+            cast: sound(a, "zauber", cast),
+            impact: sound(a, "treffer", impact),
             pickup: sound(a, "einsammeln", pickup),
             wind: a.start_loop(wind, Bus::Ambient),
             waves: a.start_loop(waves, Bus::Ambient),
@@ -89,9 +91,18 @@ impl Sounds {
                         ctx.audio.play(done, Play { at: Some(at + Vec3::Y), volume: 0.9, range: 70.0, ..Default::default() });
                     }
                 }
-                SoundEvent::Throw { player } => {
+                SoundEvent::Cast { player } => {
                     let at = world.player_position(ctx, player);
-                    ctx.audio.play(self.throw, Play { at, volume: 0.6, pitch, range: 30.0, ..Default::default() });
+                    ctx.audio.play(self.cast, Play { at, volume: 0.6, pitch, range: 35.0, ..Default::default() });
+                }
+                SoundEvent::Impact { at, animal, killed } => {
+                    // In ein Tier: kräftig; erlegt: tiefer; sonst leises Verpuffen.
+                    let (volume, pitch) = match (animal, killed) {
+                        (true, true) => (0.9, pitch * 0.75),
+                        (true, false) => (0.7, pitch),
+                        (false, _) => (0.35, pitch * 1.25),
+                    };
+                    ctx.audio.play(self.impact, Play { at: Some(at), volume, pitch, range: 40.0, ..Default::default() });
                 }
                 SoundEvent::Step { at, sand, running } => {
                     let sound = if sand { self.step_sand } else { self.step_grass };
@@ -221,13 +232,30 @@ fn step(brightness: f32, seed: u64) -> SoundBuffer {
     render(0.12, |t| lp.next(noise.next(), brightness) * envelope(t, 0.004, 0.03) * 1.3)
 }
 
-/// Wurf: Luftzug, der hoch und wieder runter geht.
-fn throw() -> SoundBuffer {
+/// Zauber: schimmernder, aufsteigender Klang mit einem Luftzug, wenn das Geschoss losfliegt.
+fn cast() -> SoundBuffer {
     let mut noise = Noise::new(6);
     let mut lp = LowPass::default();
-    render(0.3, |t| {
-        let sweep = (t / 0.3 * std::f32::consts::PI).sin();
-        lp.next(noise.next(), 0.05 + sweep * 0.3) * sweep * 1.2
+    render(0.75, |t| {
+        let rise = 320.0 + t * 520.0;
+        let tone = sine(t, rise) * 0.5 + sine(t, rise * 1.5) * 0.3 + sine(t, rise * 2.02) * 0.2;
+        let shimmer = tone * (1.0 + 0.35 * sine(t, 23.0)) * envelope(t, 0.18, 0.28) * 0.55;
+        let launch = t - 0.2;
+        let whoosh = if launch > 0.0 { lp.next(noise.next(), 0.08 + (launch * 3.0).min(0.4)) * envelope(launch, 0.03, 0.18) * 1.1 } else { 0.0 };
+        shimmer + whoosh
+    })
+}
+
+/// Treffer eines Zaubers: heller Knall mit funkelndem Nachklang.
+fn impact() -> SoundBuffer {
+    let mut noise = Noise::new(12);
+    let mut lp = LowPass::default();
+    render(0.6, |t| {
+        let n = noise.next();
+        let pop = lp.next(n, 0.25) * envelope(t, 0.001, 0.05) * 1.3;
+        let thump = sine(t, 140.0 - t * 90.0) * envelope(t, 0.002, 0.08) * 0.8;
+        let sparkle = (sine(t, 1760.0) * 0.4 + sine(t, 2637.0) * 0.3 + sine(t, 3520.0) * 0.2) * (1.0 + sine(t, 31.0)) * 0.5 * envelope(t, 0.005, 0.16) * 0.5;
+        pop + thump + sparkle
     })
 }
 
@@ -339,14 +367,15 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 12] = [
+    let all: [(&str, fn() -> SoundBuffer); 13] = [
         ("hacken", chop),
         ("stein", stone),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
         ("schritt_gras", || step(0.18, 3)),
         ("schritt_sand", || step(0.45, 5)),
-        ("werfen", throw),
+        ("zauber", cast),
+        ("treffer", impact),
         ("einsammeln", pickup),
         ("wind", wind),
         ("wellen", waves),
