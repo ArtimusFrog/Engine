@@ -72,41 +72,41 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":481992,
+			"count":454508,
 			"max":[
 				65.98873901367188,
-				59.178890228271484,
-				63.49436950683594
+				58.83000183105469,
+				89
 			],
 			"min":[
 				-65.98873901367188,
-				0,
-				-63.49436950683594
+				-0.017101002857089043,
+				-37.988739013671875
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":481992,
+			"count":454508,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":481992,
+			"count":454508,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5126,
-			"count":481992,
+			"count":454508,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":4,
 			"componentType":5125,
-			"count":670614,
+			"count":632772,
 			"type":"SCALAR"
 		},
 		{
@@ -115,13 +115,13 @@
 			"count":10722,
 			"max":[
 				32.97939682006836,
-				39.80854797363281,
-				61.644371032714844
+				39.459659576416016,
+				87.1500015258789
 			],
 			"min":[
 				-32.060001373291016,
-				3.6088900566101074,
-				-40.567718505859375
+				3.259999990463257,
+				-15.062087059020996
 			],
 			"type":"VEC3"
 		},
@@ -153,68 +153,68 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":5783904,
+			"byteLength":5454096,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5783904,
-			"byteOffset":5783904,
+			"byteLength":5454096,
+			"byteOffset":5454096,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3855936,
-			"byteOffset":11567808,
+			"byteLength":3636064,
+			"byteOffset":10908192,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5783904,
-			"byteOffset":15423744,
+			"byteLength":5454096,
+			"byteOffset":14544256,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2682456,
-			"byteOffset":21207648,
+			"byteLength":2531088,
+			"byteOffset":19998352,
 			"target":34963
 		},
 		{
 			"buffer":0,
 			"byteLength":128664,
-			"byteOffset":23890104,
+			"byteOffset":22529440,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":128664,
-			"byteOffset":24018768,
+			"byteOffset":22658104,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":85776,
-			"byteOffset":24147432,
+			"byteOffset":22786768,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":128664,
-			"byteOffset":24233208,
+			"byteOffset":22872544,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":39576,
-			"byteOffset":24361872,
+			"byteOffset":23001208,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":24401448,
+			"byteLength":23040784,
 			"uri":"burganlage.bin"
 		}
 	]

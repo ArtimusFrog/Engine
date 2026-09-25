@@ -646,6 +646,23 @@ impl Game for Viewer {
         if args.iter().any(|a| a == "--ohne-vergleich") {
             self.show_reference = false;
         }
+        // `--dazu <datei> x,y,z`: ein zweites Modell daneben zeigen (z. B. Marktplatz in der Burganlage)
+        if let Some(i) = args.iter().position(|a| a == "--dazu") {
+            let offset: Vec<f32> = args.get(i + 2).map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default();
+            match (args.get(i + 1).map(|f| Model::from_file(Path::new(f))), offset.len()) {
+                (Some(Ok(model)), 3) => {
+                    let textures = model.register_textures(&mut ctx.assets);
+                    for (info, mesh) in model.static_mesh_groups(&textures) {
+                        let id = ctx.assets.add_mesh(mesh);
+                        let material = if info.emissive > 0.0 { Material::Emissive { glow: 1.5 } } else { Material::Standard };
+                        let at = Transform::from_position(vec3(offset[0], offset[1], offset[2]));
+                        ctx.scene.spawn(Entity::new("Dazu", id).with_material(material).with_transform(at));
+                    }
+                }
+                (Some(Err(message)), _) => log::error!("--dazu: {message}"),
+                _ => log::error!("--dazu <datei> x,y,z"),
+            }
+        }
         match &self.source {
             Some(source) if blender::needs_build(source) => self.start_build(),
             Some(source) => self.source_stamp = blender::source_stamp(source),

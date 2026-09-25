@@ -558,6 +558,24 @@ fn stained_glass(albedo: vec3<f32>, p: vec2<f32>, w: f32) -> vec3<f32> {
     return mix(average, fine, pattern_fade(w, size * 1.5));
 }
 
+// Kopfsteinpflaster: kleine, gewölbte Steine in unregelmäßigen Reihen, dunkle Fugen.
+fn cobbles(albedo: vec3<f32>, p: vec2<f32>, w: f32) -> vec3<f32> {
+    let size = vec2<f32>(0.34, 0.27);
+    let row = floor(p.y / size.y);
+    let q = vec2<f32>(p.x / size.x + row * 0.5 + hash21(vec2<f32>(row, 7.0)) * 0.4, p.y / size.y);
+    let cell = floor(q);
+    let f = fract(q);
+    let d = min(f, 1.0 - f) * size;
+    let edge = min(d.x, d.y);
+    let h = hash21(cell + vec2<f32>(3.0, 9.0));
+    let h2 = hash21(cell * 2.3 + vec2<f32>(1.0, 4.0));
+    var stone = albedo * (0.78 + h * 0.4) * mix(vec3<f32>(1.06, 0.98, 0.9), vec3<f32>(0.92, 0.97, 1.05), h2);
+    stone *= 0.76 + 0.24 * smoothstep(0.0, 0.09, edge);
+    let gap = 1.0 - smoothstep(0.03, 0.03 + max(w, 0.003), edge);
+    let fine = mix(stone, albedo * 0.42, gap * pattern_fade(w, 0.15));
+    return mix(albedo, fine, pattern_fade(w, size.y * 1.4));
+}
+
 fn surface_pattern(albedo: vec3<f32>, uv: vec2<f32>, w: f32) -> vec3<f32> {
     let kind = floor(uv.x / 1000.0);
     let p = vec2<f32>(uv.x - kind * 1000.0 - 500.0, 1.0 - uv.y);
@@ -569,6 +587,8 @@ fn surface_pattern(albedo: vec3<f32>, uv: vec2<f32>, w: f32) -> vec3<f32> {
         return masonry(albedo, p + vec2<f32>(0.0, 0.0), w, vec2<f32>(1.1, 0.8), 0.04, 0.2);
     } else if (kind == 4.0) {
         return stained_glass(albedo, p, w);
+    } else if (kind == 5.0) {
+        return cobbles(albedo, p, w);
     }
     return albedo;
 }

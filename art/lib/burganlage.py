@@ -482,22 +482,16 @@ def umgebung(bau, seed=5):
         for y in (TOR_Y - 12.0, TOR_Y - 7.0, TOR_Y + 6.0, TOR_Y + 14.0, -36.0, -24.0):
             laterne(bau, M((s * 4.4, y, 0)))
         # Hecken und Blumenbeete entlang der Straße (sie enden am Rand des Brunnenplatzes)
-        for y0, y1 in ((TOR_Y + 4.5, platz - 5.8), (platz + 5.8, -22.5)):
-            hecke(bau, M((s * 9.9, y0, 0), 90), y1 - y0, zufall)
-        for y0, y1 in ((TOR_Y + 4.5, platz - 8.4), (platz + 8.4, -22.5)):
-            blumenbeet(bau, M((s * 8.0, y0, 0), 90), y1 - y0, 1.5, zufall)
+        # (links bleibt der Zugang zum Marktplatz offen)
+        if s > 0:
+            for y0, y1 in ((TOR_Y + 4.5, platz - 5.8), (platz + 5.8, -22.5)):
+                hecke(bau, M((s * 9.9, y0, 0), 90), y1 - y0, zufall)
+            for y0, y1 in ((TOR_Y + 4.5, platz - 8.4), (platz + 8.4, -22.5)):
+                blumenbeet(bau, M((s * 8.0, y0, 0), 90), y1 - y0, 1.5, zufall)
         for y in (platz - 8.0, platz + 8.0):
             zierbaum(bau, M((s * 8.0, y, 0)), zufall, "kugel" if y < platz else "kegel")
 
-    # Markt links im Vorhof
-    stoffe = ("#B23A3A", "#3A5BB2", "#2E6B46", "#D9772F")
-    for i, (x, y) in enumerate(((-24.0, -60.0), (-34.0, -60.0), (-44.0, -60.0), (-24.0, -44.0), (-34.0, -44.0))):
-        marktstand(bau, M((x, y, 0), 0 if y < -50 else 180), stoffe[i % len(stoffe)], zufall)
-    for i in range(10):
-        x, y = zufall.uniform(-50, -20), zufall.uniform(-54, -50)
-        (fass if i % 2 else kiste)(bau, M((x, y, 0), zufall.uniform(0, 90)))
-    karren(bau, M((-50.0, -38.0, 0), 25))
-    ziehbrunnen(bau, M((-44.0, -30.0, 0)))
+    # Links im Vorhof liegt der Marktplatz (eigenes Modell, siehe marktplatz.py: MARKT_ORT)
 
     # Übungsplatz rechts: Zaun, Strohpuppen, Zielscheiben, Waffenständer, Heu
     x0, x1, y0, y1 = 16.0, 52.0, -68.0, -32.0
@@ -520,4 +514,4 @@ def burganlage(seed=77):
     bau = Bau(seed)
     burg_teile(bau)
     umgebung(bau)
-    return bau.fertig("Burganlage")
+    return bau.fertig("Burganlage", ursprung=(0.0, 0.0))

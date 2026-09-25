@@ -21,7 +21,7 @@ from lager import leucht_material
 from werkstatt import srgb_zu_linear, ursprung_unten
 
 # Musterarten (siehe basic.wgsl)
-MAUER, ZIEGEL, PLATTEN, GLAS = 1, 2, 3, 4
+MAUER, ZIEGEL, PLATTEN, GLAS, KOPFSTEIN = 1, 2, 3, 4, 5
 
 STEIN = "#D9C29E"
 STEIN_HELL = "#E8D8B8"
@@ -65,7 +65,9 @@ class Bau:
             self.muster.append(muster)
             self.leuchten.append(leuchten)
 
-    def fertig(self, name, glas_leuchten=0.3):
+    def fertig(self, name, glas_leuchten=0.3, ursprung=None):
+        """Ein Objekt aus allen Teilen. `ursprung` = (x, y): dieser Punkt wird zum Ursprung
+        (Boden bleibt bei z = 0), sonst mittig unter das Modell."""
         mesh = bpy.data.meshes.new(name)
         mesh.from_pydata([tuple(p) for p in self.punkte], [], self.flaechen)
         attr = mesh.color_attributes.new("Farbe", "FLOAT_COLOR", "CORNER")
@@ -87,7 +89,12 @@ class Bau:
         bpy.context.scene.collection.objects.link(obj)
         mesh.materials.append(_material())
         mesh.materials.append(leucht_material(name + "Glas", "#FFE2A8", glas_leuchten))
-        ursprung_unten(obj)
+        if ursprung is None:
+            ursprung_unten(obj)
+        else:
+            mesh.transform(Matrix.Translation((-ursprung[0], -ursprung[1], 0.0)))
+            mesh.update()
+            print(f"MODELL {name}: Unterkante {min(v.co.z for v in mesh.vertices):.3f} m")
         dreiecke = sum(len(p.vertices) - 2 for p in mesh.polygons)
         print(f"MODELL {name}: {dreiecke} Dreiecke")
         return obj
@@ -114,7 +121,7 @@ def muster_uv(art, p, n):
     """Musterkoordinaten einer Fläche in Metern: an Wänden waagerecht entlang der Wand und
     senkrecht nach oben, auf Dächern quer und die Schräge hinauf, auf Böden x/y."""
     t = Vector((-n.y, n.x, 0.0))
-    if art == PLATTEN or t.length < 0.2:
+    if art in (PLATTEN, KOPFSTEIN) or t.length < 0.2:
         return p.x, p.y
     t.normalize()
     if art == ZIEGEL:
@@ -411,7 +418,7 @@ def bogenfries(bau, m, laenge, abstand=0.9):
         bau.teil(prisma([(0.02, 0), (-0.28, 0), (-0.28, -0.14), (-0.08, -0.42), (0.02, -0.42)], 0.24), STEIN_HELL, m=m @ M((x - 0.12, 0, 0)))
 
 
-def satteldach(bau, m, laenge, hw, traufe, neigung=58.0, ueberstand=0.5, dicke=0.3, first_zier=True):
+def satteldach(bau, m, laenge, hw, traufe, neigung=58.0, ueberstand=0.5, dicke=0.3, first_zier=True, farbe=DACH, first_farbe=DACH_DUNKEL):
     """Satteldach entlang +X von 0 bis `laenge`, First über y = 0, Traufe bei z = `traufe`.
     Gibt die Firsthöhe zurück."""
     tan = math.tan(math.radians(neigung))
@@ -421,8 +428,8 @@ def satteldach(bau, m, laenge, hw, traufe, neigung=58.0, ueberstand=0.5, dicke=0
         a = (s * (hw + ueberstand), traufe - ueberstand * tan)
         b = (0.0, first)
         profil = [a, b, (b[0], b[1] + auf), (a[0], a[1] + auf)]
-        bau.teil(prisma(profil, laenge), DACH, ZIEGEL, m=m)
-    bau.teil(quader(laenge + 0.2, 0.42, 0.4, 0.05), DACH_DUNKEL, m=m @ M((laenge / 2, 0, first + auf - 0.3)))
+        bau.teil(prisma(profil, laenge), farbe, ZIEGEL, m=m)
+    bau.teil(quader(laenge + 0.2, 0.42, 0.4, 0.05), first_farbe, m=m @ M((laenge / 2, 0, first + auf - 0.3)))
     if first_zier:
         anzahl = max(int(laenge / 1.5), 1)
         for i in range(anzahl + 1):
@@ -683,7 +690,7 @@ def efeu(bau, m, breite, hoehe, seed, dichte=1.0):
             dicke = 1.0 - zz / (ende + 0.01) * 0.5
             for _ in range(4):
                 lx = x + zufall.uniform(-0.5, 0.5) * dicke
-                lz = zz + zufall.uniform(-0.22, 0.22)
+                lz = max(zz + zufall.uniform(-0.22, 0.22), 0.3)
                 g = zufall.uniform(0.18, 0.3) * (0.7 + dicke * 0.3)
                 bau.teil(_blatt(g), zufall.choice(EFEU), m=m @ M((lx, -zufall.uniform(0.02, 0.14), lz), 0, 0, zufall.uniform(-40, 40)),
                          schwankung=0.08)
