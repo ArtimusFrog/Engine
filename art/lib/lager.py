@@ -565,3 +565,61 @@ def wegweiser(seed=8, richtungen=()):
         setzen(bm, (0, 0, z), (0, zufall.uniform(-4, 4), winkel))
         teile.append(objekt(f"Schild{i}", bm, schild))
     return fertig("Wegweiser", teile)
+
+
+# ---------------------------------------------------------------------------
+# Brücke
+# ---------------------------------------------------------------------------
+BRUECKE_LAENGE = 9.0
+BRUECKE_BOGEN = 0.9
+
+
+def _bogen(x, laenge=BRUECKE_LAENGE, bogen=BRUECKE_BOGEN):
+    """Höhe des Bogens über den Enden an der Stelle x (−L/2 … L/2)."""
+    t = x / (laenge / 2)
+    return bogen * (1 - t * t)
+
+
+def bruecke(seed=10, breite=1.8):
+    """Holzbrücke mit leichtem Bogen entlang +X (Enden bei x = ±4,5 m auf Bodenhöhe):
+    Laufbretter auf zwei gebogenen Tragbalken, Geländer mit Pfosten und Handlauf, Steinsockel."""
+    zufall = random.Random(seed)
+    teile = []
+    holz = holzfarbe(zufall, "#8A6440", "#5E4128")
+    anzahl = int(BRUECKE_LAENGE / 0.28)
+    for i in range(anzahl):
+        x = -BRUECKE_LAENGE / 2 + 0.14 + i * 0.28
+        neigung = math.degrees(math.atan(-2 * BRUECKE_BOGEN * x / (BRUECKE_LAENGE / 2) ** 2))
+        bm = brett_bm(0.26, breite + zufall.uniform(-0.06, 0.06), 0.06, fase=0.008)
+        setzen(bm, (0, 0, 0), (0, neigung, zufall.uniform(-1.5, 1.5)))
+        setzen(bm, (x, 0, _bogen(x) + 0.12))
+        teile.append(objekt("Brett", bm, holzfarbe(zufall, "#9A7048", "#6A4A2C")))
+    # Tragbalken und Handläufe als gebogene Ketten kurzer Stücke
+    for y, z_versatz, dicke, name in ((-breite / 2 + 0.1, 0.0, 0.14, "Traeger"), (breite / 2 - 0.1, 0.0, 0.14, "Traeger"),
+                                      (-breite / 2, 0.95, 0.07, "Handlauf"), (breite / 2, 0.95, 0.07, "Handlauf")):
+        stuecke = 10
+        for k in range(stuecke):
+            x0 = -BRUECKE_LAENGE / 2 + BRUECKE_LAENGE * k / stuecke
+            x1 = -BRUECKE_LAENGE / 2 + BRUECKE_LAENGE * (k + 1) / stuecke
+            a = Vector((x0, y, _bogen(x0) + z_versatz))
+            b = Vector((x1, y, _bogen(x1) + z_versatz))
+            richtung = b - a
+            bm = brett_bm(richtung.length + 0.02, dicke, dicke, fase=0.0)
+            dreh = X.rotation_difference(richtung.normalized()).to_matrix().to_4x4()
+            bmesh.ops.transform(bm, matrix=Matrix.Translation((a + b) / 2) @ dreh, verts=bm.verts)
+            teile.append(objekt(name, bm, holz))
+    # Geländerpfosten
+    for k in range(7):
+        x = -BRUECKE_LAENGE / 2 + 0.3 + (BRUECKE_LAENGE - 0.6) * k / 6
+        for y in (-breite / 2, breite / 2):
+            bm = brett_bm(0.08, 0.08, 1.0, fase=0.01)
+            setzen(bm, (x, y, _bogen(x) + 0.5))
+            teile.append(objekt("Pfosten", bm, holz))
+    # Steinsockel an beiden Enden
+    stein = _steinfarbe(zufall, farbe("#5E5A54"), farbe("#7E7A72"), farbe("#A39E93"), farbe("#C4BEB2"))
+    for x in (-BRUECKE_LAENGE / 2 + 0.3, BRUECKE_LAENGE / 2 - 0.3):
+        for y in (-breite / 2 - 0.1, 0, breite / 2 + 0.1):
+            bm = stein_bm(zufall, 0.35, flach=0.6)
+            setzen(bm, (x, y, 0.08))
+            teile.append(objekt("Sockel", bm, stein))
+    return fertig("Bruecke", teile)

@@ -644,6 +644,101 @@ impl World {
         }
     }
 
+    /// Brandung an flachen Stränden in der Nähe: Wellen laufen als Schaumlinie auf den Sand,
+    /// alle paar Sekunden eine neue, jede Stelle zu ihrer eigenen Zeit.
+    fn surf(&mut self, ctx: &mut Context) {
+        let camera = ctx.camera.position;
+        let t = ctx.time.elapsed;
+        let dt = ctx.time.delta;
+        for (i, &(at, inland)) in self.places.surf.iter().enumerate() {
+            if at.distance(camera) > 55.0 {
+                continue;
+            }
+            let period = 5.5 + (i % 5) as f32 * 0.4;
+            let phase = ((t + i as f32 * 1.37) / period).fract();
+            let previous = ((t - dt + i as f32 * 1.37) / period).fract();
+            // Kurz bevor die Welle ankommt: eine Reihe Schaumtropfen längs der Wasserlinie
+            if previous < 0.8 && phase >= 0.8 {
+                let along = vec3(-inland.y, 0.0, inland.x);
+                let forward = vec3(inland.x, 0.0, inland.y);
+                for k in -3..=3 {
+                    ctx.particles.burst(Burst {
+                        position: at + along * (k as f32 * 0.9) + forward * -1.2 + Vec3::Y * 0.12,
+                        count: 2,
+                        color: vec3(0.92, 0.96, 1.0),
+                        color_variation: 0.04,
+                        speed: 0.9,
+                        direction: forward * 1.4 + Vec3::Y * 0.4,
+                        size: 0.2,
+                        life: 1.5,
+                        gravity: 0.8,
+                        glow: 0.2,
+                        grow: 1.2,
+                        round: true,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Wasserfall aus der Nähe: Tropfen an der Kante, Gischt und Nebel am Fuß.
+    fn waterfall_spray(&mut self, ctx: &mut Context) {
+        let Some((top, foot)) = self.places.waterfall else { return };
+        if foot.distance(ctx.camera.position) > 70.0 {
+            return;
+        }
+        let rng = &mut self.effects_rng;
+        let dt = ctx.time.delta;
+        if rng.chance(dt * 25.0) {
+            ctx.particles.burst(Burst {
+                position: top + vec3(rng.range(-1.6, 1.6), 0.0, rng.range(-1.6, 1.6)),
+                count: 1,
+                color: vec3(0.85, 0.93, 1.0),
+                color_variation: 0.05,
+                speed: 0.5,
+                direction: (foot - top).with_y(0.0).normalize_or(Vec3::X) * 0.5,
+                size: 0.12,
+                life: 0.9,
+                gravity: 9.0,
+                glow: 0.4,
+                grow: 0.0,
+                round: true,
+            });
+        }
+        if rng.chance(dt * 18.0) {
+            ctx.particles.burst(Burst {
+                position: foot + vec3(rng.range(-1.5, 1.5), 0.1, rng.range(-1.5, 1.5)),
+                count: 2,
+                color: vec3(0.9, 0.95, 1.0),
+                color_variation: 0.04,
+                speed: 1.6,
+                direction: Vec3::Y * 1.2,
+                size: 0.22,
+                life: 1.1,
+                gravity: 3.0,
+                glow: 0.3,
+                grow: 1.5,
+                round: true,
+            });
+        }
+        if rng.chance(dt * 4.0) {
+            ctx.particles.burst(Burst {
+                position: foot + vec3(rng.range(-2.0, 2.0), 0.4, rng.range(-2.0, 2.0)),
+                count: 1,
+                color: vec3(0.78, 0.84, 0.88),
+                color_variation: 0.03,
+                speed: 0.4,
+                direction: Vec3::Y * 0.6,
+                size: 0.5,
+                life: 3.0,
+                gravity: -0.15,
+                glow: 0.0,
+                grow: 3.0,
+                round: true,
+            });
+        }
+    }
+
     /// Lampen der Sehenswürdigkeiten (nachts kräftiger) und schaukelnde Boote.
     fn place_lights(&mut self, ctx: &mut Context) {
         let night = ctx.env.sky.stars;
@@ -787,6 +882,8 @@ impl World {
         self.crystal_glow(ctx);
         self.campfires(ctx);
         self.place_lights(ctx);
+        self.waterfall_spray(ctx);
+        self.surf(ctx);
         self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);

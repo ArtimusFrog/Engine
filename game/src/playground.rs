@@ -883,7 +883,7 @@ impl Game for Playground {
             let name = args.get(position + 1).cloned().unwrap_or_default().to_lowercase();
             let distance = args.get(position + 2).and_then(|d| d.parse().ok()).unwrap_or(14.0);
             self.demo_spot = Some((name, distance));
-            self.demo_yaw_offset = 0.35;
+            self.demo_yaw_offset = 0.12;
         }
         if let Some(position) = args.iter().position(|a| a == "--demo-abbauen") {
             use crate::island::ResourceKind;
@@ -1001,7 +1001,19 @@ impl Game for Playground {
             let target = world.places.labels.iter().find(|(label, _)| label.to_lowercase().contains(&name)).map(|&(_, at)| at);
             if let (Some(at), Some(local)) = (target, session.local_player()) {
                 let ground = world.terrain.height_at(at.x, at.y);
-                let away = (vec2(world.spawn.x, world.spawn.z) - at).normalize_or(Vec2::Y);
+                let mut away = (vec2(world.spawn.x, world.spawn.z) - at).normalize_or(Vec2::Y);
+                // Den Wasserfall von bachabwärts ansehen (vom Startplatz aus verdecken ihn Hügel)
+                // Den See vom Steg aus zeigen (Figur auf dem Steg, Blick über das Wasser)
+                if name.contains("see") {
+                    if let Some(&(_, base, _)) = world.places.boats.first() {
+                        let to_lake = (vec2(base.x, base.z) - at).normalize_or(Vec2::Y);
+                        away = -to_lake;
+                    }
+                }
+                if let (true, Some((top, foot))) = (name.contains("wasserfall"), world.places.waterfall) {
+                    away = (vec2(foot.x - top.x, foot.z - top.z)).normalize_or(Vec2::Y);
+                    away = (away + away.perp() * 0.35).normalize();
+                }
                 let mut stand = at + away * distance;
                 // Nicht im Wasser stehen: notfalls näher heran
                 while world.terrain.height_at(stand.x, stand.y) < 0.5 && stand.distance(at) > 3.0 {

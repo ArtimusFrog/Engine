@@ -481,3 +481,33 @@ def muscheln(seed=40):
         setzen(bm, (zufall.uniform(-0.6, 0.6), zufall.uniform(-0.6, 0.6), 0), (0, 0, zufall.uniform(0, 360)))
         teile.append(objekt(f"Muschel{i}", bm, einfarbig(farbe_hex, 0.06, zufall)))
     return fertig("Muscheln", teile)
+
+
+def seerosen(seed=42):
+    """Ein Teppich Seerosenblätter (flache, eingeschnittene Scheiben) mit zwei, drei Blüten."""
+    zufall = random.Random(seed)
+    teile = []
+    for i in range(zufall.randint(6, 9)):
+        r = zufall.uniform(0.18, 0.32)
+        w0 = zufall.uniform(0, math.tau)
+        bm = bmesh.new()
+        mitte = bm.verts.new((0, 0, 0))
+        rand = [bm.verts.new((math.cos(w0 + t) * r, math.sin(w0 + t) * r, 0)) for t in [0.35 + k * (math.tau - 0.7) / 12 for k in range(13)]]
+        for a, b in zip(rand, rand[1:]):
+            bm.faces.new((mitte, a, b))
+        setzen(bm, (zufall.uniform(-0.9, 0.9), zufall.uniform(-0.9, 0.9), 0.01))
+        teile.append(objekt(f"Blatt{i}", bm, einfarbig(zufall.choice(["#3F7A2E", "#4E8A34", "#5A9A3A"]), 0.06, zufall)))
+    for i in range(zufall.randint(2, 3)):
+        at = (zufall.uniform(-0.7, 0.7), zufall.uniform(-0.7, 0.7), 0.02)
+        blume = zufall.choice(["#F4F0F2", "#F2B8D0", "#F7E08A"])
+        for ring, (anzahl, laenge, hoch) in enumerate(((7, 0.13, 25), (5, 0.09, 55))):
+            for k in range(anzahl):
+                w = math.degrees(math.tau * k / anzahl + ring * 0.4)
+                bm = brett_bm(laenge, 0.045, 0.008, fase=0.0)
+                setzen(bm, (laenge / 2, 0, 0), (0, -hoch, 0))
+                setzen(bm, at, (0, 0, w))
+                teile.append(objekt("Bluetenblatt", bm, einfarbig(blume, 0.05, zufall)))
+        bm = brett_bm(0.05, 0.05, 0.04, fase=0.0)
+        setzen(bm, (at[0], at[1], at[2] + 0.03))
+        teile.append(objekt("Stempel", bm, einfarbig("#E8B83A", 0.05, zufall)))
+    return fertig("Seerosen", teile)

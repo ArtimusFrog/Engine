@@ -8,7 +8,7 @@ import math
 
 from mathutils import Vector
 
-from baeume import GRAS, OBEN, Baum, farbe
+from baeume import FLECK, GRAS, OBEN, Baum, farbe
 
 
 def busch(seed=1, name="Busch", laub="#5DAA35"):
@@ -58,3 +58,42 @@ def _bueschel(baum, mitte, groesse, c_unten, c_oben):
         n = OBEN + kipp * 0.5
         baum.flaeche([fuss_l, fuss_r, kopf_r, kopf_l], [(u0, v0), (u1, v0), (u1, v1), (u0, v1)],
                      [c_unten * ton, c_unten * ton, c_oben * ton, c_oben * ton], [n] * 4)
+
+
+def schilf(seed=1, name="Schilf"):
+    """Schilf am Ufer: hohe, schmale Halm-Karten in dichten Büscheln, dazwischen Rohrkolben
+    (braune Kolben auf dünnen Stängeln)."""
+    baum = Baum(name, seed, hoehe=2.0)
+    r = baum.rng
+    unten, oben = farbe("#4E6B2A"), farbe("#A8B455")
+    u0, v0, u1, v1 = GRAS
+    for b in range(5):
+        w = math.tau * b / 5 + r.uniform(-0.5, 0.5)
+        mitte = Vector((math.cos(w), math.sin(w), 0)) * (0.0 if b == 0 else r.uniform(0.35, 0.8))
+        for k in range(r.randint(4, 6)):
+            a = math.pi * k / 5 + r.uniform(-0.3, 0.3)
+            seite = Vector((math.cos(a), math.sin(a), 0))
+            fuss = mitte + Vector((r.uniform(-0.1, 0.1), r.uniform(-0.1, 0.1), 0))
+            breite, hoehe = r.uniform(0.3, 0.45), r.uniform(1.2, 1.9)
+            kipp = seite.cross(OBEN) * r.uniform(-0.3, 0.3)
+            l, rr = fuss - seite * breite / 2, fuss + seite * breite / 2
+            ton = r.uniform(0.9, 1.1)
+            n = OBEN + kipp * 0.5
+            baum.flaeche([l, rr, rr + Vector((0, 0, hoehe)) + kipp, l + Vector((0, 0, hoehe)) + kipp],
+                         [(u0, v0), (u1, v0), (u1, v1), (u0, v1)], [unten * ton, unten * ton, oben * ton, oben * ton], [n] * 4)
+    # Rohrkolben: schmale Stängel, oben ein brauner Kolben (vier gekreuzte Karten, ohne Textur-Ausschnitt)
+    stiel, kolben = farbe("#5E6E32"), farbe("#5A3A22")
+    fu, fv = FLECK
+    for k in range(r.randint(3, 5)):
+        w = r.uniform(0, math.tau)
+        fuss = Vector((math.cos(w), math.sin(w), 0)) * r.uniform(0.1, 0.6)
+        hoehe = r.uniform(1.5, 2.1)
+        for d in (Vector((1, 0, 0)), Vector((0, 1, 0))):
+            s = d * 0.015
+            baum.flaeche([fuss - s, fuss + s, fuss + s + Vector((0, 0, hoehe)), fuss - s + Vector((0, 0, hoehe))],
+                         [(fu, fv)] * 4, [stiel] * 4, [OBEN] * 4)
+            k0 = fuss + Vector((0, 0, hoehe - 0.3))
+            s = d * 0.045
+            baum.flaeche([k0 - s, k0 + s, k0 + s + Vector((0, 0, 0.26)), k0 - s + Vector((0, 0, 0.26))],
+                         [(fu, fv)] * 4, [kolben] * 4, [OBEN] * 4)
+    return baum.fertig()

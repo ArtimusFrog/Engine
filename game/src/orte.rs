@@ -21,6 +21,10 @@ pub struct Places {
     pub lights: Vec<(Vec3, Vec3, f32)>,
     /// Boote auf dem Wasser (schaukeln): Objekt, Ruhelage, Drehung.
     pub boats: Vec<(EntityId, Vec3, Quat)>,
+    /// Wasserfall: obere Kante und Fuß (für Gischt, Nebel und Rauschen).
+    pub waterfall: Option<(Vec3, Vec3)>,
+    /// Brandung: Punkte auf der Wasserlinie flacher Strände und Richtung aufs Land.
+    pub surf: Vec<(Vec3, Vec2)>,
 }
 
 /// Mitte des Startlagers: ein Stück vom Startpunkt landeinwärts.
