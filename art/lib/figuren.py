@@ -331,13 +331,13 @@ def _abstand_zur_strecke(p, a, b):
 def magier(seed=12, name="Magier"):
     f = Figur(name, seed)
     r = f.rng
-    blau, blau_dunkel, futter = farbe("#2F4E9E"), farbe("#22397A"), farbe("#1A2552")
+    blau, blau_dunkel, futter = farbe("#262A36"), farbe("#1A1D26"), farbe("#101218")
     gold, gold_dunkel = farbe("#D8AE4A"), farbe("#A9812E")
-    kragen, stola = farbe("#3B2F6E"), farbe("#9A2A36")
+    kragen, stola = farbe("#2B2436"), farbe("#9A2A36")
     haut, bart, haar = farbe("#EFC4A0"), farbe("#EDEAE3"), farbe("#D6D2CA")
     wange, lippe, nasenloch = farbe("#E9A688"), farbe("#C98A7A"), farbe("#5A3A34")
     leder, stiefel, holz = farbe("#5A3A24"), farbe("#4A3322"), farbe("#6E4B2E")
-    kristall, hut_blau = farbe("#A6ECFF"), farbe("#2B4692")
+    kristall, hut_blau = farbe("#A6ECFF"), farbe("#252935")
     kopf_gewicht = lambda co: {"Kopf": 1.0}
 
     # ================= Robe =================
