@@ -139,8 +139,8 @@ type Variant = (MeshId, Option<MeshId>);
 struct Library {
     oaks: Vec<Variant>,
     birches: Vec<Variant>,
+    /// Tannen wachsen nur im Gebirge.
     pines: Vec<Variant>,
-    snowy_pines: Vec<Variant>,
     palms: Vec<Variant>,
     magic_trees: Vec<Variant>,
     rocks: Vec<Variant>,
@@ -188,12 +188,10 @@ impl Library {
                 .collect();
         }
 
-        let mut library = Library {
+        let library = Library {
             oaks: slot(ctx, "eiche", 3, &|s| models::oak(s * 17)),
             birches: slot(ctx, "birke", 3, &|s| models::oak(s * 23)),
             pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
-            // Auf den Bergen wachsen dieselben Tannen wie im Tal (keine eigenen Schneetannen).
-            snowy_pines: Vec::new(),
             palms: slot(ctx, "palme", 2, &|s| models::palm(s * 13)),
             magic_trees,
             rocks,
@@ -206,11 +204,9 @@ impl Library {
             glow_mushroom: slot(ctx, "leuchtpilz", 1, &|_| models::mushroom(vec3(0.15, 0.85, 0.95), 1.3)),
             crystals: slot(ctx, "kristall", 2, &|s| models::crystals(s * 41)),
         };
-        library.snowy_pines = library.pines.clone();
-
         // In der Ferne einfachere Modelle, Kleinkram verschwindet ganz (spart viel Grafikleistung).
         // Neue Bäume/Felsen aus Blender bekommen das automatisch mit.
-        let trees = [&library.oaks, &library.birches, &library.pines, &library.snowy_pines, &library.palms, &library.magic_trees];
+        let trees = [&library.oaks, &library.birches, &library.pines, &library.palms, &library.magic_trees];
         for variants in trees {
             add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9))]);
         }
@@ -306,6 +302,8 @@ pub fn build(ctx: &mut Context) -> Island {
             let size = rng.range(0.8, 1.25);
             // Eichen: meist Standardgröße, etwa jede fünfte deutlich größer (und mit mehr Holz)
             let oak = |rng: &mut Rng| if rng.chance(0.22) { (size * rng.range(1.35, 1.75), 8) } else { (size, 5) };
+            // Tannen (nur im Gebirge): von jung und schmal bis alt und mächtig
+            let pine_size = |rng: &mut Rng| size * rng.range(0.8, 1.35);
             let pick = |list: &[Variant], rng: &mut Rng| list[(rng.next_u32() as usize) % list.len()];
             // Für Modelle ohne eigenen Zufallswurf: Auswahl über die Zellnummer.
             let by_id = |list: &[Variant]| list[id as usize % list.len()];
@@ -355,15 +353,15 @@ pub fn build(ctx: &mut Context) -> Island {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
                 } else if h > 28.0 {
-                    if roll < 0.04 {
-                        found = Some(tree("Tanne", pick(&lib.snowy_pines, &mut rng), size, 5));
+                    if roll < 0.06 {
+                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), pine_size(&mut rng), 5));
                     } else if roll < 0.10 {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
                 } else if h > 17.0 {
-                    if roll < 0.14 {
-                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), size, 5));
-                    } else if roll < 0.21 {
+                    if roll < 0.17 {
+                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), pine_size(&mut rng), 5));
+                    } else if roll < 0.24 {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
                 } else if enchanted {
@@ -391,8 +389,8 @@ pub fn build(ctx: &mut Context) -> Island {
                         found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), oak_size, health));
                     } else if roll < 0.25 {
                         found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
-                    } else if roll < 0.31 {
-                        found = Some(tree("Tanne", pick(&lib.pines, &mut rng), size, 5));
+                    } else if roll < 0.29 {
+                        found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
                     } else if roll < 0.40 {
                         decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
                     } else if roll < 0.45 {

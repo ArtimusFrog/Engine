@@ -66,73 +66,73 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":2553,
+			"count":3901,
 			"max":[
-				3.6829845905303955,
-				9.18703556060791,
-				3.6832666397094727
+				3.396070718765259,
+				8.737837791442871,
+				3.3627965450286865
 			],
 			"min":[
-				-3.7727997303009033,
+				-3.17502760887146,
 				0,
-				-3.389603614807129
+				-3.137396812438965
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":2553,
+			"count":3901,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":2553,
+			"count":3901,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5126,
-			"count":2553,
+			"count":3901,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":4,
 			"componentType":5123,
-			"count":3807,
+			"count":5829,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":30636,
+			"byteLength":46812,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":30636,
-			"byteOffset":30636,
+			"byteLength":46812,
+			"byteOffset":46812,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":20424,
-			"byteOffset":61272,
+			"byteLength":31208,
+			"byteOffset":93624,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":30636,
-			"byteOffset":81696,
+			"byteLength":46812,
+			"byteOffset":124832,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":7614,
-			"byteOffset":112332,
+			"byteLength":11658,
+			"byteOffset":171644,
 			"target":34963
 		}
 	],
@@ -144,7 +144,7 @@
 	],
 	"buffers":[
 		{
-			"byteLength":119948,
+			"byteLength":183304,
 			"uri":"tanne_3.bin"
 		}
 	]

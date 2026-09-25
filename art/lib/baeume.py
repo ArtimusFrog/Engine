@@ -313,6 +313,7 @@ class Baum:
         self.leuchtend = set()  # Flächen mit Leuchtmaterial
         self.leucht_farbe = None
         self.holz_uv = {}       # Holzfläche → {Vertex: UV} (z. B. Birkenrinde)
+        self.abdunkeln = {}     # Holz-Vertex → (Farbe, Anteil): weiche Flecken wie am Birkenfuß
         self.hoehe = hoehe
 
     def rinde(self, hex_farbe):
@@ -364,6 +365,7 @@ class Baum:
             s = bm.verts.new(ende)
             for k in range(ecken):
                 bm.faces.new((ringe[-1][k], ringe[-1][(k + 1) % ecken], s)).material_index = mat
+        return ringe
 
     def pfad(self, start, richtung, laenge, schritte, knick, schwere, aufwaerts=0.0):
         """Punkte eines Asts: zufällige Knicke, Schwerkraft zieht nach unten, Licht nach oben."""
@@ -416,11 +418,15 @@ class Baum:
         sonne = max(0.0, oben) * min(1.0, aussen) * 0.55
         return c.lerp(Vector((c.x * 1.3 + 0.01, c.y * 1.25 + 0.01, c.z * 0.75)), sonne)
 
-    def krone(self, mitte, radius, grund, dichte=1.0, platt=0.8, karte=1.0, kern=0.72, kern_stufen=1, kern_hell=0.5):
+    def krone(self, mitte, radius, grund, dichte=1.0, platt=0.8, karte=1.0, kern=0.72, kern_stufen=1, kern_hell=0.5, huelle=None):
         """Dunkler Kern gegen Durchblicken plus viele Blattkarten auf der Hülle.
-        `platt` < 1 ergibt flache Laub-Polster, `karte` skaliert die Blattkarten."""
+        `platt` < 1 ergibt flache Laub-Polster, `karte` skaliert die Blattkarten.
+        `huelle` = (Mitte, Radius, platt) der ganzen Krone: Licht und Farbe richten sich dann
+        nach ihr statt nach diesem einzelnen Büschel – viele Büschel wirken wie eine weiche Masse."""
         r = self.rng
-        self.kugel(mitte, radius * kern, grund * kern_hell, stufen=kern_stufen, platt=platt, dunkel_unten=0.4)
+        h_mitte, h_radius, h_platt = huelle or (mitte, radius, platt)
+        if kern > 0:
+            self.kugel(mitte, radius * kern, grund * kern_hell, stufen=kern_stufen, platt=platt, dunkel_unten=0.4)
         for _ in range(int(dichte * (30 * radius * radius + 16))):
             d = self.zufallsrichtung()
             if d.length < 0.05:
@@ -437,10 +443,10 @@ class Baum:
             ton = grund * r.uniform(0.9, 1.1)
             normalen = []
             for e in ecken:
-                rel = e - mitte
-                rel.z /= platt
+                rel = e - h_mitte
+                rel.z /= h_platt
                 normalen.append(rel.normalized() + OBEN * 0.35)
-            self.flaeche(ecken, _ecken_uv(LAUB), [self._laubfarbe(e, mitte, radius, platt, ton) for e in ecken], normalen)
+            self.flaeche(ecken, _ecken_uv(LAUB), [self._laubfarbe(e, h_mitte, h_radius, h_platt, ton) for e in ecken], normalen)
 
     # --- Fertigstellen ----------------------------------------------------
     def fertig(self, moos=None, rinden_muster=None):
@@ -465,6 +471,9 @@ class Baum:
                 k = c
                 if moos is not None:
                     k = k.lerp(moos, max(0.0, 1 - loop.vert.co.z / 1.2) * 0.65)
+                if loop.vert in self.abdunkeln:
+                    dunkel, anteil = self.abdunkeln[loop.vert]
+                    k = k.lerp(dunkel, anteil)
                 loop[self.farbe] = (k.x, k.y, k.z, 1.0)
         for f in bm.faces:
             f.material_index = 1 if f in self.leuchtend else 0
@@ -489,6 +498,12 @@ class Baum:
         dreiecke = sum(len(p.vertices) - 2 for p in mesh.polygons)
         print(f"BAUM {self.name}: {dreiecke} Dreiecke")
         return obj
+
+
+def _weich(kante0, kante1, x):
+    """Weicher Übergang von 0 (bei kante0) nach 1 (bei kante1); die Kanten dürfen fallen."""
+    t = max(0.0, min(1.0, (x - kante0) / (kante1 - kante0)))
+    return t * t * (3 - 2 * t)
 
 
 def _drehen(richtung, winkel, azimut):
@@ -620,8 +635,7 @@ def birke(seed=1, name="Birke", laub="#EBC23A", staemme=2):
     baum = Baum(name, seed, hoehe=10.5)
     r = baum.rng
     weiss = baum.rinde("#F2EFE8")
-    grau = baum.rinde("#D2CCC2")
-    fuss = baum.rinde("#4E4842")
+    fuss = farbe("#4A443E")
     gelb = farbe(laub)
     orange = farbe("#E0862A")
     ecken = 10 if staemme < 3 else 8
@@ -667,39 +681,49 @@ def birke(seed=1, name="Birke", laub="#EBC23A", staemme=2):
             va, vb = bv0 + (bv1 - bv0) * va, bv0 + (bv1 - bv0) * vb
             return [(ua, va), (ub, va), (ub, vb), (ua, vb)]
 
-        # Dunkler Fuß: jede Längsbahn endet in anderer Höhe, dazu vereinzelte dunkle Zungen
-        fuss_hoehe = [r.uniform(0.2, 0.6) for _ in range(ecken)]
-        zungen = {k: r.uniform(0.6, 0.95) for k in range(ecken) if r.random() < 0.3}
+        ringe = baum.rohr(punkte, radien, ecken, weiss, spitze=True, rauh=0.15, uv=rinde_uv)
 
-        def muster(i, k, zs=zs, fuss_hoehe=fuss_hoehe, zungen=zungen):
-            z = zs[i]
-            if z < fuss_hoehe[k] or z < zungen.get(k, 0.0):
-                return fuss
-            return grau if z < fuss_hoehe[k] + 0.2 else weiss
+        # Dunkler Fuß, weich verlaufend statt in Kästchen: jede Längsbahn endet in anderer
+        # Höhe (manche als hohe Zunge), jede zweite etwas heller – das wirkt wie senkrechte Risse.
+        # Die Striche der Rindentextur bleiben darin sichtbar.
+        fuss_hoehe = [r.uniform(0.8, 1.2) if r.random() < 0.25 else r.uniform(0.25, 0.7) for _ in range(ecken)]
+        for i, ring in enumerate(ringe):
+            for k, v in enumerate(ring):
+                anteil = _weich(fuss_hoehe[k] + 0.15, fuss_hoehe[k] - 0.1, zs[i]) * (0.8 if k % 2 else 1.0)
+                if anteil > 0.01:
+                    baum.abdunkeln[v] = (fuss, anteil)
 
-        baum.rohr(punkte, radien, ecken, weiss, spitze=True, muster=muster, rauh=0.15, uv=rinde_uv)
-
-        # Krone: ein paar große, hohe Laubmassen am oberen Stamm …
-        for t in ((0.66, 0.81, 0.95) if staemme < 3 else (0.7, 0.92)):
-            c = gelb.lerp(orange, r.random() ** 2 * 0.5) * r.uniform(0.95, 1.08)
-            groesse = r.uniform(1.3, 1.55) * (0.85 if t < 0.7 else 1.0 if t < 0.9 else 0.85)
-            baum.krone(punkt(t) + aussen * 0.2, groesse, c, dichte=1.0 * dichte, platt=1.25, karte=0.9, kern=0.55, kern_hell=0.3)
-        # … und dünne Äste, deren kleinere Lappen aus dem Umriss herausragen
-        aeste = 4 if staemme < 3 else 3
-        lappen = dict(platt=1.0, kern=0.5, kern_stufen=0, kern_hell=0.3, karte=0.9, dichte=dichte)
-        for j in range(aeste):
-            t = 0.55 + 0.4 * (j + r.uniform(0.1, 0.9)) / aeste
-            p = punkt(t)
+        # Krone: eine hohe, ovale Hülle mit vielen Laub-Lappen darauf. Licht und Farbe richten
+        # sich nach der ganzen Hülle – so wirkt die Krone wie eine weiche Masse, die Lappen
+        # geben ihr nur den unregelmäßigen, buckligen Umriss.
+        h_radius = r.uniform(1.45, 1.7) * (0.85 if staemme > 2 else 1.0)
+        h_platt = 1.75
+        h_mitte = punkt(0.78) + aussen * 0.25
+        huelle = (h_mitte, h_radius, h_platt)
+        baum.krone(h_mitte, h_radius, gelb * r.uniform(0.97, 1.05), dichte=1.9 * dichte, platt=h_platt,
+                   karte=0.6, kern=0, huelle=huelle)
+        for _ in range(6 if staemme < 3 else 4):
+            d = baum.zufallsrichtung()
+            if d.length < 0.05:
+                continue
+            d.normalize()
+            p = h_mitte + Vector((d.x * h_radius, d.y * h_radius, d.z * h_radius * h_platt)) * r.uniform(0.7, 0.92)
+            c = gelb.lerp(orange, r.random() ** 2 * 0.5) * r.uniform(0.95, 1.05)
+            baum.krone(p, r.uniform(0.7, 0.95), c, dichte=1.3 * dichte, platt=1.0, karte=0.95, kern=0,
+                       kern_stufen=0, kern_hell=0.3, huelle=huelle)
+        # Darunter ein paar dünne Äste mit kleinen eigenen Büscheln, wie in der Vorlage
+        for j in range(3 if staemme < 3 else 2):
+            t = 0.4 + 0.07 * j + r.uniform(0, 0.05)
             w = az + j * 2.4 + r.uniform(-0.4, 0.4)
             d = Vector((math.cos(w), math.sin(w), 0))
             if staemme > 1:
                 d = (d + aussen * 0.8).normalized()
-            huelle = math.sin(math.pi * min(1.0, (t - 0.3) / 0.75))
-            ast = baum.pfad(p, (d * 0.75 + OBEN * r.uniform(0.7, 1.0)).normalized(), 1.2 + 1.2 * huelle * r.uniform(0.8, 1.1), 3, 0.12, 0.05, 0.08)
-            ar = radius * (1 - 0.72 * t) * 0.55
+            ast = baum.pfad(punkt(t), (d * 0.8 + OBEN * r.uniform(0.6, 0.9)).normalized(), r.uniform(1.0, 1.5), 3, 0.12, 0.05, 0.08)
+            ar = radius * (1 - 0.72 * t) * 0.5
             baum.rohr(ast, [ar, ar * 0.7, ar * 0.5, ar * 0.3], 5, weiss, rauh=0.3)
             c = gelb.lerp(orange, r.random() ** 2 * 0.6) * r.uniform(0.92, 1.08)
-            baum.krone(ast[-1] + Vector((0, 0, 0.15)), r.uniform(0.75, 0.95) * (0.75 + 0.35 * huelle), c, **lappen)
+            baum.krone(ast[-1] + Vector((0, 0, 0.1)), r.uniform(0.55, 0.75), c, platt=1.0, kern=0, kern_stufen=0,
+                       kern_hell=0.3, karte=0.95, dichte=dichte)
     return baum.fertig()
 
 
@@ -713,20 +737,20 @@ def tanne(seed=1, name="Tanne", nadeln="#2E8A50"):
     rinde = baum.rinde("#5A4234")
     gruen = farbe(nadeln)
     radius = r.uniform(0.22, 0.27)
-    stamm = baum.pfad(Vector((0, 0, 0)), OBEN, hoehe * 0.86, 8, 0.02, 0.0, 0.0)
+    stamm = baum.pfad(Vector((0, 0, 0)), OBEN, hoehe * 0.93, 8, 0.02, 0.0, 0.0)
     baum.rohr(stamm, [radius * (1.15 - i / 8) + 0.02 for i in range(9)], 8, rinde)
     _wurzeln(baum, radius, 5, rinde, 0.85)
 
     # Kernkegel: verdeckt Lücken zwischen den Zweigen
-    kegel = bmesh.ops.create_cone(baum.bm, cap_ends=False, segments=9, radius1=1.05, radius2=0.08, depth=hoehe * 0.78)
+    kegel = bmesh.ops.create_cone(baum.bm, cap_ends=False, segments=9, radius1=1.05, radius2=0.08, depth=hoehe * 0.66)
     for v in kegel["verts"]:
-        v.co.z += hoehe * 0.16 + hoehe * 0.39
+        v.co.z += hoehe * 0.16 + hoehe * 0.33
         rel = Vector((v.co.x, v.co.y, 0))
         baum.normalen[v] = ((rel.normalized() if rel.length > 0.01 else OBEN) * 0.8 + OBEN * 0.6).normalized()
     for f in {f for v in kegel["verts"] for f in v.link_faces}:
         for loop in f.loops:
             loop[baum.uv].uv = FLECK
-            k = gruen * (0.2 + 0.15 * (loop.vert.co.z / hoehe))
+            k = gruen * (0.13 + 0.1 * (loop.vert.co.z / hoehe))
             loop[baum.farbe] = (k.x, k.y, k.z, 1.0)
         baum.fertig_gefaerbt.add(f)
 
@@ -734,49 +758,55 @@ def tanne(seed=1, name="Tanne", nadeln="#2E8A50"):
         rel = Vector((p.x, p.y, 0))
         return (rel.normalized() if rel.length > 0.01 else OBEN) * 0.75 + OBEN * 0.7
 
-    def zweig(start, richtung, laenge, t_hoehe):
-        """Zweig-Karte als flaches Dach (zwei Flächen), Nadeln hängen seitlich etwas herab."""
-        seite = richtung.cross(OBEN).normalized()
-        breite = laenge * 0.95
-        unten = Vector((0, 0, -0.18 * breite))
-        ende = start + richtung * laenge
-        u0, v0, u1, v1 = NADEL
-        vm = (v0 + v1) / 2
-        links = [start - seite * breite / 2 + unten, ende - seite * breite / 2 + unten]
-        rechts = [start + seite * breite / 2 + unten, ende + seite * breite / 2 + unten]
-        innen = gruen * (0.55 + 0.35 * t_hoehe)
-        aussen = gruen * (1.05 + 0.25 * t_hoehe)
-        aussen = aussen.lerp(Vector((aussen.x * 1.25, aussen.y * 1.15, aussen.z * 0.8)), 0.4)
-        mitte = [start, ende]
-        punkte = [links[0], links[1], mitte[1], mitte[0]]
-        baum.flaeche(punkte, [(u0, v0), (u1, v0), (u1, vm), (u0, vm)], [innen * 0.85, aussen * 0.9, aussen, innen], [normale(p) for p in punkte])
-        punkte = [mitte[0], mitte[1], rechts[1], rechts[0]]
-        baum.flaeche(punkte, [(u0, vm), (u1, vm), (u1, v1), (u0, v1)], [innen, aussen, aussen * 0.9, innen * 0.85], [normale(p) for p in punkte])
+    sonne = lambda c: c.lerp(Vector((c.x * 1.3 + 0.01, c.y * 1.2 + 0.01, c.z * 0.75)), 0.45)
+    u0, v0, u1, v1 = NADEL
+    vm = (v0 + v1) / 2
 
-    # Etagen von Zweigen, jeder Zweig in zwei Lagen (unten lang und hängend, oben kürzer)
-    etagen = 16
+    def zweig(start, richtung, laenge, t_hoehe, haengen):
+        """Zweig aus zwei Abschnitten, jeder als flaches Dach: innen fast waagerecht, nach
+        außen hängt er durch. Innen dunkel, die Spitzen sonnig hell."""
+        waagerecht = Vector((richtung.x, richtung.y, 0)).normalized()
+        seite = waagerecht.cross(OBEN).normalized()
+        breite = laenge * r.uniform(0.85, 1.0)
+        knick = start + richtung * laenge * 0.55
+        ende = knick + (richtung + Vector((0, 0, -haengen))).normalized() * laenge * 0.45
+        mitte = [start, knick, ende]
+        halb = [breite * 0.42, breite * 0.5, breite * 0.4]
+        haengt = [Vector((0, 0, -0.14 * breite)), Vector((0, 0, -0.2 * breite)), Vector((0, 0, -0.24 * breite))]
+        links = [m - seite * h + d for m, h, d in zip(mitte, halb, haengt)]
+        rechts = [m + seite * h + d for m, h, d in zip(mitte, halb, haengt)]
+        ton = r.uniform(0.9, 1.1)
+        farben = [gruen * (0.5 + 0.3 * t_hoehe) * ton, gruen * (0.85 + 0.3 * t_hoehe) * ton, sonne(gruen * (1.15 + 0.3 * t_hoehe) * ton)]
+        us = [u0, u0 + (u1 - u0) * 0.55, u1]
+        for i in range(2):
+            punkte = [links[i], links[i + 1], mitte[i + 1], mitte[i]]
+            baum.flaeche(punkte, [(us[i], v0), (us[i + 1], v0), (us[i + 1], vm), (us[i], vm)],
+                         [farben[i] * 0.85, farben[i + 1] * 0.85, farben[i + 1], farben[i]], [normale(p) for p in punkte])
+            punkte = [mitte[i], mitte[i + 1], rechts[i + 1], rechts[i]]
+            baum.flaeche(punkte, [(us[i], vm), (us[i + 1], vm), (us[i + 1], v1), (us[i], v1)],
+                         [farben[i], farben[i + 1], farben[i + 1] * 0.85, farben[i] * 0.85], [normale(p) for p in punkte])
+
+    # Etagen von Zweigen, jeder Zweig in zwei Lagen (unten lang und hängend, oben kürzer).
+    # Höhe, Länge und Richtung schwanken, ab und zu fehlt ein Zweig – sonst wirkt es gestapelt.
+    etagen = 17
     for e in range(etagen):
         t = e / etagen
-        z = hoehe * (0.14 + 0.8 * t)
-        laenge = (1 - t) ** 0.95 * 2.9 + 0.6
-        anzahl = 9 if t < 0.6 else 7 if t < 0.85 else 5
+        z = hoehe * (0.14 + 0.82 * t)
+        laenge = (1 - t) ** 0.9 * 2.8 + 0.4
+        anzahl = 8 if t < 0.6 else 6 if t < 0.85 else 5
         for k in range(anzahl):
-            a = math.tau * k / anzahl + e * 0.55 + r.uniform(-0.25, 0.25)
-            aussen = Vector((math.cos(a), math.sin(a), r.uniform(-0.5, -0.22))).normalized()
-            zweig(Vector((0, 0, z)), aussen, laenge * r.uniform(0.9, 1.08), t)
+            if r.random() < 0.08:
+                continue
+            a = math.tau * k / anzahl + e * 0.55 + r.uniform(-0.3, 0.3)
+            richtung = Vector((math.cos(a), math.sin(a), r.uniform(-0.3, -0.1))).normalized()
+            start = Vector((0, 0, z + r.uniform(-0.12, 0.12)))
+            zweig(start, richtung, laenge * r.uniform(0.82, 1.15), t, r.uniform(0.5, 0.9))
             if t < 0.85:
-                flacher = Vector((aussen.x, aussen.y, aussen.z * 0.5)).normalized()
-                zweig(Vector((0, 0, z + 0.25)), flacher, laenge * r.uniform(0.55, 0.7), min(1.0, t + 0.1))
-    # Spitze: drei gekreuzte, nach oben zeigende Zweige
-    u0, v0, u1, v1 = NADEL
-    for k in range(3):
-        a = math.pi * k / 3
-        start = Vector((0, 0, hoehe - 1.2))
-        oben = start + Vector((0, 0, 1.9))
-        seite = Vector((math.cos(a), math.sin(a), 0)) * 0.35
-        c0, c1 = gruen * 0.9, gruen * 1.35
-        baum.flaeche([start - seite, oben - seite, oben + seite, start + seite], [(u0, v0), (u1, v0), (u1, v1), (u0, v1)],
-                     [c0, c1, c1, c0], [OBEN - seite, OBEN - seite, OBEN + seite, OBEN + seite])
+                zweig(start + Vector((0, 0, 0.22)), Vector((richtung.x, richtung.y, 0.05)).normalized(), laenge * r.uniform(0.5, 0.65),
+                      min(1.0, t + 0.1), r.uniform(0.3, 0.6))
+    # Spitze: ein kurzer, schlanker Leittrieb über der obersten Etage
+    for richtung in (Vector((0.03, 0.0, 1.0)), Vector((0.0, 0.03, 1.0))):
+        zweig(Vector((0, 0, hoehe * 0.9)), richtung.normalized(), 1.1, 0.6, 0.0)
     return baum.fertig()
 
 
