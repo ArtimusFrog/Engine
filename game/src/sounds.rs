@@ -19,6 +19,8 @@ pub struct Sounds {
     step_grass: SoundId,
     step_sand: SoundId,
     crackle: SoundId,
+    thunder: SoundId,
+    rain: LoopId,
     cast: SoundId,
     impact: SoundId,
     pickup: SoundId,
@@ -66,6 +68,11 @@ impl Sounds {
             step_grass: sound(a, "schritt_gras", || step(0.18, 3)),
             step_sand: sound(a, "schritt_sand", || step(0.45, 5)),
             crackle: sound(a, "knistern", crackle),
+            thunder: sound(a, "donner", thunder),
+            rain: {
+                let rain = sound(a, "regen", rain);
+                a.start_loop(rain, Bus::Ambient)
+            },
             cast: sound(a, "zauber", cast),
             impact: sound(a, "treffer", impact),
             pickup: sound(a, "einsammeln", pickup),
@@ -95,6 +102,9 @@ impl Sounds {
                     if finished {
                         ctx.audio.play(done, Play { at: Some(at + Vec3::Y), volume: 0.9, range: 70.0, ..Default::default() });
                     }
+                }
+                SoundEvent::Thunder { volume } => {
+                    ctx.audio.play(self.thunder, Play { volume: volume.clamp(0.2, 1.0), pitch: self.rng.range(0.85, 1.1), ..Default::default() });
                 }
                 SoundEvent::Crackle { at } => {
                     let volume = self.rng.range(0.25, 0.5);
@@ -164,15 +174,18 @@ impl Sounds {
         ctx.audio.set_loop(self.wind, wind, None, 1.0);
         ctx.audio.set_loop(self.waves, shore.clamp(0.0, 1.0) * 0.8, shore_at, 120.0);
         let inland = 1.0 - shore.clamp(0.0, 1.0) * 0.7;
-        ctx.audio.set_loop(self.birds, daylight * inland * 0.45, None, 1.0);
-        ctx.audio.set_loop(self.crickets, (1.0 - daylight) * inland * 0.35, None, 1.0);
+        // Bei Regen schweigen Vögel und Grillen, dafür rauscht es
+        let rain = world.weather.state().rain;
+        ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
+        ctx.audio.set_loop(self.birds, daylight * inland * 0.45 * (1.0 - rain), None, 1.0);
+        ctx.audio.set_loop(self.crickets, (1.0 - daylight) * inland * 0.35 * (1.0 - rain), None, 1.0);
         ctx.audio.set_loop(self.music, 0.35, None, 1.0);
     }
 
     /// Im Menü: nur Musik und etwas Wind.
     pub fn menu(&mut self, ctx: &mut Context) {
         ctx.audio.set_loop(self.wind, 0.2, None, 1.0);
-        for quiet in [self.waves, self.birds, self.crickets] {
+        for quiet in [self.waves, self.birds, self.crickets, self.rain] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
         ctx.audio.set_loop(self.music, 0.5, None, 1.0);
@@ -252,6 +265,35 @@ fn step(brightness: f32, seed: u64) -> SoundBuffer {
     let mut noise = Noise::new(seed);
     let mut lp = LowPass::default();
     render(0.12, |t| lp.next(noise.next(), brightness) * envelope(t, 0.004, 0.03) * 1.3)
+}
+
+/// Donner: tiefes, rollendes Grollen mit einem Krachen am Anfang.
+fn thunder() -> SoundBuffer {
+    let mut noise = Noise::new(31);
+    let mut deep = LowPass::default();
+    let mut deeper = LowPass::default();
+    render(4.5, |t| {
+        let n = noise.next();
+        let crack = n * envelope(t, 0.005, 0.15) * 0.6;
+        let rumble = deeper.next(deep.next(n, 0.05), 0.08) * 6.0;
+        let roll = 0.55 + 0.45 * (t * 2.3).sin() * (t * 0.9 + 1.0).sin();
+        crack + rumble * envelope(t, 0.12, 1.6) * roll
+    })
+}
+
+/// Regen: gleichmäßiges, helles Rauschen mit einzelnen Tropfen (Schleife).
+fn rain() -> SoundBuffer {
+    let mut noise = Noise::new(32);
+    let mut lp = LowPass::default();
+    let mut drops = Noise::new(33);
+    let mut buffer = render(6.0, |_| {
+        let n = noise.next();
+        let hiss = (n - lp.next(n, 0.3)) * 0.35 + lp.next(n, 0.3) * 0.15;
+        let drop = if drops.next() > 0.9985 { drops.next() * 0.8 } else { 0.0 };
+        hiss + drop
+    });
+    make_loopable(&mut buffer, 1.0);
+    buffer
 }
 
 /// Lagerfeuer: ein paar kurze, trockene Knackser mit leisem Rauschen dazwischen.
@@ -403,11 +445,13 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 15] = [
+    let all: [(&str, fn() -> SoundBuffer); 17] = [
         ("hacken", chop),
         ("stein", stone),
         ("erz", ore),
         ("knistern", crackle),
+        ("donner", thunder),
+        ("regen", rain),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
         ("schritt_gras", || step(0.18, 3)),

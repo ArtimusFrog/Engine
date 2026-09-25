@@ -918,6 +918,10 @@ impl Game for Playground {
         ) {
             session.world_mut().day.hour = hour.rem_euclid(24.0);
         }
+        // Nur für Screenshots: ein bestimmtes Wetter erzwingen (`--wetter regen`)
+        if let (Some(name), Some(session)) = (args.iter().position(|a| a == "--wetter").and_then(|i| args.get(i + 1)), &mut self.session) {
+            session.world_mut().weather.force_named(name);
+        }
         if args.iter().any(|a| a == "--blick-hoch") {
             ctx.camera.pitch = 0.45;
             ctx.camera.yaw = -1.9;

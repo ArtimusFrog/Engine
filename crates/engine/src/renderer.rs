@@ -40,6 +40,8 @@ struct Globals {
     sky_sun: [f32; 4],
     sky_moon: [f32; 4],
     sky_misc: [f32; 4],
+    /// Wetter: Wolken, Nässe, Polarlicht, Regenbogen
+    weather: [f32; 4],
     /// Je Punktlicht zwei Einträge: (Position, Reichweite), (Farbe, –).
     lights: [[f32; 4]; MAX_LIGHTS * 2],
 }
@@ -578,7 +580,8 @@ impl Renderer {
             zenith: env.zenith_color.extend(env.exposure).into(),
             sky_sun: env.sky.sun_direction.normalize().extend(env.sky.sun_visible).into(),
             sky_moon: env.sky.moon_direction.normalize().extend(env.sky.moon_visible).into(),
-            sky_misc: [env.sky.stars, env.sky.glow, light_count as f32, 0.0],
+            sky_misc: [env.sky.stars, env.sky.glow, light_count as f32, env.sky.mist],
+            weather: [env.sky.clouds, env.sky.rain, env.sky.aurora, env.sky.rainbow],
             lights,
         };
         self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));

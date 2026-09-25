@@ -93,6 +93,8 @@ pub enum SoundEvent {
     Step { at: Vec3, sand: bool, running: bool },
     /// Holz knistert im Lagerfeuer.
     Crackle { at: Vec3 },
+    /// Donner nach einem Blitz (überall zu hören).
+    Thunder { volume: f32 },
 }
 
 /// Ein fliegendes Zaubergeschoss (nur Optik; ob es trifft, entscheidet der Server).
@@ -155,6 +157,8 @@ pub struct World {
     bolts: Vec<Bolt>,
     /// Vögel, Möwen, Schmetterlinge, Fische (nur mit Fenster).
     wildlife: Option<crate::leben::Wildlife>,
+    /// Wolken, Regen, Gewitter, Regenbogen, Polarlicht (aus Tag und Uhrzeit).
+    pub weather: crate::wetter::Weather,
     /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
     crystals: Vec<Vec3>,
 }
@@ -189,6 +193,7 @@ impl World {
             stride: HashMap::new(),
             bolts: Vec::new(),
             wildlife: None,
+            weather: Default::default(),
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -899,6 +904,10 @@ impl World {
     /// getroffene Rohstoffe wackeln lassen.
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
+        self.weather.apply(ctx, self.day.day, self.day.hour);
+        if let Some(volume) = self.weather.take_thunder(ctx.time.delta) {
+            self.sound_events.push(SoundEvent::Thunder { volume });
+        }
         self.fireflies(ctx);
         self.crystal_glow(ctx);
         self.campfires(ctx);

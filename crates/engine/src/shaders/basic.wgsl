@@ -22,8 +22,10 @@ struct Globals {
     // Himmelskörper: xyz = Richtung, w = Sichtbarkeit
     sky_sun: vec4<f32>,
     sky_moon: vec4<f32>,
-    // x = Sterne, y = Dämmerungsglühen, z = Anzahl Punktlichter
+    // x = Sterne, y = Dämmerungsglühen, z = Anzahl Punktlichter, w = Bodennebel
     sky_misc: vec4<f32>,
+    // x = Wolkendecke, y = Nässe, z = Polarlicht, w = Regenbogen
+    weather: vec4<f32>,
     // Punktlichter: je zwei Einträge (Position + Reichweite, Farbe)
     lights: array<vec4<f32>, 16>,
 };
@@ -193,6 +195,97 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
     return tint * brightness;
 }
 
+// Zufall ohne sin(): bleibt auch bei großen Koordinaten auf jeder Grafikkarte sauber
+// (sin-basierte Varianten werden dort ungenau und zeigen Streifen).
+fn hash21(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+fn noise2(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2<f32>(1.0, 0.0)), u.x), mix(hash21(i + vec2<f32>(0.0, 1.0)), hash21(i + vec2<f32>(1.0, 1.0)), u.x), u.y);
+}
+
+// Wolkendichte über einem Punkt der Wolkenebene (in Metern), mit Wind. 0 = frei, 1 = dicht.
+fn cloud_density(p: vec2<f32>) -> f32 {
+    let wind = vec2<f32>(time() * 3.0, time() * 1.2);
+    let q = (p + wind) * 0.0022;
+    var n = noise2(q) * 0.55 + noise2(q * 2.3 + vec2<f32>(3.1, 7.7)) * 0.3 + noise2(q * 5.1 + vec2<f32>(9.2, 1.4)) * 0.15;
+    let coverage = g.weather.x;
+    return smoothstep(0.78 - coverage * 0.55, 0.95 - coverage * 0.4, n);
+}
+
+// Wolkenschatten am Boden: Wolkenebene über dem Punkt, in Richtung Sonne versetzt.
+fn cloud_shadow(world: vec3<f32>) -> f32 {
+    if (g.weather.x < 0.02) {
+        return 1.0;
+    }
+    let sun = g.sun_dir.xyz;
+    let height = max(260.0 - world.y, 0.0);
+    let at = world.xz + sun.xz / max(sun.y, 0.15) * height;
+    return 1.0 - cloud_density(at) * 0.55;
+}
+
+// Polarlicht: grünlich-türkise Vorhänge, die langsam wabern (nur nachts, nur wenn es aufzieht).
+fn aurora(dir: vec3<f32>) -> vec3<f32> {
+    if (g.weather.z <= 0.0 || dir.y <= 0.02) {
+        return vec3<f32>(0.0);
+    }
+    let p = dir.xz / (dir.y + 0.35);
+    var total = vec3<f32>(0.0);
+    for (var i = 0; i < 3; i++) {
+        let fi = f32(i);
+        let wave = sin(p.x * (1.6 + fi * 0.5) + time() * (0.05 + fi * 0.02) + noise2(p * 1.3 + fi) * 3.0);
+        let band = 1.0 - smoothstep(0.0, 0.14, abs(p.y + 0.4 * wave - 0.4 + fi * 0.25));
+        let flicker = 0.6 + 0.4 * noise2(vec2<f32>(p.x * 3.0 + time() * 0.3, fi));
+        total += mix(vec3<f32>(0.1, 1.0, 0.55), vec3<f32>(0.35, 0.4, 1.0), fi * 0.4) * band * flicker;
+    }
+    return total * g.weather.z * smoothstep(0.02, 0.3, dir.y) * 0.9;
+}
+
+// Sternschnuppe: alle paar Sekunden mit etwas Glück ein kurzer heller Strich.
+fn shooting_star(dir: vec3<f32>) -> f32 {
+    let period = 7.0;
+    let slot = floor(time() / period);
+    if (hash21(vec2<f32>(slot, 3.3)) < 0.55) {
+        return 0.0;
+    }
+    let t = fract(time() / period) * period;
+    if (t > 0.8) {
+        return 0.0;
+    }
+    let az = hash21(vec2<f32>(slot, 1.1)) * 6.2832;
+    let start = normalize(vec3<f32>(cos(az), 0.55 + hash21(vec2<f32>(slot, 2.2)) * 0.35, sin(az)));
+    let drift = normalize(cross(start, vec3<f32>(0.0, 1.0, 0.0)) - vec3<f32>(0.0, 0.5, 0.0));
+    let head = normalize(start + drift * t * 0.35);
+    let tail = normalize(start + drift * max(t - 0.12, 0.0) * 0.35);
+    // Abstand der Blickrichtung zur Strecke tail → head
+    let ab = head - tail;
+    let u = clamp(dot(dir - tail, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    let d = length(dir - (tail + ab * u));
+    return (1.0 - smoothstep(0.0, 0.0022, d)) * u * (1.0 - t / 0.8) * 3.0;
+}
+
+// Regenbogen: Ring 42° um den Gegenpunkt der Sonne.
+fn rainbow(dir: vec3<f32>) -> vec3<f32> {
+    if (g.weather.w <= 0.0 || dir.y < -0.05) {
+        return vec3<f32>(0.0);
+    }
+    let anti = -g.sky_sun.xyz;
+    let angle = acos(clamp(dot(dir, anti), -1.0, 1.0));
+    let x = (angle - 0.733) / 0.035; // 42° ± 2°
+    if (abs(x) > 1.0) {
+        return vec3<f32>(0.0);
+    }
+    let hue = x * 0.5 + 0.5;
+    let color = clamp(vec3<f32>(abs(hue * 6.0 - 3.0) - 1.0, 2.0 - abs(hue * 6.0 - 2.0), 2.0 - abs(hue * 6.0 - 4.0)), vec3<f32>(0.0), vec3<f32>(1.0));
+    return color * (1.0 - x * x) * g.weather.w * 0.22 * smoothstep(-0.05, 0.1, dir.y);
+}
+
 fn sun_tint() -> vec3<f32> {
     // Tief am Horizont orange, hoch am Himmel weiß.
     return mix(vec3<f32>(1.7, 0.75, 0.35), vec3<f32>(1.3, 1.1, 0.9), clamp(g.sky_sun.y * 3.0, 0.0, 1.0));
@@ -233,7 +326,23 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     color += vec3<f32>(0.85, 0.9, 1.0) * g.sky_moon.w * (smoothstep(0.99935, 0.9997, m) * 2.5 + pow(m, 80.0) * 0.12);
 
     if (g.sky_misc.x > 0.0 && dir.y > 0.0) {
-        color += stars(dir) * g.sky_misc.x * smoothstep(0.0, 0.25, dir.y);
+        let clear = 1.0 - g.weather.x * 0.8;
+        color += (stars(dir) + vec3<f32>(shooting_star(dir))) * g.sky_misc.x * smoothstep(0.0, 0.25, dir.y) * clear;
+        color += aurora(dir) * clear;
+    }
+    color += rainbow(dir);
+
+    // Wolken: flache Ebene in 260 m Höhe, oben sonnig hell, unten grau, bei Regen dunkel
+    if (dir.y > 0.01 && g.weather.x > 0.01) {
+        let p = g.camera_pos.xz + dir.xz / dir.y * (260.0 - g.camera_pos.y);
+        let density = cloud_density(p);
+        let lit = cloud_density(p + g.sun_dir.xz * 40.0);
+        let day = clamp(luminance(g.sun_color.rgb) + luminance(g.sky_ambient.rgb) * 2.0, 0.03, 1.4);
+        var cloud = mix(vec3<f32>(1.0, 0.98, 0.95), vec3<f32>(0.62, 0.65, 0.72), lit) * day;
+        cloud = mix(cloud, cloud * 0.45, g.weather.y);
+        cloud += vec3<f32>(1.0, 0.45, 0.2) * g.sky_misc.y * (1.0 - lit) * 0.6;
+        let fade = smoothstep(0.01, 0.12, dir.y);
+        color = mix(color, cloud, density * fade * 0.92);
     }
     return color;
 }
@@ -347,7 +456,11 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let dist = length(to_point);
     // Nebel wird mit der Höhe dünner, damit Berggipfel klar bleiben.
     let height_falloff = exp(-max(world_pos.y, 0.0) * 0.02);
-    let fog = 1.0 - exp(-dist * g.fog.a * height_falloff);
+    var fog = 1.0 - exp(-dist * g.fog.a * height_falloff);
+    // Bodennebel in den Tälern (morgens) und Wolkenkappen um die höchsten Gipfel
+    let valley = (1.0 - smoothstep(2.0, 9.0, world_pos.y)) * g.sky_misc.w;
+    let peaks = smoothstep(34.0, 48.0, world_pos.y) * 0.5;
+    fog = max(fog, (1.0 - exp(-dist * 0.03)) * max(valley * 0.75, peaks));
     return mix(color, sky_base(to_point / max(dist, 0.001)), fog);
 }
 
@@ -406,8 +519,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     if (kind == MAT_FOLIAGE && !leaves && dot(n, view) < 0.0) {
         n = -n;
     }
+    // Nässe: Boden und Steine werden dunkler (Wasser in den Poren)
+    if (kind != MAT_FOLIAGE && kind != MAT_EMISSIVE) {
+        albedo = albedo * (1.0 - g.weather.y * 0.35 * max(n.y, 0.0));
+    }
     let n_dot_l = dot(n, g.sun_dir.xyz);
-    var diffuse = max(n_dot_l, 0.0);
+    var diffuse = max(n_dot_l, 0.0) * cloud_shadow(in.world_pos);
     var translucent = vec3<f32>(0.0);
     if (leaves) {
         // Weiches Licht um die Krone herum; Schatten in der Krone nie ganz schwarz.
@@ -421,6 +538,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
     var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse + translucent));
+    // Nasser Glanz: flache Flächen spiegeln bei Regen ein wenig den Himmel
+    if (g.weather.y > 0.0 && kind != MAT_FOLIAGE && n.y > 0.6) {
+        let fres = pow(1.0 - max(dot(n, view), 0.0), 5.0);
+        color += sky_base(reflect(-view, n)) * fres * g.weather.y * 0.35;
+    }
     // Warmes Licht von Feuer und Laternen – nicht entsättigt, es soll nachts leuchten.
     color += albedo * point_lights(in.world_pos, n);
     // Selbstleuchtendes bleibt farbig – nachts stechen Pilze, Kristalle und Funken heraus.

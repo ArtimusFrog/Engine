@@ -112,6 +112,13 @@ pub struct SkyBodies {
     pub stars: f32,
     /// Rötliches Leuchten am Horizont in Richtung Sonne (Dämmerung).
     pub glow: f32,
+    /// Wetter: Wolkendecke (0 = klar, 1 = bedeckt), Nässe (Regen), Polarlicht, Regenbogen,
+    /// Bodennebel in Tälern (je 0..1).
+    pub clouds: f32,
+    pub rain: f32,
+    pub aurora: f32,
+    pub rainbow: f32,
+    pub mist: f32,
 }
 
 impl Default for SkyBodies {
@@ -123,6 +130,11 @@ impl Default for SkyBodies {
             moon_visible: 0.0,
             stars: 0.0,
             glow: 0.0,
+            clouds: 0.25,
+            rain: 0.0,
+            aurora: 0.0,
+            rainbow: 0.0,
+            mist: 0.0,
         }
     }
 }

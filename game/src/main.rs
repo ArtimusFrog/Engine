@@ -23,6 +23,7 @@ mod sounds;
 mod settings;
 mod ui;
 mod viewer;
+mod wetter;
 mod world;
 
 use engine::prelude::*;
