@@ -15,6 +15,12 @@ pub struct Places {
     pub fires: Vec<Vec3>,
     /// Spitze eines Wegweiser-Bretts und sein Ziel (Beschriftung aus der Nähe).
     pub signs: Vec<(Vec3, &'static str)>,
+    /// Namen auf der Karte (Sehenswürdigkeiten).
+    pub labels: Vec<(&'static str, Vec2)>,
+    /// Lampen und Leuchtendes: Ort, Farbe mal Helligkeit, Reichweite (nachts kräftiger).
+    pub lights: Vec<(Vec3, Vec3, f32)>,
+    /// Boote auf dem Wasser (schaukeln): Objekt, Ruhelage, Drehung.
+    pub boats: Vec<(EntityId, Vec3, Quat)>,
 }
 
 /// Mitte des Startlagers: ein Stück vom Startpunkt landeinwärts.
@@ -94,4 +100,140 @@ pub fn build_camp(ctx: &mut Context, terrain: &Terrain, spawn: Vec3, places: &mu
             places.signs.push((vec3(tip.x, ground + height + 0.05, tip.y), name));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sehenswürdigkeiten (Modelle aus art/lib/sehenswert.py)
+// ---------------------------------------------------------------------------
+
+/// Maße wie in art/lib/sehenswert.py (für die Kollisionen).
+const TOWER_RADIUS: f32 = 2.4;
+const TOWER_WALL: f32 = 0.55;
+const CIRCLE_RADIUS: f32 = 5.0;
+const CIRCLE_STONES: usize = 9;
+const PIER_LENGTH: f32 = 7.0;
+const PIER_HEIGHT: f32 = 0.45;
+
+/// Wo die Sehenswürdigkeiten stehen (vom Inselaufbau gesucht) – Punkt und Blickrichtung (x, z).
+pub struct SightSpots {
+    pub tower: Option<(Vec2, Vec2)>,
+    pub circle: Option<Vec2>,
+    /// Ufer am Bergsee: Punkt am Wasser und Richtung zur Seemitte, dazu der Wasserspiegel
+    pub lake_shore: Option<(Vec2, Vec2, f32)>,
+    pub wreck: Option<(Vec2, Vec2)>,
+    pub lighthouse: Option<(Vec2, Vec2)>,
+    pub cave: Option<(Vec2, Vec2)>,
+}
+
+/// Fester Kasten relativ zu einem aufgestellten Modell (`offset` und `yaw` in dessen Achsen).
+fn solid(ctx: &mut Context, entity: EntityId, base: Vec3, rotation: Quat, offset: Vec3, size: Vec3, yaw: f32) {
+    let transform = Transform::from_position(base + rotation * offset).with_rotation(rotation * Quat::from_rotation_y(yaw));
+    ctx.physics.add_body(entity, &transform, BodyDesc::fixed(Shape::Box { size }));
+}
+
+fn ground(terrain: &Terrain, at: Vec2) -> Vec3 {
+    vec3(at.x, terrain.height_at(at.x, at.y), at.y)
+}
+
+/// Stellt alle gefundenen Sehenswürdigkeiten auf. Liefert Sperrzonen (Mitte, Radius), in denen
+/// keine Bäume und kein Kleinkram wachsen sollen.
+pub fn build_sights(ctx: &mut Context, terrain: &Terrain, spots: &SightSpots, places: &mut Places) -> Vec<(Vec2, f32)> {
+    let mut blocked = Vec::new();
+
+    if let Some((at, look)) = spots.tower {
+        let rotation = facing(look);
+        if let Some(entity) = prop(ctx, terrain, "wachturm", at, rotation, None) {
+            let base = ground(terrain, at);
+            // Mauer als Ring aus Kästen, das Tor (+X) bleibt frei
+            for k in 0..12 {
+                let w = std::f32::consts::TAU * k as f32 / 12.0;
+                if w.cos() > 0.92 {
+                    continue;
+                }
+                let offset = vec3(w.cos() * TOWER_RADIUS, 1.8, -w.sin() * TOWER_RADIUS);
+                solid(ctx, entity, base, rotation, offset, vec3(TOWER_WALL, 3.6, 1.3), w);
+            }
+            places.labels.push(("Alter Wachturm", at));
+            blocked.push((at, 8.0));
+        }
+    }
+    if let Some(at) = spots.circle {
+        if let Some(entity) = prop(ctx, terrain, "steinkreis", at, Quat::IDENTITY, None) {
+            let base = ground(terrain, at);
+            for i in 0..CIRCLE_STONES {
+                let w = std::f32::consts::TAU * i as f32 / CIRCLE_STONES as f32;
+                let offset = vec3(w.cos() * CIRCLE_RADIUS, 1.3, -w.sin() * CIRCLE_RADIUS);
+                solid(ctx, entity, base, Quat::IDENTITY, offset, vec3(0.6, 2.6, 1.0), w);
+            }
+            solid(ctx, entity, base, Quat::IDENTITY, Vec3::Y * 0.3, vec3(1.5, 0.6, 1.2), 0.0);
+            places.labels.push(("Steinkreis", at));
+            places.lights.push((base + Vec3::Y * 1.0, vec3(0.4, 1.6, 2.2), 7.0));
+            blocked.push((at, 8.0));
+        }
+    }
+    if let Some((shore, inward, level)) = spots.lake_shore {
+        let side = inward.perp();
+        // Steg vom Ufer auf den See hinaus
+        let pier_start = shore - inward * 1.2;
+        let rotation = facing(inward);
+        let pier_base = vec3(pier_start.x, level, pier_start.y);
+        if let Some((mesh, _)) = asset_files::load_variants(ctx, "gebaeude", "steg", Vec3::ONE, 0.0).first().copied() {
+            let transform = Transform::from_position(pier_base - Vec3::Y * 0.02).with_rotation(rotation);
+            let entity = ctx.scene.spawn(Entity::new("Steg", mesh).with_transform(transform));
+            solid(ctx, entity, pier_base, rotation, vec3(PIER_LENGTH / 2.0, PIER_HEIGHT - 0.05, 0.0), vec3(PIER_LENGTH, 0.12, 1.3), 0.0);
+        }
+        // Ruderboot neben dem Steg, schaukelt auf dem Wasser
+        let boat_at = pier_start + inward * 4.6 + side * 1.5;
+        if let Some((mesh, _)) = asset_files::load_variants(ctx, "gebaeude", "ruderboot", Vec3::ONE, 0.0).first().copied() {
+            let base = vec3(boat_at.x, level - 0.18, boat_at.y);
+            let rotation = facing(inward) * Quat::from_rotation_y(0.12);
+            let entity = ctx.scene.spawn(Entity::new("Ruderboot", mesh).with_transform(Transform::from_position(base).with_rotation(rotation)));
+            places.boats.push((entity, base, rotation));
+        }
+        // Schrein ein paar Schritte landeinwärts, Blick auf den See
+        let shrine = shore - inward * 6.0 - side * 3.5;
+        if let Some(entity) = prop(ctx, terrain, "schrein", shrine, facing(inward), None) {
+            let base = ground(terrain, shrine);
+            solid(ctx, entity, base, facing(inward), Vec3::Y * 0.3, vec3(3.2, 0.6, 3.2), 0.0);
+            for (x, z) in [(-0.95, -0.95), (0.95, -0.95), (-0.95, 0.95), (0.95, 0.95)] {
+                solid(ctx, entity, base, facing(inward), vec3(x, 1.7, z), vec3(0.35, 2.3, 0.35), 0.0);
+            }
+            places.lights.push((base + Vec3::Y * 1.5, vec3(2.4, 1.5, 0.6), 7.0));
+            places.labels.push(("Seeschrein", shrine));
+            blocked.push((shrine, 5.5));
+        }
+        blocked.push((shore, 4.0));
+    }
+    if let Some((at, along)) = spots.wreck {
+        let rotation = facing(along);
+        if let Some(entity) = prop(ctx, terrain, "schiffswrack", at, rotation, None) {
+            let base = ground(terrain, at);
+            solid(ctx, entity, base, rotation, Vec3::Y * 0.7, vec3(8.0, 1.4, 2.6), 0.0);
+            places.labels.push(("Schiffswrack", at));
+            blocked.push((at, 7.0));
+        }
+    }
+    if let Some((at, sea)) = spots.lighthouse {
+        let rotation = facing(-sea);
+        if let Some(entity) = prop(ctx, terrain, "leuchtturm", at, rotation, None) {
+            let base = ground(terrain, at);
+            solid(ctx, entity, base, rotation, Vec3::Y * 5.0, vec3(2.7, 10.0, 2.7), 0.0);
+            places.lights.push((base + Vec3::Y * 10.3, vec3(3.0, 2.4, 1.2), 16.0));
+            places.labels.push(("Leuchtturm", at));
+            blocked.push((at, 5.0));
+        }
+    }
+    if let Some((at, out)) = spots.cave {
+        let rotation = facing(out);
+        if let Some(entity) = prop(ctx, terrain, "hoehle", at, rotation, None) {
+            let base = ground(terrain, at);
+            for side in [-1.0, 1.0] {
+                solid(ctx, entity, base, rotation, vec3(-0.5, 2.0, side * 2.8), vec3(3.0, 4.0, 1.6), 0.0);
+            }
+            solid(ctx, entity, base, rotation, vec3(-1.8, 2.0, 0.0), vec3(1.2, 4.0, 3.6), 0.0);
+            places.labels.push(("Höhle", at));
+            blocked.push((at, 6.0));
+        }
+    }
+    blocked
 }

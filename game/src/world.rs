@@ -644,6 +644,24 @@ impl World {
         }
     }
 
+    /// Lampen der Sehenswürdigkeiten (nachts kräftiger) und schaukelnde Boote.
+    fn place_lights(&mut self, ctx: &mut Context) {
+        let night = ctx.env.sky.stars;
+        let camera = ctx.camera.position;
+        for &(at, color, radius) in &self.places.lights {
+            if at.distance(camera) < 90.0 {
+                ctx.lights.push(PointLight { position: at, color: color * (0.25 + night * 1.2), radius });
+            }
+        }
+        let t = ctx.time.elapsed;
+        for &(entity, base, rotation) in &self.places.boats {
+            if let Some(boat) = ctx.scene.try_get_mut(entity) {
+                boat.transform.position = base + Vec3::Y * ((t * 1.3).sin() * 0.04);
+                boat.transform.rotation = rotation * Quat::from_rotation_x((t * 1.1).sin() * 0.04) * Quat::from_rotation_z((t * 0.8).sin() * 0.02);
+            }
+        }
+    }
+
     /// Lagerfeuer in der Nähe: Flammen, Funken, Rauch, flackerndes warmes Licht und Knistern.
     fn campfires(&mut self, ctx: &mut Context) {
         let camera = ctx.camera.position;
@@ -768,6 +786,7 @@ impl World {
         self.fireflies(ctx);
         self.crystal_glow(ctx);
         self.campfires(ctx);
+        self.place_lights(ctx);
         self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);

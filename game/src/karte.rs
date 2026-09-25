@@ -118,6 +118,12 @@ impl MapUi {
             for (name, place) in landmarks() {
                 label(&clip, to_screen(place), name, 16.0 + self.zoom.sqrt() * 2.0, INK);
             }
+            // Sehenswürdigkeiten: kleines Zeichen und Name
+            for &(name, place) in &world.places.labels {
+                let at = to_screen(place);
+                diamond(&clip, at, 4.0 + self.zoom.sqrt(), Color32::from_rgb(170, 60, 40), INK);
+                label(&clip, at + egui::vec2(0.0, -14.0), name, 13.0 + self.zoom.sqrt(), INK);
+            }
             let start = to_screen(vec2(world.spawn.x, world.spawn.z));
             clip.circle_filled(start, 7.0, GOLD);
             clip.circle_stroke(start, 7.0, Stroke::new(2.0, INK));
@@ -192,7 +198,7 @@ impl MapUi {
                     }
 
                     heading(ui, "Orte");
-                    for (name, place) in landmarks().into_iter().chain([("Startplatz", vec2(world.spawn.x, world.spawn.z))]) {
+                    for (name, place) in landmarks().into_iter().chain([("Startplatz", vec2(world.spawn.x, world.spawn.z))]).chain(world.places.labels.iter().copied()) {
                         let text = egui::RichText::new(name).size(15.0).color(PARCHMENT);
                         if entry(ui, &|p, at| diamond(p, at, 4.5, GOLD, GOLD_DARK), text) {
                             self.center = place;

@@ -452,6 +452,108 @@ fn linear_to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
+/// Bester Punkt eines 6-m-Rasters über die Insel (höchste Wertung, `None` = ungeeignet).
+fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
+    let r = ISLAND_RADIUS * 1.05;
+    let steps = (r * 2.0 / 6.0) as i32;
+    let mut best: Option<(f32, Vec2)> = None;
+    for iz in 0..=steps {
+        for ix in 0..=steps {
+            let p = vec2(-r + ix as f32 * 6.0, -r + iz as f32 * 6.0);
+            if let Some(s) = score(p) {
+                if best.is_none_or(|(b, _)| s > b) {
+                    best = Some((s, p));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// Acht Himmelsrichtungen als feste Zahlen (keine Winkelfunktionen: jeder Rechner muss exakt
+/// dieselben Plätze finden, sonst stünden Bäume und Kollisionen woanders).
+const DIRECTIONS: [Vec2; 8] = [
+    vec2(1.0, 0.0),
+    vec2(0.707_106_77, 0.707_106_77),
+    vec2(0.0, 1.0),
+    vec2(-0.707_106_77, 0.707_106_77),
+    vec2(-1.0, 0.0),
+    vec2(-0.707_106_77, -0.707_106_77),
+    vec2(0.0, -1.0),
+    vec2(0.707_106_77, -0.707_106_77),
+];
+
+/// Dreht um einen festen Winkel, gegeben als (cos, sin).
+fn turn(v: Vec2, (c, s): (f32, f32)) -> Vec2 {
+    vec2(v.x * c - v.y * s, v.x * s + v.y * c)
+}
+
+/// Ist das Gelände rund um `p` (Radius `r`) eben genug? Höchster minus tiefster Punkt.
+fn unevenness(terrain: &Terrain, p: Vec2, r: f32) -> f32 {
+    let heights: Vec<f32> = DIRECTIONS
+        .iter()
+        .map(|&d| p + d * r)
+        .chain([p])
+        .map(|q| terrain.height_at(q.x, q.y))
+        .collect();
+    heights.iter().cloned().fold(f32::MIN, f32::max) - heights.iter().cloned().fold(f32::MAX, f32::min)
+}
+
+/// Sucht passende Plätze für die Sehenswürdigkeiten (auf allen Rechnern gleich).
+fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::SightSpots {
+    let start = vec2(spawn.x, spawn.z);
+    let h = |p: Vec2| terrain.height_at(p.x, p.y);
+    let near_sea = |p: Vec2, d: f32| DIRECTIONS.iter().any(|&dir| h(p + dir * d) < -0.5);
+    // Wachturm: auf der ebenen Kuppe des Tafelbergs, Tor Richtung Startlager
+    let east = vec2(0.45 * ISLAND_RADIUS, 0.15 * ISLAND_RADIUS);
+    let tower = best_spot(|p| {
+        (p.distance(east) < 40.0 && unevenness(terrain, p, 4.0) < 0.9).then(|| h(p) - p.distance(east) * 0.05)
+    })
+    .map(|p| (p, (camp - p).normalize_or(Vec2::X)));
+    // Steinkreis: ebene Lichtung tief im Zauberwald
+    let circle = best_spot(|p| {
+        let height = h(p);
+        ((3.0..16.0).contains(&height) && !in_lake(p) && magic(p) > 0.62 && p.distance(camp) > 60.0 && unevenness(terrain, p, 6.0) < 1.2)
+            .then(|| magic(p) - unevenness(terrain, p, 6.0) * 0.1)
+    });
+    // Bergsee: Uferpunkt etwas neben dem Pfad vom Lager
+    let toward_start = (start - LAKE_CENTER).normalize_or(Vec2::Y);
+    // 0,45 rad neben dem Pfad
+    let shore_dir = turn(toward_start, (0.900_447_1, 0.434_965_5)).normalize();
+    let lake_shore = (0..80)
+        .map(|i| LAKE_CENTER + shore_dir * (LAKE_RADIUS - 12.0 + i as f32 * 0.5))
+        .find(|&p| h(p) > LAKE_LEVEL + 0.1)
+        .map(|shore| (shore, -shore_dir, LAKE_LEVEL));
+    // Schiffswrack: flacher Sandstrand, ein Stück seitlich vom Startplatz (0,6 rad weiter)
+    let wreck_dir = turn(start.normalize_or(Vec2::Y), (0.825_335_6, 0.564_642_5)).normalize();
+    let wreck = best_spot(|p| {
+        let height = h(p);
+        ((0.3..1.3).contains(&height) && unevenness(terrain, p, 5.0) < 0.9 && p.distance(start) > 50.0 && near_sea(p, 14.0))
+            .then(|| p.normalize_or(Vec2::X).dot(wreck_dir))
+    })
+    .map(|p| (p, p.normalize_or(Vec2::X).perp()));
+    // Leuchtturm: Anhöhe direkt an der Küste im Nordosten
+    let lighthouse = best_spot(|p| {
+        let height = h(p);
+        ((3.5..10.0).contains(&height) && unevenness(terrain, p, 2.5) < 1.2 && near_sea(p, 16.0) && p.distance(camp) > 80.0)
+            .then(|| height * 0.2 + p.normalize_or(Vec2::X).dot(vec2(0.825_335_6, -0.564_642_5)) * 3.0)
+    })
+    .map(|p| (p, p.normalize_or(Vec2::X)));
+    // Höhle: steiler Hang im Gebirge, Öffnung talwärts
+    let mountains = vec2(0.0, -0.45 * ISLAND_RADIUS);
+    let cave = best_spot(|p| {
+        let height = h(p);
+        let normal = terrain.normal_at(p.x, p.y);
+        ((14.0..30.0).contains(&height) && (0.5..0.8).contains(&normal.y)).then(|| -p.distance(mountains))
+    })
+    .map(|p| {
+        let normal = terrain.normal_at(p.x, p.y);
+        let out = vec2(normal.x, normal.z).normalize_or(Vec2::Y);
+        (p + out * 1.5, out)
+    });
+    crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave }
+}
+
 /// Liegt der Punkt im Bergsee (unter dem Wasserspiegel)?
 pub fn in_lake(p: Vec2) -> bool {
     (p - LAKE_CENTER).length() < LAKE_RADIUS + 4.0 && height(p) < LAKE_LEVEL + 0.3
@@ -487,6 +589,9 @@ struct Library {
     ore_nodes: Vec<Variant>,
     /// Magische Kristallvorkommen (leuchten, noch nicht abbaubar)
     crystal_nodes: Vec<Variant>,
+    /// Strandgut
+    driftwood: Vec<Variant>,
+    shells: Vec<Variant>,
     bushes: Vec<Variant>,
     grass: Vec<Variant>,
     teal_grass: Vec<Variant>,
@@ -547,6 +652,8 @@ impl Library {
             stone_nodes,
             ore_nodes,
             crystal_nodes: asset_files::load_variants(ctx, "natur", "kristallvorkommen", Vec3::ONE, 0.0),
+            driftwood: asset_files::load_variants(ctx, "natur", "treibholz", Vec3::ONE, 0.0),
+            shells: asset_files::load_variants(ctx, "natur", "muscheln", Vec3::ONE, 0.0),
             bushes: slot(ctx, "busch", 3, &|s| models::bush(s * 3)),
             grass: slot(ctx, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
             teal_grass: slot(ctx, "zaubergras", 1, &|_| models::grass(99, vec3(0.05, 0.35, 0.3))),
@@ -647,6 +754,9 @@ pub fn build(ctx: &mut Context) -> Island {
     let mut places = crate::orte::Places::default();
     crate::orte::build_camp(ctx, &terrain, spawn, &mut places, &landmarks());
     let camp = crate::orte::camp_center(spawn);
+    let spots = find_sights(&terrain, spawn, camp);
+    let blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
+    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r);
 
 
     let spacing = 3.2;
@@ -670,7 +780,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let slope = 1.0 - normal.y;
             let base = vec3(p.x, h, p.y);
             // Auf Wegen und um den Startpunkt wächst nichts Großes.
-            let clearing = base.distance(spawn) < SPAWN_CLEARING || p.distance(camp) < crate::orte::CAMP_RADIUS || paths.at(p) > 0.15;
+            let clearing = base.distance(spawn) < SPAWN_CLEARING || p.distance(camp) < crate::orte::CAMP_RADIUS || paths.at(p) > 0.15 || is_blocked(p);
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
@@ -733,6 +843,10 @@ pub fn build(ctx: &mut Context) -> Island {
                         found = Some(tree("Palme", pick(&lib.palms, &mut rng), size, 4));
                     } else if roll < 0.05 {
                         found = Some(node(&mut rng));
+                    } else if roll < 0.075 && !lib.driftwood.is_empty() {
+                        decor(ctx, pick(&lib.driftwood, &mut rng), base, yaw, size, Vec4::ONE, Material::Standard);
+                    } else if roll < 0.1 && !lib.shells.is_empty() {
+                        decor(ctx, pick(&lib.shells, &mut rng), base, yaw, 1.0, Vec4::ONE, Material::Standard);
                     }
                 } else if h > 28.0 {
                     if roll < 0.06 {
@@ -812,7 +926,7 @@ pub fn build(ctx: &mut Context) -> Island {
                         continue;
                     }
                     let q = vec2(x + rng.range(-1.6, 1.6), z + rng.range(-1.6, 1.6));
-                    if paths.at(q) > 0.3 || (node_here && q.distance(p) < 1.8) || q.distance(camp) < crate::orte::CAMP_RADIUS - 1.0 {
+                    if paths.at(q) > 0.3 || (node_here && q.distance(p) < 1.8) || q.distance(camp) < crate::orte::CAMP_RADIUS - 1.0 || is_blocked(q) {
                         continue;
                     }
                     let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);

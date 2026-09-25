@@ -73,6 +73,9 @@ pub struct Playground {
     demo_mine_request: Option<crate::island::ResourceKind>,
     /// Nur zum Testen: neben das nächste Kristallvorkommen stellen und hinschauen.
     demo_crystal: Option<Option<Vec3>>,
+    /// Nur zum Testen: vor eine Sehenswürdigkeit stellen (`--demo-ort Name [Abstand]`).
+    demo_spot: Option<(String, f32)>,
+    demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -121,6 +124,8 @@ impl Playground {
             demo_mine: None,
             demo_mine_request: None,
             demo_crystal: None,
+            demo_spot: None,
+            demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
             local_ip: None,
@@ -874,6 +879,12 @@ impl Game for Playground {
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
+        if let Some(position) = args.iter().position(|a| a == "--demo-ort") {
+            let name = args.get(position + 1).cloned().unwrap_or_default().to_lowercase();
+            let distance = args.get(position + 2).and_then(|d| d.parse().ok()).unwrap_or(14.0);
+            self.demo_spot = Some((name, distance));
+            self.demo_yaw_offset = 0.35;
+        }
         if let Some(position) = args.iter().position(|a| a == "--demo-abbauen") {
             use crate::island::ResourceKind;
             let kind = match args.get(position + 1).map(String::as_str) {
@@ -985,14 +996,32 @@ impl Game for Playground {
             }
         }
 
+        if let (Some((name, distance)), Some(session)) = (self.demo_spot.take(), &mut self.session) {
+            let world = session.world();
+            let target = world.places.labels.iter().find(|(label, _)| label.to_lowercase().contains(&name)).map(|&(_, at)| at);
+            if let (Some(at), Some(local)) = (target, session.local_player()) {
+                let ground = world.terrain.height_at(at.x, at.y);
+                let away = (vec2(world.spawn.x, world.spawn.z) - at).normalize_or(Vec2::Y);
+                let mut stand = at + away * distance;
+                // Nicht im Wasser stehen: notfalls näher heran
+                while world.terrain.height_at(stand.x, stand.y) < 0.5 && stand.distance(at) > 3.0 {
+                    stand -= away;
+                }
+                if let Some(character) = world.players.get(&local).map(|a| a.character) {
+                    let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+                    ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+                }
+                self.demo_crystal = Some(Some(vec3(at.x, ground + 1.5, at.y)));
+            }
+        }
         if let (Some(None), Some(session)) = (self.demo_crystal, &mut self.session) {
             self.demo_crystal = Some(demo_place_at_crystal(ctx, session));
         }
         if let (Some(Some(crystal)), Some(session)) = (self.demo_crystal, &self.session) {
             if let Some(player) = session.local_player().and_then(|p| session.world().player_position(ctx, p)) {
                 let to = crystal - player;
-                ctx.camera.yaw = to.x.atan2(-to.z) - 0.75;
-                ctx.camera.pitch = -0.12;
+                ctx.camera.yaw = to.x.atan2(-to.z) + self.demo_yaw_offset;
+                ctx.camera.pitch = if self.demo_yaw_offset > 0.0 { -0.32 } else { -0.12 };
                 self.orbit.distance = 5.5;
             }
         }

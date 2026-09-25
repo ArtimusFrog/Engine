@@ -66,13 +66,13 @@ def brett_bm(laenge, breite, dicke, fase=0.006):
     return bm
 
 
-def stamm_bm(radius, laenge, ecken=10, radius_ende=None, knorrig=0.08, seed=1):
+def stamm_bm(radius, laenge, ecken=10, radius_ende=None, knorrig=0.08, seed=1, schritte=4):
     """Holzstamm entlang +X ab dem Ursprung, leicht unregelmäßig; Deckflächen markiert (Hirnholz)."""
     zufall = random.Random(seed)
     bm = bmesh.new()
     ende = radius if radius_ende is None else radius_ende
     ringe = []
-    schritte = 4
+
     for i in range(schritte + 1):
         t = i / schritte
         r = radius + (ende - radius) * t
