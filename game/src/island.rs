@@ -10,10 +10,18 @@ use crate::asset_files;
 use crate::models;
 
 pub const SEED: u32 = 20_260_924;
+/// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
+/// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
+pub const WORLD_ID: u32 = SEED + 2;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
-const ISLAND_RADIUS: f32 = 170.0;
-const TERRAIN_SIZE: f32 = 460.0;
-const TERRAIN_CELLS: usize = 230;
+pub const ISLAND_RADIUS: f32 = 330.0;
+const TERRAIN_SIZE: f32 = 880.0;
+/// 2,5 m je Zelle
+const TERRAIN_CELLS: usize = 352;
+/// Bergsee im Westen: Mitte, Radius der Wasserfläche und Höhe des Wasserspiegels.
+const LAKE_CENTER: Vec2 = vec2(-0.42 * ISLAND_RADIUS, 0.12 * ISLAND_RADIUS);
+const LAKE_RADIUS: f32 = 38.0;
+const LAKE_LEVEL: f32 = 6.0;
 /// Um den Startpunkt bleibt eine Lichtung frei.
 const SPAWN_CLEARING: f32 = 12.0;
 
@@ -59,17 +67,34 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 
 /// Höhe der Landschaft an (x, z).
 pub fn height(p: Vec2) -> f32 {
-    let distance = p.length() / ISLAND_RADIUS;
-    let coast = fbm(p * 0.006, 3, SEED) * 0.35;
-    let land = 1.0 - smoothstep(0.55, 1.05, distance + coast);
+    let r = ISLAND_RADIUS;
+    let distance = p.length() / r;
+    // Küste mit Buchten und Halbinseln
+    let coast = fbm(p * 0.004, 4, SEED) * 0.38;
+    let land = 1.0 - smoothstep(0.58, 1.02, distance + coast);
 
-    let hills = fbm(p * 0.011, 4, SEED + 1) * 5.0 + 4.5;
+    // Hügel überall, dazu großflächige Wellen im Gelände
+    let hills = fbm(p * 0.009, 4, SEED + 1) * 6.0 + 5.0;
+    let swells = fbm(p * 0.0035, 2, SEED + 9) * 7.0;
     // Gebirge im Norden (negatives z), zur Küste hin auslaufend.
-    let north = smoothstep(-15.0, -95.0, p.y + fbm(p * 0.01, 2, SEED + 2) * 40.0);
+    let north = smoothstep(-0.05 * r, -0.45 * r, p.y + fbm(p * 0.006, 2, SEED + 2) * 60.0);
     // r·√r statt powf: Wurzeln rechnen auf jedem System bitgenau gleich.
-    let ridge = ridged(p * 0.012, 5, SEED + 3);
-    let peaks = ridge * ridge.sqrt() * 46.0 * north * (1.0 - smoothstep(0.7, 0.95, distance));
-    let inland = hills + peaks;
+    let ridge = ridged(p * 0.009, 5, SEED + 3);
+    let peaks = ridge * ridge.sqrt() * 58.0 * north * (1.0 - smoothstep(0.72, 0.95, distance));
+    // Tafelberg im Osten: steile Ränder, oben in Stufen abgesetzt
+    let east = vec2(0.45 * r, 0.15 * r);
+    let edge = (p - east).length() / (0.22 * r) + fbm(p * 0.012, 2, SEED + 11) * 0.25;
+    let steps = smoothstep(1.0, 0.72, edge) * 3.0;
+    let plateau = (steps.floor() + smoothstep(0.7, 1.0, steps.fract())) / 3.0 * 16.0;
+    // Gewundene Täler, wo das Rauschen die Null kreuzt (im Gebirge flacher)
+    let valley = (1.0 - smoothstep(0.0, 0.07, fbm(p * 0.005, 3, SEED + 15).abs())) * 6.0 * (1.0 - north * 0.7);
+    let mut inland = hills + swells.max(-2.0) + peaks + plateau - valley;
+
+    // Bergsee: Rand etwas erhöht, darin eine Mulde unter den Wasserspiegel
+    let to_lake = (p - LAKE_CENTER).length();
+    inland = inland.max((LAKE_LEVEL + 1.4) * smoothstep(LAKE_RADIUS + 26.0, LAKE_RADIUS + 8.0, to_lake));
+    let bowl = smoothstep(LAKE_RADIUS + 4.0, LAKE_RADIUS - 14.0, to_lake);
+    inland += (LAKE_LEVEL - 2.5 - inland) * bowl;
 
     // Flacher Strand: nahe der Küstenlinie wird die Höhe zusammengedrückt.
     let shaped = -9.0 + (inland + 9.0) * land.sqrt() * land.sqrt().sqrt();
@@ -111,6 +136,9 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     color = color.lerp(alpine, smoothstep(15.0, 24.0, c.y));
     color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
     color = wet_sand.lerp(color, smoothstep(-0.8, 0.6, c.y));
+    // Seeufer: nasser, dunkler Grund rund um den Bergsee
+    let ufer = smoothstep(LAKE_RADIUS + 6.0, LAKE_RADIUS - 2.0, (p - LAKE_CENTER).length()) * (1.0 - smoothstep(LAKE_LEVEL + 0.3, LAKE_LEVEL + 1.2, c.y));
+    color = color.lerp(wet_sand * 0.85, ufer);
     color = color.lerp(rock, smoothstep(0.42, 0.58, slope));
     color = color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)));
     // Jedes Dreieck leicht anders – das macht den facettierten Look lebendig.
@@ -118,14 +146,19 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     color * (1.0 + jitter * 0.14)
 }
 
+/// Liegt der Punkt im Bergsee (unter dem Wasserspiegel)?
+pub fn in_lake(p: Vec2) -> bool {
+    (p - LAKE_CENTER).length() < LAKE_RADIUS + 4.0 && height(p) < LAKE_LEVEL + 0.3
+}
+
 /// Sucht einen flachen Platz auf einer Wiese im Süden der Insel.
 fn find_spawn(terrain: &Terrain) -> Vec3 {
-    for distance in (20..140).rev().step_by(4) {
+    for distance in (20..(ISLAND_RADIUS * 0.8) as i32).rev().step_by(4) {
         for step in 0..24 {
             let angle = std::f32::consts::FRAC_PI_2 + (step as f32 - 12.0) * 0.08;
             let p = vec2(angle.cos(), angle.sin()) * distance as f32;
             let h = terrain.height_at(p.x, p.y);
-            if (3.0..9.0).contains(&h) && terrain.normal_at(p.x, p.y).y > 0.93 && magic(p) < 0.55 {
+            if (3.0..9.0).contains(&h) && terrain.normal_at(p.x, p.y).y > 0.93 && magic(p) < 0.55 && (p - LAKE_CENTER).length() > LAKE_RADIUS + 30.0 {
                 return vec3(p.x, h, p.y);
             }
         }
@@ -270,6 +303,13 @@ pub fn build(ctx: &mut Context) -> Island {
             .with_transform(Transform::default().with_scale(vec3(1600.0, 1.0, 1600.0)))
             .with_material(Material::Water),
     );
+    // Bergsee im Westen: eigene Wasserfläche auf Höhe des Seespiegels
+    let lake = ctx.assets.named_mesh("see", || MeshData::grid(48));
+    ctx.scene.spawn(
+        Entity::new("See", lake)
+            .with_transform(Transform::from_position(vec3(LAKE_CENTER.x, LAKE_LEVEL, LAKE_CENTER.y)).with_scale(vec3(LAKE_RADIUS * 2.6, 1.0, LAKE_RADIUS * 2.6)))
+            .with_material(Material::Water),
+    );
 
     let lib = Library::load(ctx);
     let spawn = find_spawn(&terrain);
@@ -290,7 +330,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let p = vec2(x + rng.range(-1.4, 1.4), z + rng.range(-1.4, 1.4));
 
             let h = terrain.height_at(p.x, p.y);
-            if h < 0.9 {
+            if h < 0.9 || in_lake(p) {
                 continue;
             }
             let normal = terrain.normal_at(p.x, p.y);

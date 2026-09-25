@@ -231,7 +231,7 @@ impl Animal {
         let step = speed * dt;
         let walkable = |d: Vec2| {
             let next = here + d * step * 8.0;
-            terrain.height_at(next.x, next.y) > MIN_GROUND && terrain.normal_at(next.x, next.y).y > 0.8
+            terrain.height_at(next.x, next.y) > MIN_GROUND && !crate::island::in_lake(next) && terrain.normal_at(next.x, next.y).y > 0.8
         };
         let turned = [0.0f32, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9]
             .into_iter()
@@ -258,7 +258,7 @@ impl Animal {
             let angle = self.rng.range(0.0, std::f32::consts::TAU);
             let distance = self.rng.range(3.0, WANDER_RADIUS);
             let target = self.home + Vec2::from_angle(angle) * distance;
-            if terrain.height_at(target.x, target.y) > MIN_GROUND && terrain.normal_at(target.x, target.y).y > 0.85 {
+            if terrain.height_at(target.x, target.y) > MIN_GROUND && !crate::island::in_lake(target) && terrain.normal_at(target.x, target.y).y > 0.85 {
                 return Some(target);
             }
         }
@@ -478,12 +478,12 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
     // Füchse im Wald, Rehe überall im Grünen, Bären im Wald, Schafe in Herden auf Wiesen,
     // Wölfe als Rudel im Wald und am Berg.
     let groups: [(AnimalKind, usize, usize, usize, &dyn Fn(Vec2, f32) -> bool); 6] = [
-        (AnimalKind::Hare, 16, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
-        (AnimalKind::Fox, 7, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
-        (AnimalKind::Deer, 8, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
-        (AnimalKind::Bear, 4, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
-        (AnimalKind::Sheep, 14, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
-        (AnimalKind::Wolf, 6, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
+        (AnimalKind::Hare, 40, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
+        (AnimalKind::Fox, 16, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
+        (AnimalKind::Deer, 20, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
+        (AnimalKind::Bear, 9, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
+        (AnimalKind::Sheep, 32, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
+        (AnimalKind::Wolf, 12, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
     ];
     for (kind, count, near, herd, fits) in groups {
         let mut placed = 0;
@@ -495,17 +495,20 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
             let p = if near_spawn {
                 vec2(spawn.x, spawn.z) + Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)) * rng.range(18.0, 40.0)
             } else {
-                vec2(rng.range(-160.0, 160.0), rng.range(-160.0, 160.0))
+                {
+                let r = crate::island::ISLAND_RADIUS;
+                vec2(rng.range(-r, r), rng.range(-r, r))
+            }
             };
             let h = terrain.height_at(p.x, p.y);
-            if h < MIN_GROUND + 1.0 || terrain.normal_at(p.x, p.y).y < 0.9 || !(near_spawn || fits(p, h)) {
+            if h < MIN_GROUND + 1.0 || crate::island::in_lake(p) || terrain.normal_at(p.x, p.y).y < 0.9 || !(near_spawn || fits(p, h)) {
                 continue;
             }
             // Herden und Rudel: die übrigen Tiere der Gruppe dicht daneben.
             for member in 0..herd.min(count - placed) {
                 let q = if member == 0 { p } else { p + Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)) * rng.range(2.0, 6.0) };
                 let hq = terrain.height_at(q.x, q.y);
-                if hq < MIN_GROUND + 1.0 {
+                if hq < MIN_GROUND + 1.0 || crate::island::in_lake(q) {
                     continue;
                 }
                 let seed = ((seed as u64) << 16) ^ animals.len() as u64;
@@ -558,7 +561,7 @@ mod tests {
         let mut ctx = Context::headless();
         let world = crate::world::World::new(&mut ctx);
         let bears: Vec<_> = world.animals.iter().filter(|a| a.kind == AnimalKind::Bear).collect();
-        assert_eq!(bears.len(), 4, "Bären fehlen");
+        assert_eq!(bears.len(), 9, "Bären fehlen");
         let spawn = world.spawn;
         for bear in &bears {
             let offset = bear.position - spawn;

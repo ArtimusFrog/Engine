@@ -232,7 +232,8 @@ impl Playground {
         let Some(session) = &self.session else {
             // Hauptmenü: Kamera kreist langsam um die Insel.
             let t = ctx.time.elapsed * 0.03 + 0.8;
-            ctx.camera.position = vec3(t.sin() * 210.0, 70.0, t.cos() * 210.0);
+            let r = crate::island::ISLAND_RADIUS * 1.3;
+            ctx.camera.position = vec3(t.sin() * r, 130.0, t.cos() * r);
             ctx.camera.look_at(vec3(0.0, 6.0, 0.0));
             return;
         };

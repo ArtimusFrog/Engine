@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::island::SEED;
+use crate::island::WORLD_ID;
 use crate::protocol::Inventory;
 use crate::world::World;
 
@@ -19,7 +19,8 @@ const FORMAT: u32 = 1;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldSave {
     pub format: u32,
-    /// Startwert der Insel – passt er nicht, gehören die Rohstoff-IDs zu einer anderen Welt.
+    /// Kennung der Insel (`island::WORLD_ID`) – passt sie nicht, gehören die Rohstoff-IDs zu einer
+    /// anderen Welt. Der Feldname bleibt `seed`, damit alte Spielstände lesbar bleiben.
     pub seed: u32,
     pub hour: f32,
     pub day: u32,
@@ -47,7 +48,7 @@ impl WorldSave {
         }
         WorldSave {
             format: FORMAT,
-            seed: SEED,
+            seed: WORLD_ID,
             hour: world.day.hour,
             day: world.day.day,
             inventories,
@@ -56,13 +57,18 @@ impl WorldSave {
         }
     }
 
-    /// Liest einen Spielstand; fehlt er oder passt er nicht, `None`.
+    /// Liest einen Spielstand; fehlt er oder passt das Format nicht, `None`. Gehört er zu einer
+    /// anderen Insel, bleiben Inventare und Tageszeit erhalten, die Rohstoffe fangen neu an.
     pub fn load(path: &Path) -> Option<WorldSave> {
         let text = std::fs::read_to_string(path).ok()?;
         match serde_json::from_str::<WorldSave>(&text) {
-            Ok(save) if save.format == FORMAT && save.seed == SEED => Some(save),
+            Ok(save) if save.format == FORMAT && save.seed == WORLD_ID => Some(save),
+            Ok(save) if save.format == FORMAT => {
+                log::warn!("Spielstand {} gehört zu einer anderen Insel – Inventare bleiben, Rohstoffe wachsen neu", path.display());
+                Some(WorldSave { seed: WORLD_ID, gone: Vec::new(), damaged: Vec::new(), ..save })
+            }
             Ok(_) => {
-                log::warn!("Spielstand {} gehört zu einer anderen Version oder Insel – fange neu an", path.display());
+                log::warn!("Spielstand {} gehört zu einer anderen Version – fange neu an", path.display());
                 None
             }
             Err(e) => {
@@ -105,15 +111,18 @@ mod tests {
     #[test]
     fn speichern_und_laden() {
         let path = std::env::temp_dir().join(format!("weltstand_{}.json", std::process::id()));
-        let mut save = WorldSave { format: FORMAT, seed: SEED, hour: 13.5, day: 4, ..Default::default() };
+        let mut save = WorldSave { format: FORMAT, seed: WORLD_ID, hour: 13.5, day: 4, ..Default::default() };
         save.inventories.insert(player_key(" Nils "), Inventory { wood: 12, stone: 3 });
         save.gone.push((42, 900));
         save.damaged.push((7, 2));
         save.store(&path).unwrap();
         assert_eq!(WorldSave::load(&path), Some(save.clone()));
 
-        // Fremde Insel oder altes Format: lieber neu anfangen als falsche Bäume fällen.
-        WorldSave { seed: SEED + 1, ..save }.store(&path).unwrap();
+        // Andere Insel: Inventare bleiben, aber keine falschen Bäume fällen.
+        WorldSave { seed: WORLD_ID + 1, ..save.clone() }.store(&path).unwrap();
+        assert_eq!(WorldSave::load(&path), Some(WorldSave { gone: Vec::new(), damaged: Vec::new(), ..save.clone() }));
+        // Altes Format: neu anfangen.
+        WorldSave { format: FORMAT + 1, ..save }.store(&path).unwrap();
         assert_eq!(WorldSave::load(&path), None);
         std::fs::write(&path, "kaputt").unwrap();
         assert_eq!(WorldSave::load(&path), None);
