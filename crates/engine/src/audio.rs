@@ -25,6 +25,9 @@ const REFERENCE_DISTANCE: f32 = 4.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SoundId(u32);
 
+/// Ein dekodierter Klang, der noch nicht eingetragen ist (siehe [`Audio::decode_file`]).
+pub struct DecodedSound(StaticSoundData);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LoopId(u32);
 
@@ -144,6 +147,20 @@ impl Audio {
         self.insert(name, data)
     }
 
+    /// Dekodiert eine Datei (.ogg, .wav, .flac), ohne sie schon einzutragen – das geht auch in
+    /// einem anderen Thread (z. B. lange Musikstücke, damit der Start nicht wartet).
+    pub fn decode_file(path: &Path) -> Result<DecodedSound, String> {
+        StaticSoundData::from_file(path).map(DecodedSound).map_err(|e| format!("{} nicht lesbar: {e}", path.display()))
+    }
+
+    /// Trägt einen vorher dekodierten Klang ein.
+    pub fn add_decoded(&mut self, name: &str, sound: DecodedSound) -> SoundId {
+        if let Some(&id) = self.named.get(name) {
+            return id;
+        }
+        self.insert(name, sound.0)
+    }
+
     /// Lädt einen Klang aus einer Datei (.ogg, .wav, .flac).
     pub fn load_file(&mut self, name: &str, path: &Path) -> Result<SoundId, String> {
         if let Some(&id) = self.named.get(name) {
@@ -211,6 +228,11 @@ impl Audio {
         if let Err(e) = result {
             log::debug!("Klang nicht abspielbar: {e}");
         }
+    }
+
+    /// Ist die Schleife eingetragen (also hörbar, sobald sie lauter gestellt wird)?
+    pub fn has_loop(&self, id: LoopId) -> bool {
+        self.loops.contains_key(&id.0)
     }
 
     /// Startet eine Endlosschleife (anfangs stumm, Lautstärke mit [`set_loop`](Self::set_loop)).

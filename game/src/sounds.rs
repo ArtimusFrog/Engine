@@ -30,6 +30,11 @@ pub struct Sounds {
     music_mix: [f32; 3],
     gull: SoundId,
     howl: SoundId,
+    /// Musik im Hauptmenü (game/assets/sounds/menue.ogg), wird im Hintergrund geladen
+    menu_music: Option<LoopId>,
+    menu_loading: Option<std::sync::mpsc::Receiver<Result<DecodedSound, String>>>,
+    /// Wie laut die Menümusik gerade ist (weiches Ein- und Ausblenden)
+    menu_volume: f32,
     /// Zeit bis zum nächsten Möwenruf bzw. Wolfsgeheul
     next_gull: f32,
     next_howl: f32,
@@ -42,6 +47,16 @@ pub struct Sounds {
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
+}
+
+/// Startet das Laden der Menümusik in einem eigenen Thread (sie ist ein ganzes Musikstück).
+fn start_menu_music() -> Option<std::sync::mpsc::Receiver<Result<DecodedSound, String>>> {
+    let path = asset_files::asset_dir().map(|dir| dir.join("sounds").join("menue.ogg")).filter(|p| p.is_file())?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(Audio::decode_file(&path));
+    });
+    Some(receiver)
 }
 
 /// Aufnahme aus `game/assets/sounds/`, sonst der selbst erzeugte Klang.
@@ -92,6 +107,9 @@ impl Sounds {
                 a.start_loop(s, Bus::Music)
             },
             music_mix: [1.0, 0.0, 0.0],
+            menu_music: None,
+            menu_loading: start_menu_music(),
+            menu_volume: 0.0,
             gull: sound(a, "moewe", gull),
             howl: sound(a, "wolfsgeheul", howl),
             next_gull: 4.0,
@@ -110,6 +128,36 @@ impl Sounds {
             rng: Rng::new(99),
             last_items: None,
         }
+    }
+
+    /// Menümusik übernehmen, sobald sie im Hintergrund fertig geladen ist, und ihre Lautstärke
+    /// weich zum Ziel führen.
+    fn menu_music(&mut self, ctx: &mut Context, target: f32) {
+        if let Some(receiver) = &self.menu_loading {
+            match receiver.try_recv() {
+                Ok(Ok(decoded)) => {
+                    let id = ctx.audio.add_decoded("menue", decoded);
+                    self.menu_music = Some(ctx.audio.start_loop(id, Bus::Music));
+                    self.menu_loading = None;
+                }
+                Ok(Err(message)) => {
+                    log::warn!("Menümusik: {message}");
+                    self.menu_loading = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.menu_loading = None,
+            }
+        }
+        let speed = if target > self.menu_volume { 0.35 } else { 0.8 };
+        self.menu_volume += (target - self.menu_volume).clamp(-speed * ctx.time.delta, speed * ctx.time.delta);
+        if let Some(id) = self.menu_music {
+            ctx.audio.set_loop(id, self.menu_volume, None, 1.0);
+        }
+    }
+
+    /// Läuft die eigene Menümusik (dann schweigt die erzeugte Musik im Menü)?
+    fn has_menu_music(&self) -> bool {
+        self.menu_music.is_some() || self.menu_loading.is_some()
     }
 
     /// Einmal pro Bild: Ereignisse der Welt abspielen und die Kulisse anpassen.
@@ -165,6 +213,7 @@ impl Sounds {
         }
         self.last_items = items;
 
+        self.menu_music(ctx, 0.0);
         self.ambience(ctx, world);
     }
 
@@ -248,13 +297,14 @@ impl Sounds {
         ctx.audio.set_loop(self.music_magic, 0.35 * self.music_mix[2], None, 1.0);
     }
 
-    /// Im Menü: nur Musik und etwas Wind.
+    /// Im Menü: die Menümusik und etwas Wind (ohne eigene Menümusik die Tagesmusik).
     pub fn menu(&mut self, ctx: &mut Context) {
-        ctx.audio.set_loop(self.wind, 0.2, None, 1.0);
+        self.menu_music(ctx, 0.75);
+        ctx.audio.set_loop(self.wind, 0.15, None, 1.0);
         for quiet in [self.waves, self.birds, self.rain, self.waterfall, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
-        ctx.audio.set_loop(self.music, 0.5, None, 1.0);
+        ctx.audio.set_loop(self.music, if self.has_menu_music() { 0.0 } else { 0.5 }, None, 1.0);
     }
 }
 

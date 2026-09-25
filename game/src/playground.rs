@@ -35,6 +35,8 @@ pub struct Playground {
     session: Option<Session>,
     /// Kulisse hinter dem Hauptmenü.
     menu_world: Option<World>,
+    /// Kamerafahrten, Titel und Effekte des Hauptmenüs.
+    title: Option<crate::hauptmenue::TitleScreen>,
     screen: Screen,
     /// Wohin „Zurück“ aus den Einstellungen führt.
     settings_return: Screen,
@@ -100,6 +102,7 @@ impl Playground {
             settings,
             session: None,
             menu_world: None,
+            title: None,
             screen: Screen::MainMenu,
             settings_return: Screen::MainMenu,
             error: None,
@@ -179,8 +182,8 @@ impl Playground {
         self.session = None;
         ctx.reset_world();
         let mut world = World::new(ctx);
-        // Im Menü immer goldene Abendstimmung.
-        world.day.hour = 17.6;
+        // Im Menü: die Insel bei Nacht, von oben
+        self.title = Some(crate::hauptmenue::TitleScreen::new(&mut world, ctx.time.elapsed));
         self.menu_world = Some(world);
         self.screen = Screen::MainMenu;
         self.error = error;
@@ -374,11 +377,10 @@ impl Playground {
 
     fn update_camera(&mut self, ctx: &mut Context) {
         let Some(session) = &self.session else {
-            // Hauptmenü: Kamera kreist langsam um die Insel.
-            let t = ctx.time.elapsed * 0.03 + 0.8;
-            let r = crate::island::ISLAND_RADIUS * 1.3;
-            ctx.camera.position = vec3(t.sin() * r, 130.0, t.cos() * r);
-            ctx.camera.look_at(vec3(0.0, 6.0, 0.0));
+            // Hauptmenü: Kamera kreist langsam hoch über der Insel
+            if let Some(title) = &self.title {
+                title.camera(ctx);
+            }
             return;
         };
         if self.free_camera {
@@ -509,41 +511,45 @@ impl Playground {
     // ---------- Bildschirme ----------
 
     fn main_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        use crate::hauptmenue::epic_button;
         let mut action = None;
         let mut open_gallery = false;
-        ui::left_shade(egui_ctx);
-        egui::Area::new(egui::Id::new("hauptmenue")).anchor(Align2::LEFT_CENTER, [70.0, 0.0]).show(egui_ctx, |ui| {
-            ui.label(RichText::new("ENGINE JN").size(64.0).strong().color(Color32::WHITE));
-            ui.label(RichText::new("Fantasy-Insel · Multiplayer").size(18.0).color(ui::TEXT));
-            ui.add_space(24.0);
-            ui::panel_frame().show(ui, |ui| {
-                ui.set_width(300.0);
-                if ui::big_button(ui, "Einzelspieler").clicked() {
-                    action = Some(Mode::Offline);
-                }
-                if ui::big_button(ui, "Spiel hosten").clicked() {
-                    action = Some(Mode::Host { port: DEFAULT_PORT });
-                }
-                if ui::big_button(ui, "Beitreten").clicked() {
-                    self.screen = Screen::Join;
-                }
-                if ui::big_button(ui, "Einstellungen").clicked() {
-                    self.settings_return = Screen::MainMenu;
-                    self.screen = Screen::Settings;
-                }
-                if ui::big_button(ui, "Asset-Galerie").clicked() {
-                    open_gallery = true;
-                }
-                if ui::big_button(ui, "Beenden").clicked() {
-                    ctx.exit();
-                }
-                if let Some(error) = &self.error {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(error).color(ui::ERROR));
-                }
-            });
-            ui.add_space(10.0);
-            ui.label(RichText::new(format!("Spielername: {}", self.settings.name)).size(15.0).color(ui::TEXT));
+        let now = ctx.time.elapsed;
+        if let Some(title) = &mut self.title {
+            title.backdrop(ctx, egui_ctx);
+        }
+        egui::Area::new(egui::Id::new("hauptmenue")).anchor(Align2::LEFT_CENTER, [80.0, -10.0]).show(egui_ctx, |ui| {
+            if let Some(title) = &self.title {
+                title.title(ui, now);
+            }
+            ui.add_space(22.0);
+            ui.spacing_mut().item_spacing.y = 10.0;
+            let width = 320.0;
+            if epic_button(ui, "Einzelspieler", width).clicked() {
+                action = Some(Mode::Offline);
+            }
+            if epic_button(ui, "Spiel hosten", width).clicked() {
+                action = Some(Mode::Host { port: DEFAULT_PORT });
+            }
+            if epic_button(ui, "Beitreten", width).clicked() {
+                self.screen = Screen::Join;
+            }
+            if epic_button(ui, "Einstellungen", width).clicked() {
+                self.settings_return = Screen::MainMenu;
+                self.screen = Screen::Settings;
+            }
+            if epic_button(ui, "Asset-Galerie", width).clicked() {
+                open_gallery = true;
+            }
+            if epic_button(ui, "Beenden", width).clicked() {
+                ctx.exit();
+            }
+            if let Some(error) = &self.error {
+                ui.add_space(6.0);
+                ui.label(RichText::new(error).color(ui::ERROR));
+            }
+            ui.add_space(12.0);
+            ui.label(RichText::new(format!("Spielername: {}", self.settings.name)).size(15.0).color(crate::inventar::MUTED));
         });
         if open_gallery {
             self.open_gallery(ctx);

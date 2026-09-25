@@ -55,22 +55,6 @@ pub fn apply_theme(ctx: &egui::Context) {
     });
 }
 
-/// Dunkler Verlauf vom linken Bildschirmrand, damit Text auf hellem Hintergrund lesbar bleibt.
-pub fn left_shade(ctx: &egui::Context) {
-    let screen = ctx.content_rect();
-    let rect = egui::Rect::from_min_max(screen.min, egui::pos2(screen.min.x + screen.width() * 0.6, screen.max.y));
-    let dark = Color32::from_black_alpha(190);
-    let clear = Color32::TRANSPARENT;
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(rect.left_top(), dark);
-    mesh.colored_vertex(rect.right_top(), clear);
-    mesh.colored_vertex(rect.right_bottom(), clear);
-    mesh.colored_vertex(rect.left_bottom(), dark);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    ctx.layer_painter(egui::LayerId::background()).add(egui::Shape::mesh(mesh));
-}
-
 /// Halbtransparentes Panel in der Bildschirmmitte.
 pub fn center_panel(ctx: &egui::Context, id: &str, width: f32, add: impl FnOnce(&mut egui::Ui)) {
     egui::Area::new(egui::Id::new(id)).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {

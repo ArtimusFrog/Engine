@@ -8,6 +8,7 @@ mod characters;
 mod chat;
 mod client;
 mod inventar;
+mod hauptmenue;
 mod island;
 mod karte;
 mod leben;
