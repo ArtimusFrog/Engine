@@ -29,8 +29,10 @@ pub const PLAETZE: &[(&str, &str, &str)] = &[
     ("kristall", "Kristall", "natur"),
     ("hase", "Hase", "tiere"),
     ("fuchs", "Fuchs", "tiere"),
-    ("hirsch", "Hirsch", "tiere"),
+    ("reh", "Reh", "tiere"),
     ("baer", "Bär", "tiere"),
+    ("schaf", "Schaf", "tiere"),
+    ("wolf", "Wolf", "tiere"),
 ];
 
 pub fn platz_name(kennung: &str) -> &str {

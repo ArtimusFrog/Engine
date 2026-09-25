@@ -26,8 +26,11 @@ const MIN_GROUND: f32 = 1.4;
 pub enum AnimalKind {
     Hare,
     Fox,
+    /// Reh (früher Hirsch – der Name im Code bleibt, damit alte Spielstände passen)
     Deer,
     Bear,
+    Sheep,
+    Wolf,
 }
 
 /// Wie sich eine Tierart verhält.
@@ -49,10 +52,15 @@ impl AnimalKind {
     fn traits(self) -> Traits {
         match self {
             AnimalKind::Hare => Traits { walk: 1.6, run: 8.5, flee: 7.0, calm: 20.0, height: 0.35, stride: (1.0, 1.0) },
-            AnimalKind::Fox => Traits { walk: 2.2, run: 9.5, flee: 10.0, calm: 26.0, height: 0.45, stride: (1.0, 1.0) },
-            AnimalKind::Deer => Traits { walk: 1.8, run: 11.0, flee: 14.0, calm: 32.0, height: 1.1, stride: (1.0, 1.0) },
+            // stride = Tempo / Fußtempo der Animation (art/lib/tiere.py gibt es beim Bauen aus)
+            AnimalKind::Fox => Traits { walk: 1.5, run: 7.5, flee: 10.0, calm: 26.0, height: 0.45, stride: (1.7, 2.6) },
+            AnimalKind::Deer => Traits { walk: 1.5, run: 10.0, flee: 14.0, calm: 32.0, height: 0.8, stride: (1.33, 2.06) },
             // Bären sind gemächlich und lassen Spieler nah heran, bevor sie davontrotten.
-            AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (0.75, 1.55) },
+            AnimalKind::Bear => Traits { walk: 1.4, run: 5.0, flee: 5.0, calm: 18.0, height: 1.2, stride: (1.05, 1.26) },
+            // Schafe sind zutraulich und rennen nur kurz weg.
+            AnimalKind::Sheep => Traits { walk: 1.0, run: 4.5, flee: 4.0, calm: 12.0, height: 0.7, stride: (1.15, 1.6) },
+            // Wölfe sind scheu und halten Abstand.
+            AnimalKind::Wolf => Traits { walk: 1.5, run: 9.0, flee: 9.0, calm: 24.0, height: 0.8, stride: (1.36, 2.24) },
         }
     }
 
@@ -61,8 +69,10 @@ impl AnimalKind {
         match self {
             AnimalKind::Hare => "hase",
             AnimalKind::Fox => "fuchs",
-            AnimalKind::Deer => "hirsch",
+            AnimalKind::Deer => "reh",
             AnimalKind::Bear => "baer",
+            AnimalKind::Sheep => "schaf",
+            AnimalKind::Wolf => "wolf",
         }
     }
 
@@ -71,8 +81,10 @@ impl AnimalKind {
         match self {
             AnimalKind::Hare => "hase",
             AnimalKind::Fox => "fuchs",
-            AnimalKind::Deer => "hirsch",
-            AnimalKind::Bear => "baer_realistisch",
+            AnimalKind::Deer => "reh",
+            AnimalKind::Bear => "baer",
+            AnimalKind::Sheep => "schaf",
+            AnimalKind::Wolf => "wolf",
         }
     }
 
@@ -80,8 +92,10 @@ impl AnimalKind {
         match self {
             AnimalKind::Hare => "Hase",
             AnimalKind::Fox => "Fuchs",
-            AnimalKind::Deer => "Hirsch",
+            AnimalKind::Deer => "Reh",
             AnimalKind::Bear => "Bär",
+            AnimalKind::Sheep => "Schaf",
+            AnimalKind::Wolf => "Wolf",
         }
     }
 }
@@ -427,6 +441,31 @@ fn placeholder(kind: AnimalKind) -> MeshData {
                 }
             }
         }
+        AnimalKind::Sheep => {
+            let wool = vec3(0.85, 0.82, 0.76);
+            let face = vec3(0.05, 0.04, 0.035);
+            add(ball(wool), vec3(0.0, h * 0.9, 0.0), vec3(0.5, 0.45, 0.8));
+            add(ball(face), vec3(0.0, h * 1.05, -0.55), vec3(0.16, 0.18, 0.22));
+            for side in [-1.0, 1.0] {
+                for end in [-0.28, 0.28] {
+                    add(MeshData::cylinder(0.04, 0.035, h * 0.6, 5, face), vec3(side * 0.12, 0.0, end), Vec3::ONE);
+                }
+            }
+        }
+        AnimalKind::Wolf => {
+            let fur = vec3(0.24, 0.26, 0.28);
+            let light = vec3(0.68, 0.66, 0.6);
+            add(ball(fur), vec3(0.0, h * 0.8, 0.0), vec3(0.32, 0.34, 0.75));
+            add(ball(fur), vec3(0.0, h * 1.1, -0.55), vec3(0.24, 0.24, 0.3));
+            add(ball(light), vec3(0.0, h * 1.02, -0.78), vec3(0.1, 0.1, 0.16));
+            for side in [-1.0, 1.0] {
+                add(MeshData::cylinder(0.05, 0.0, 0.14, 4, fur), vec3(side * 0.07, h * 1.3, -0.55), Vec3::ONE);
+                for end in [-0.33, 0.33] {
+                    add(MeshData::cylinder(0.05, 0.04, h * 0.7, 5, fur), vec3(side * 0.1, 0.0, end), Vec3::ONE);
+                }
+            }
+            add(ball(fur), vec3(0.0, h * 0.7, 0.6), vec3(0.12, 0.12, 0.35));
+        }
     }
     mesh.flat_shaded()
 }
@@ -435,15 +474,18 @@ fn placeholder(kind: AnimalKind) -> MeshData {
 pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec2) -> f32) -> Vec<Animal> {
     let mut rng = Rng::new(seed as u64 ^ 0xA41A_A15);
     let mut animals = Vec::new();
-    // (Art, Anzahl, davon beim Startpunkt, passt der Ort?) – Hasen auf Wiesen, Füchse im Wald,
-    // Hirsche überall im Grünen, Bären im Wald.
-    let groups: [(AnimalKind, usize, usize, &dyn Fn(Vec2, f32) -> bool); 4] = [
-        (AnimalKind::Hare, 16, 2, &|p, h| h < 14.0 && moisture(p) < 0.52),
-        (AnimalKind::Fox, 7, 2, &|p, h| h < 16.0 && moisture(p) >= 0.48),
-        (AnimalKind::Deer, 8, 2, &|_, h| (4.0..20.0).contains(&h)),
-        (AnimalKind::Bear, 4, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
+    // (Art, Anzahl, davon beim Startpunkt, Gruppengröße, passt der Ort?) – Hasen auf Wiesen,
+    // Füchse im Wald, Rehe überall im Grünen, Bären im Wald, Schafe in Herden auf Wiesen,
+    // Wölfe als Rudel im Wald und am Berg.
+    let groups: [(AnimalKind, usize, usize, usize, &dyn Fn(Vec2, f32) -> bool); 6] = [
+        (AnimalKind::Hare, 16, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
+        (AnimalKind::Fox, 7, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
+        (AnimalKind::Deer, 8, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
+        (AnimalKind::Bear, 4, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
+        (AnimalKind::Sheep, 14, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
+        (AnimalKind::Wolf, 6, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
     ];
-    for (kind, count, near, fits) in groups {
+    for (kind, count, near, herd, fits) in groups {
         let mut placed = 0;
         let mut tries = 0;
         while placed < count && tries < 4000 {
@@ -459,9 +501,17 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
             if h < MIN_GROUND + 1.0 || terrain.normal_at(p.x, p.y).y < 0.9 || !(near_spawn || fits(p, h)) {
                 continue;
             }
-            let seed = ((seed as u64) << 16) ^ animals.len() as u64;
-            animals.push(Animal::new(kind, vec3(p.x, h, p.y), seed));
-            placed += 1;
+            // Herden und Rudel: die übrigen Tiere der Gruppe dicht daneben.
+            for member in 0..herd.min(count - placed) {
+                let q = if member == 0 { p } else { p + Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)) * rng.range(2.0, 6.0) };
+                let hq = terrain.height_at(q.x, q.y);
+                if hq < MIN_GROUND + 1.0 {
+                    continue;
+                }
+                let seed = ((seed as u64) << 16) ^ animals.len() as u64;
+                animals.push(Animal::new(kind, vec3(q.x, hq, q.y), seed));
+                placed += 1;
+            }
         }
     }
     animals
