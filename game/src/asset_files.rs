@@ -122,7 +122,7 @@ fn rules_for(path: &Path) -> Option<Rules> {
     match folder {
         "natur" => Some(Rules { max_triangles: 5000, required_clips: &[] }),
         "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"] }),
-        "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen"] }),
+        "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"] }),
         "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
         _ => None,
     }

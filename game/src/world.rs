@@ -6,7 +6,7 @@ use engine::prelude::*;
 
 use crate::animals::{self, Animal};
 use crate::island::{self, ResourceKind, ResourceSpec};
-use crate::characters::{Action, Puppet, MINE_STRIKE};
+use crate::characters::{Action, Puppet, CHOP_STRIKE, MINE_STRIKE};
 use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, Tool, HOST_PLAYER};
 
 pub const WALK_SPEED: f32 = 5.0;
@@ -19,8 +19,8 @@ pub const CAST_RANGE: f32 = 45.0;
 pub const BOLT_SPEED: f32 = 34.0;
 /// So lange holt der Magier aus, bevor das Geschoss losfliegt (Sekunden, passt zur Animation).
 pub const CAST_DELAY: f32 = 0.22;
-/// Takte zwischen zwei Schlägen auf einen Baum.
-pub const HARVEST_COOLDOWN_TICKS: u64 = 22;
+/// Takte zwischen zwei Axthieben auf einen Baum (so lang wie die Animation „Hacken“).
+pub const HARVEST_COOLDOWN_TICKS: u64 = 36;
 /// Takte zwischen zwei Schlägen mit der Spitzhacke (so lang wie die Animation „Abbauen“).
 pub const MINE_COOLDOWN_TICKS: u64 = 48;
 /// Wie nah man einem Rohstoff sein muss (Meter vom Rand).
@@ -507,11 +507,11 @@ impl World {
         if health == 0 {
             resource.regrows_at = Some(ctx.time.tick + RESPAWN_TICKS);
         }
-        let delayed = resource.spec.kind.needs_pickaxe() && !ctx.is_headless();
+        let delayed = !ctx.is_headless();
         if delayed && (effects || resource.strike.is_some()) {
             // Das Modell zeigt den Stand erst beim Auftreffen; weg ist es dann auch erst dort.
             if effects && resource.strike.is_none() {
-                resource.strike = Some(MINE_STRIKE);
+                resource.strike = Some(strike_delay(resource.spec.kind));
             }
             if health == 0 {
                 if let Some(body) = resource.body.take() {
@@ -556,16 +556,8 @@ impl World {
     /// Nur Optik: Wackeln und Splitter sofort zeigen, bevor der Server antwortet.
     pub fn preview_hit(&mut self, ctx: &mut Context, id: u32) {
         if let Some(resource) = self.resources.get_mut(&id).filter(|r| r.is_present()) {
-            if resource.spec.kind.needs_pickaxe() {
-                if resource.strike.is_none() && !ctx.is_headless() {
-                    resource.strike = Some(MINE_STRIKE);
-                }
-                return;
-            }
-            resource.shake = 0.35;
-            hit_particles(ctx, &resource.spec, false);
-            if !ctx.is_headless() {
-                self.sound_events.push(SoundEvent::Hit { kind: resource.spec.kind, at: resource.spec.transform.position, finished: false });
+            if resource.strike.is_none() && !ctx.is_headless() {
+                resource.strike = Some(strike_delay(resource.spec.kind));
             }
         }
     }
@@ -746,6 +738,11 @@ impl World {
             entity.transform.scale = scale * vec3(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
         }
     }
+}
+
+/// Zeit vom Beginn der Animation bis zum Auftreffen des Werkzeugs.
+fn strike_delay(kind: ResourceKind) -> f32 {
+    if kind.needs_pickaxe() { MINE_STRIKE } else { CHOP_STRIKE }
 }
 
 /// Splitter, Blätter und Brocken beim Abbauen.

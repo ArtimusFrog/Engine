@@ -367,14 +367,21 @@ def spitzhacke():
     _aus_magier("Spitzhacke", drehung)
 
 
+def axt():
+    # Stiel schräg von links unten nach rechts oben, Schneide zeigt nach links oben
+    s = 0.7071
+    drehung = Matrix(((-s, 0, -s), (0, 1, 0), (s, 0, -s))).to_4x4()
+    _aus_magier("Axt", drehung)
+
+
 def zauberstab():
     _aus_magier("Stab", Matrix.Rotation(math.radians(45), 4, "Y"), nur_oben=0.75)
 
 
 GEGENSTAENDE = {"holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
-                "spitzhacke": spitzhacke, "zauberstab": zauberstab}
+                "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab}
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
-BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25)}
+BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25)}
 
 
 # ---------------------------------------------------------------------------

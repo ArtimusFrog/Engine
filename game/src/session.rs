@@ -194,6 +194,8 @@ mod tests {
         cast: Option<Vec3>,
         /// Stab statt Spitzhacke in der Hand
         staff: bool,
+        /// Werkzeug in der Hand, wenn nicht gezaubert wird
+        tool: Tool,
     }
 
     impl Game for TestGame {
@@ -205,7 +207,7 @@ mod tests {
                 jump: self.autopilot && ctx.time.tick % 120 == 60,
                 harvest: self.harvest,
                 // Zum Zaubern den Stab nehmen, sonst die Spitzhacke
-                tool: if self.cast.is_some() || self.staff { Tool::Staff } else { Tool::Pickaxe },
+                tool: if self.cast.is_some() || self.staff { Tool::Staff } else { self.tool },
                 cast: self.cast.take(),
                 ..Default::default()
             };
@@ -228,12 +230,12 @@ mod tests {
             let mut server_ctx = Context::headless();
             let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, &hello("Server")).unwrap();
             let port = session.port().expect("Server hat keinen Port");
-            let server = TestGame { session, autopilot: false, harvest: None, cast: None, staff: false };
+            let server = TestGame { session, autopilot: false, harvest: None, cast: None, staff: false, tool: Tool::Pickaxe };
 
             let mut client_ctx = Context::headless();
             let address = format!("127.0.0.1:{port}");
             let session = Session::start(&mut client_ctx, Mode::Join { address }, &hello("Testerin")).unwrap();
-            let client = TestGame { session, autopilot: client_autopilot, harvest: None, cast: None, staff: false };
+            let client = TestGame { session, autopilot: client_autopilot, harvest: None, cast: None, staff: false, tool: Tool::Pickaxe };
             Pair { server, server_ctx, client, client_ctx }
         }
 
@@ -354,8 +356,13 @@ mod tests {
         let character = world.players[&player].character;
         pair.server_ctx.physics.teleport_character(character, stand);
 
+        // Mit der Spitzhacke geht es nicht …
         pair.client.harvest = Some(tree);
-        pair.run(hits * 30 + 60);
+        pair.run(100);
+        assert_eq!(pair.server.session.world().resources[&tree].health, resource_health(&pair, tree), "Baum ohne Axt beschädigt");
+        // … mit der Axt schon.
+        pair.client.tool = Tool::Axe;
+        pair.run(hits * crate::world::HARVEST_COOLDOWN_TICKS as u32 + 90);
 
         assert!(!pair.server.session.world().resources[&tree].is_present(), "Baum steht auf dem Server noch");
         assert!(!pair.client.session.world().resources[&tree].is_present(), "Baum steht beim Client noch");
@@ -414,6 +421,10 @@ mod tests {
         pair.run(80);
         assert!(pair.server.session.world().resources[&stone].health < full, "Spitzhacke baut nicht ab");
         assert!(pair.client.session.local_inventory().stone > 0);
+    }
+
+    fn resource_health(pair: &Pair, id: u32) -> u8 {
+        pair.server.session.world().resources[&id].spec.max_health
     }
 
     #[test]

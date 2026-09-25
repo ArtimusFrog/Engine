@@ -39,6 +39,11 @@ impl ResourceKind {
     pub fn needs_pickaxe(self) -> bool {
         matches!(self, ResourceKind::Stone | ResourceKind::Ore)
     }
+
+    /// Werkzeug, mit dem man es abbaut: Axt für Bäume, Spitzhacke für Vorkommen.
+    pub fn tool(self) -> crate::protocol::Tool {
+        if self.needs_pickaxe() { crate::protocol::Tool::Pickaxe } else { crate::protocol::Tool::Axe }
+    }
 }
 
 /// Ein abbaubarer Rohstoff, so wie er beim Aufbau der Insel entsteht.

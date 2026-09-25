@@ -64,7 +64,7 @@ pub struct Playground {
     /// Nur zum Testen: Figur steht an einem Vorkommen und baut es ab
     /// (`Some(erz?)` = noch hinstellen, sobald die Figur da ist).
     demo_mine: Option<u32>,
-    demo_mine_request: Option<bool>,
+    demo_mine_request: Option<crate::island::ResourceKind>,
     /// Nur zum Testen: neben das nächste Kristallvorkommen stellen und hinschauen.
     demo_crystal: Option<Option<Vec3>>,
     /// Nur zum Testen: Figur läuft von allein.
@@ -227,7 +227,8 @@ impl Playground {
         let Some(id) = self.aim else { return };
         let Some(session) = &mut self.session else { return };
         let Some(kind) = session.world().resources.get(&id).map(|r| r.spec.kind) else { return };
-        if kind.needs_pickaxe() && tool != Tool::Pickaxe {
+        // Bäume nur mit der Axt, Vorkommen nur mit der Spitzhacke
+        if tool != kind.tool() {
             return;
         }
         let ticks = if kind.needs_pickaxe() { crate::world::MINE_COOLDOWN_TICKS } else { crate::world::HARVEST_COOLDOWN_TICKS };
@@ -277,7 +278,7 @@ impl Playground {
                 let cast_cooldown = crate::world::CAST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT + 0.05;
                 if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open {
                     ctx.cursor_locked = true;
-                } else if ctx.cursor_locked && self.tool() == Tool::Pickaxe && ctx.input.mouse(MouseButton::Left) {
+                } else if ctx.cursor_locked && matches!(self.tool(), Tool::Pickaxe | Tool::Axe) && ctx.input.mouse(MouseButton::Left) {
                     self.harvest_aimed(ctx);
                 } else if ctx.cursor_locked
                     && self.tool() == Tool::Staff
@@ -293,8 +294,7 @@ impl Playground {
                     }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
-                // Rechte Maustaste halten: im Takt der Abklingzeit zuschlagen (Bäume immer,
-                // Vorkommen nur mit der Spitzhacke).
+                // Rechte Maustaste halten geht auch (mit dem passenden Werkzeug).
                 if ctx.cursor_locked && ctx.input.mouse(MouseButton::Right) {
                     self.harvest_aimed(ctx);
                 }
@@ -424,11 +424,14 @@ impl Playground {
         let Some(resource) = session.world().resources.get(&id) else { return };
         let center = egui_ctx.content_rect().center();
         let painter = egui_ctx.layer_painter(egui::LayerId::background());
-        let pickaxe = self.tool() == Tool::Pickaxe;
-        let (action, color) = match resource.spec.kind {
-            crate::island::ResourceKind::Wood => ("Rechtsklick: Holz hacken", Color32::from_white_alpha(200)),
-            _ if pickaxe => ("Linksklick: Abbauen", Color32::from_white_alpha(200)),
-            _ => ("Spitzhacke nehmen: Taste 1", Color32::from_rgb(255, 170, 90)),
+        let needed = resource.spec.kind.tool();
+        let hint;
+        let (action, color) = if self.tool() == needed {
+            let verb = if needed == Tool::Axe { "Linksklick: Holz hacken" } else { "Linksklick: Abbauen" };
+            (verb, Color32::from_white_alpha(200))
+        } else {
+            hint = format!("{} nehmen: Taste {}", needed.label(), needed.slot() + 1);
+            (hint.as_str(), Color32::from_rgb(255, 170, 90))
         };
         let big = egui::FontId::proportional(18.0);
         painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, resource.spec.name, big, Color32::WHITE);
@@ -715,7 +718,7 @@ impl Playground {
         }
 
         let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · 1/2 Werkzeug · Linksklick Benutzen · Rechtsklick Holz hacken · I Inventar · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · I Inventar · Tab Spieler · Esc Menü"
         } else if self.inventory_open {
             ""
         } else {
@@ -734,10 +737,10 @@ impl Playground {
 }
 
 /// Nur zum Testen: stellt die eigene Figur neben das nächste Stein- oder Erzvorkommen.
-fn demo_place_at_node(ctx: &mut Context, session: &mut Session, ore: bool) -> Option<u32> {
+fn demo_place_at_node(ctx: &mut Context, session: &mut Session, wanted: crate::island::ResourceKind) -> Option<u32> {
     let local = session.local_player()?;
     let world = session.world();
-    let wanted = if ore { crate::island::ResourceKind::Ore } else { crate::island::ResourceKind::Stone };
+
     let (&id, resource) = world
         .resources
         .iter()
@@ -796,14 +799,21 @@ impl Game for Playground {
         self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
         self.demo_cast = args.iter().any(|a| a == "--demo-zaubern");
         if self.demo_cast {
-            self.hotbar_slot = 1;
+            self.hotbar_slot = Tool::Staff.slot();
         }
         // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
         if let Some(position) = args.iter().position(|a| a == "--demo-abbauen") {
-            self.demo_mine_request = Some(args.get(position + 1).is_none_or(|a| a != "stein"));
+            use crate::island::ResourceKind;
+            let kind = match args.get(position + 1).map(String::as_str) {
+                Some("stein") => ResourceKind::Stone,
+                Some("baum") => ResourceKind::Wood,
+                _ => ResourceKind::Ore,
+            };
+            self.demo_mine_request = Some(kind);
+            self.hotbar_slot = kind.tool().slot();
         }
         match self.start.take() {
             Some(mode) => self.start_session(ctx, mode),
@@ -917,8 +927,8 @@ impl Game for Playground {
                 self.orbit.distance = 5.5;
             }
         }
-        if let (Some(ore), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
-            self.demo_mine = demo_place_at_node(ctx, session, ore);
+        if let (Some(kind), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
+            self.demo_mine = demo_place_at_node(ctx, session, kind);
         }
         if let (Some(id), Some(session)) = (self.demo_mine, &self.session) {
             let world = session.world();

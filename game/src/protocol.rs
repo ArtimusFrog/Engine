@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000C;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000D;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -40,16 +40,24 @@ pub enum Tool {
     Pickaxe,
     /// Zaubert (Angriff auf Tiere).
     Staff,
+    /// Fällt Bäume.
+    Axe,
 }
 
 impl Tool {
     /// Belegung der Auswahlleiste (Platz 1, 2, …).
-    pub const HOTBAR: [Tool; 2] = [Tool::Pickaxe, Tool::Staff];
+    pub const HOTBAR: [Tool; 3] = [Tool::Pickaxe, Tool::Axe, Tool::Staff];
+
+    /// Platz in der Auswahlleiste (0 = Taste 1).
+    pub fn slot(self) -> usize {
+        Tool::HOTBAR.iter().position(|&t| t == self).unwrap_or(0)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             Tool::Pickaxe => "Spitzhacke",
             Tool::Staff => "Zauberstab",
+            Tool::Axe => "Axt",
         }
     }
 
@@ -58,6 +66,7 @@ impl Tool {
         match self {
             Tool::Pickaxe => "spitzhacke",
             Tool::Staff => "zauberstab",
+            Tool::Axe => "axt",
         }
     }
 }

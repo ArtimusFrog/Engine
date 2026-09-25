@@ -46,6 +46,8 @@ pub enum Action {
 
 /// Wie lange (Sekunden) nach dem Beginn von „Abbauen“ die Hacke auftrifft (Bild 16 von 30, Tempo 1,25).
 pub const MINE_STRIKE: f32 = 16.0 / 30.0 / 1.25;
+/// Wie lange nach dem Beginn von „Hacken“ die Axt den Stamm trifft (Bild 11 von 24, Tempo 1,3).
+pub const CHOP_STRIKE: f32 = 11.0 / 30.0 / 1.3;
 
 /// Die sichtbare, animierte Figur eines Spielers.
 pub struct Puppet {
@@ -96,6 +98,7 @@ impl Puppet {
         if let Some(animator) = &mut self.animator {
             animator.set_visible("Stab", tool == Tool::Staff);
             animator.set_visible("Spitzhacke", tool == Tool::Pickaxe);
+            animator.set_visible("Axt", tool == Tool::Axe);
         }
     }
 
@@ -107,14 +110,14 @@ impl Puppet {
     /// Spielt eine einmalige Aktion ab: Hieb mit dem Stab (Holz hacken) oder Zaubern.
     pub fn act(&mut self, action: Action) {
         let Some(animator) = &mut self.animator else { return };
-        let (clip, speed) = match action {
-            Action::Chop => ("Hieb", 1.3),
-            Action::Cast => ("Zaubern", 1.35),
-            Action::Mine => ("Abbauen", 1.25),
+        let (clip, fallback, speed) = match action {
+            Action::Chop => ("Hacken", "Hieb", 1.3),
+            Action::Cast => ("Zaubern", "Werfen", 1.35),
+            Action::Mine => ("Abbauen", "Hieb", 1.25),
         };
-        // Ältere Modelle ohne „Zaubern“: dann eben die Wurfbewegung.
+        // Ältere Modelle ohne die Animation: eine ähnliche Bewegung nehmen.
         if !animator.play(clip, false, 0.08) {
-            animator.play("Werfen", false, 0.08);
+            animator.play(fallback, false, 0.08);
         }
         animator.set_speed(speed);
         self.acting = true;

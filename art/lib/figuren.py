@@ -776,6 +776,11 @@ def magier(seed=12, name="Magier"):
     _spitzhacke(f, STAB_X, STAB_Y, stab_gewicht)
     f.als_starr("Spitzhacke", "Hand.R", hacke_anfang)
 
+    # ================= Axt (für Bäume) =================
+    axt_anfang = len(f.teile)
+    _axt(f, STAB_X, STAB_Y, stab_gewicht)
+    f.als_starr("Axt", "Hand.R", axt_anfang)
+
     # ================= Skelett =================
     f.knochen_dazu("Becken", (0, 0, 0.95), (0, 0, 1.1), None, HOCH)
     f.knochen_dazu("Bauch", (0, 0, 1.1), (0, 0, 1.3), "Becken", HOCH)
@@ -874,6 +879,56 @@ def _spitzhacke(f, x, y, gewicht):
     f.kugel("Keil", Vector((x, y, kopf_z + 0.043)), Vector((0.012, 0.024, 0.01)), eisen_dunkel, gewicht, segmente=8, ringe=4, glatt=False)
 
 
+def _axt(f, x, y, gewicht):
+    """Axt, am oberen Stielende gegriffen: der Stiel hängt aus der Faust nach unten (leicht nach
+    außen), unten sitzt der Kopf. Die Schneide zeigt zur Körpermitte (+X) – beim waagerechten
+    Schlag von rechts nach links ist sie vorne."""
+    holz = farbe("#9A6534")
+    holz_dunkel = farbe("#744A24")
+    leder = farbe("#4A2F1C")
+    eisen = farbe("#5B616B")
+    eisen_hell = farbe("#D2D8E0")
+    eisen_dunkel = farbe("#3B3F47")
+    X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
+    oben, unten = 1.02, 0.3
+
+    def stiel_punkt(t):
+        # Leicht geschwungener Stiel („Haft“), unten etwas nach außen (-X)
+        return Vector((x - 0.06 * t * t + 0.012 * math.sin(t * math.pi), y, oben + (unten - oben) * t))
+
+    ringe = []
+    for i in range(16):
+        t = i / 15
+        r = 0.018 + 0.003 * math.sin(t * math.pi) + (0.006 if t > 0.94 else 0.0)
+        ringe.append((stiel_punkt(t), X, Y, r * 0.9, r))
+
+    def stiel_farbe(i, k, p):
+        z = p.center.z
+        if z > 0.8:
+            return leder * (0.78 if int(z * 70) % 2 else 1.0)
+        return (holz if (k + int(i * 3)) % 5 else holz_dunkel) * (0.9 + 0.1 * math.sin(z * 37))
+
+    f.loft("Axtstiel", ringe, 10, stiel_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+
+    # Kopf: vom stumpfen Nacken (-X) über das Auge bis zur breiten, geschwungenen Schneide (+X).
+    # (Abstand, halbe Dicke in Y, halbe Höhe in Z, Versatz in Z)
+    auge = stiel_punkt(0.92)
+    profil = [(-0.045, 0.02, 0.028, 0.0), (-0.02, 0.024, 0.036, 0.0), (0.0, 0.025, 0.038, 0.0), (0.03, 0.02, 0.032, -0.004),
+              (0.065, 0.014, 0.032, -0.01), (0.1, 0.009, 0.05, -0.016), (0.13, 0.006, 0.07, -0.02), (0.155, 0.004, 0.085, -0.022),
+              (0.17, 0.0015, 0.09, -0.022)]
+    kopf = [(auge + X * dx + Z * dz, Y, Z, dicke, hoehe) for dx, dicke, hoehe, dz in profil]
+
+    def kopf_farbe(i, k, p):
+        schneide = p.center.x - auge.x > 0.13
+        return (eisen_hell if schneide else eisen) * (0.93 + 0.07 * (k % 2))
+
+    f.loft("Axtkopf", kopf, 8, kopf_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    # Eisenring und Keil am Auge
+    ring = [(auge + Z * dz, X, Y, 0.024, 0.026) for dz in (0.05, 0.065)]
+    f.loft("Axtring", ring, 10, lambda i, k, p: eisen_dunkel, gewicht, oben_zu=True, unten_zu=True)
+    f.kugel("Axtkeil", auge - Z * 0.042, Vector((0.02, 0.011, 0.008)), eisen_dunkel, gewicht, segmente=8, ringe=4, glatt=False)
+
+
 def _magier_animationen(armatur):
     # Idle: ruhiges Atmen, der Blick wandert, der Hut wippt nach
     def idle(phi):
@@ -952,3 +1007,19 @@ def _magier_animationen(armatur):
                     (bild, "Oberschenkel.R", "rot", (-knie * 0.4, 0, 0)), (bild, "Unterschenkel.R", "rot", (knie * 0.7, 0, 0)),
                     (bild, "Becken", "pos", (0, 0, senken))]
     animation(armatur, "Abbauen", 30, abbauen)
+
+    # Hacken (Axt am Baum): Arme nach vorne, Oberkörper weit nach rechts ausholen, dann waagerecht
+    # von rechts nach links durchziehen (Einschlag bei Bild 11), nachschwingen, zurück.
+    # Mit dem Arm nach vorne zeigt der hängende Stiel waagerecht nach vorne, die Schneide nach links.
+    hacken = []
+    for bild, arm_r, ell_r, arm_l, ell_l, dreh, beugen, knie in (
+            (0, 0, -6, 0, -12, 0, 0, 6), (7, -95, -25, -80, -40, 55, -4, 14), (11, -88, -6, -80, -18, -8, 8, 18),
+            (15, -82, -8, -76, -22, -35, 10, 16), (22, -50, -15, -45, -20, -15, 4, 10), (24, 0, -6, 0, -12, 0, 0, 6)):
+        hacken += [(bild, "Oberarm.R", "rot", (arm_r, 0, 0)), (bild, "Unterarm.R", "rot", (ell_r, 0, 0)),
+                   (bild, "Oberarm.L", "rot", (arm_l, 0, -18)), (bild, "Unterarm.L", "rot", (ell_l, 0, 0)),
+                   (bild, "Brust", "rot", (beugen, dreh, 0)), (bild, "Bauch", "rot", (beugen * 0.5, dreh * 0.5, 0)),
+                   (bild, "Becken", "rot", (0, dreh * 0.25, 0)), (bild, "Kopf", "rot", (-beugen * 0.5, -dreh * 0.4, 0)),
+                   (bild, "Hut", "rot", (0, 0, -dreh * 0.1)),
+                   (bild, "Oberschenkel.L", "rot", (-knie * 0.5, 0, 0)), (bild, "Unterschenkel.L", "rot", (knie, 0, 0)),
+                   (bild, "Oberschenkel.R", "rot", (-knie * 0.3, 0, 0)), (bild, "Unterschenkel.R", "rot", (knie * 0.7, 0, 0))]
+    animation(armatur, "Hacken", 24, hacken)
