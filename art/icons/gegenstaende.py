@@ -270,41 +270,54 @@ def wolle():
 
 
 def erz():
-    """Eisenerz: dunkler Brocken mit rostroten Adern und herausragenden, metallisch glänzenden Stücken."""
-    fels = material("Basalt", "#38373E", rau=0.8, muster=True, muster_farbe="#1F1E23", muster_skala=6.0)
-    rost = material("Erzrost", "#B8662F", rau=0.6, muster=True, muster_farbe="#7A3F1E", muster_skala=9.0)
+    """Eisenerz wie die Erzvorkommen: kantig gebrochener, dunkler Basaltbrocken, durchzogen von
+    rostroten Erzadern mit blanken Eisenstellen."""
+    fels = material("Basalt", "#3E3D46", rau=0.8, muster=True, muster_farbe="#26252C", muster_skala=6.0)
+    rost = material("Erzrost", "#C06A30", rau=0.6, muster=True, muster_farbe="#8A4520", muster_skala=9.0)
+    rost_rand = material("Erzrand", "#5A2E18", rau=0.75)
     glanz = bpy.data.materials.new("Erzglanz")
     setze(glanz, use_nodes=True)
     bsdf = next(n for n in glanz.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
     bsdf.inputs["Base Color"].default_value = linear("#C9D1DC")
     bsdf.inputs["Metallic"].default_value = 1.0
-    bsdf.inputs["Roughness"].default_value = 0.25
+    bsdf.inputs["Roughness"].default_value = 0.3
+
+    zufall = random.Random(21)
     bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=0.8)
-    bewegen(bm, groesse=(1.1, 0.95, 0.8))
-    zufall = random.Random(12)
-    ebenen = [Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-0.3, 1))).normalized() for _ in range(8)]
-    for v in bm.verts:
-        for n in ebenen:
-            abstand = v.co.dot(n) - 0.58
-            if abstand > 0:
-                v.co -= n * abstand
-    verbeulen(bm, 0.025, seed=5)
+    bmesh.ops.create_icosphere(bm, subdivisions=3, radius=0.8)
+    bewegen(bm, groesse=(1.15, 0.95, 0.85))
+    # Große, ebene Bruchflächen (wie bei den Vorkommen)
+    for _ in range(11):
+        n = Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-0.5, 1))).normalized()
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=n * zufall.uniform(0.5, 0.7),
+                               plane_no=n, clear_outer=True)
+        rand = [e for e in bm.edges if e.is_boundary]
+        if rand:
+            bmesh.ops.holes_fill(bm, edges=rand, sides=0)
+    # Flächen fein unterteilen, damit die Adern als schmale Bänder erscheinen
+    bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
+    for _ in range(3):
+        lang = [e for e in bm.edges if e.calc_length() > 0.12]
+        if not lang:
+            break
+        bmesh.ops.subdivide_edges(bm, edges=lang, cuts=1, use_grid_fill=True)
+        bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
     bm.normal_update()
+    # Drei Adern quer durch den Brocken; im Kern hier und da blankes Eisen
+    adern = [(Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-0.5, 0.5))).normalized(), zufall.uniform(-0.2, 0.25))
+             for _ in range(3)]
     for f in bm.faces:
-        f.material_index = 1 if zufall.random() < 0.16 else 0
-    brocken = objekt("Erzbrocken", bm, fels, rost)
-    # Herausragende Erzstücke
-    mitte = Vector((0, 0, 0))
-    punkte = [Vector(p).normalized() for p in ((0.5, -0.6, 0.6), (-0.4, -0.7, 0.4), (0.8, -0.2, 0.1), (-0.1, -0.5, 0.85), (0.3, 0.2, 0.9))]
-    for i, richtung in enumerate(punkte):
-        k = bmesh.new()
-        bmesh.ops.create_icosphere(k, subdivisions=0, radius=1.0)
-        bewegen(k, groesse=(0.13, 0.11, 0.26 + 0.06 * (i % 2)))
-        drehung = Vector((0, 0, 1)).rotation_difference(richtung).to_matrix().to_4x4()
-        bmesh.ops.transform(k, matrix=Matrix.Translation(mitte + richtung * 0.62) @ drehung, verts=k.verts)
-        objekt(f"Erzstueck{i}", k, glanz if i % 2 == 0 else rost)
-    brocken.rotation_euler.z = 0.3
+        mitte = f.calc_center_median()
+        f.material_index = 0
+        for normale, abstand in adern:
+            d = abs(mitte.dot(normale) - abstand)
+            if d < 0.045:
+                f.material_index = 3 if zufall.random() < 0.22 else 1
+                break
+            if d < 0.09:
+                f.material_index = 2
+    brocken = objekt("Erzbrocken", bm, fels, rost, rost_rand, glanz)
+    brocken.rotation_euler.z = 0.4
 
 
 def _aus_magier(knoten, drehung, nur_oben=None):
