@@ -11,7 +11,8 @@ Aufbau der Textur (Blender-UV, v zeigt nach oben):
     oben links  LAUB    Blattbüschel
     oben rechts NADEL   Tannenzweig (Stamm links, Spitze rechts)
     unten links WEDEL   Palmwedel (oberes Viertel) und GRAS (unteres Viertel)
-    unten rechts        weiße Fläche für Rinde, Stämme, Früchte (Farbe nur aus Vertexfarbe)
+    unten rechts BIRKE  Birkenrinde (nahtlos kachelbar), am rechten Rand ein weißer Streifen
+                        für Rinde, Stämme, Früchte (Farbe nur aus Vertexfarbe)
 
 Jede Art ist eine Funktion (eiche, birke, tanne, palme, zauberbaum), `seed` ergibt die Variante.
 Koordinaten wie in der Werkstatt: Z oben, Ursprung am Stammfuß.
@@ -37,7 +38,8 @@ LAUB = (0.0, 0.5, 0.5, 1.0)
 NADEL = (0.5, 0.5, 1.0, 1.0)
 WEDEL = (0.0, 0.25, 0.5, 0.5)
 GRAS = (0.0, 0.0, 0.5, 0.25)
-FLECK = (0.75, 0.25)
+BIRKE = (0.5, 0.0, 0.9, 0.5)
+FLECK = (0.95, 0.25)
 
 OBEN = Vector((0, 0, 1))
 
@@ -109,6 +111,66 @@ def _strich(bild, gitter, a, b, dicke, hell):
     feld[maske, 3] = 1.0
 
 
+def _birkenrinde(rng, w, h):
+    """Nahtlos kachelbare Birkenrinde (RGB, Breite = einmal um den Stamm): fast weiß mit
+    grauen Längsschlieren, feinen schwarzen, linsenförmigen Querstrichen (Lentizellen) in
+    Reihen, kleinen Punkten und ein paar Astnarben."""
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+
+    def abstand(mitte, laenge):
+        d = np.abs(np.arange(laenge, dtype=np.float32) - mitte)
+        return np.minimum(d, laenge - d)  # über den Rand hinweg (nahtlos)
+
+    wert = np.full((h, w), 0.94, np.float32)
+    for _ in range(45):  # senkrechte Schlieren
+        wert += rng.uniform(-0.07, 0.025) * np.exp(-(abstand(rng.uniform(0, w), w) / rng.uniform(2, 14)) ** 2)[None, :]
+    for _ in range(14):  # waagerechte, wolkige Bänder
+        wert += rng.uniform(-0.05, 0.02) * np.exp(-(abstand(rng.uniform(0, h), h) / rng.uniform(4, 22)) ** 2)[:, None]
+    rgb = np.stack([wert, wert * 0.985, wert * 0.955], -1)
+
+    def zeichne(maske, cx, cy, rx, ry, farbe):
+        # Mit Wiederholung über die Ränder, damit die Kachel nahtlos bleibt
+        for ox in (-w, 0, w):
+            for oy in (-h, 0, h):
+                bx0, bx1 = int(max(0, cx + ox - rx - 2)), int(min(w, cx + ox + rx + 3))
+                by0, by1 = int(max(0, cy + oy - ry - 2)), int(min(h, cy + oy + ry + 3))
+                if bx1 <= bx0 or by1 <= by0:
+                    continue
+                m = maske(x[by0:by1, bx0:bx1] - (cx + ox), y[by0:by1, bx0:bx1] - (cy + oy))
+                rgb[by0:by1, bx0:bx1][m] = farbe
+
+    def linse(rx, ry, neigung):
+        # in der Mitte am dicksten, zu den Enden spitz
+        def maske(px, py):
+            s = px / rx
+            return (np.abs(s) < 1) & (np.abs(py - neigung * px) < ry * np.clip(1 - s * s, 0, 1) ** 0.7)
+        return maske
+
+    # Große Lentizellen in Reihen (1–3 Striche auf fast gleicher Höhe)
+    for _ in range(26):
+        cy, cx = rng.uniform(0, h), rng.uniform(0, w)
+        for _ in range(rng.integers(1, 4)):
+            rx, ry = rng.uniform(0.04, 0.16) * w, rng.uniform(1.3, 3.8)
+            dunkel = rng.uniform(0.09, 0.2)
+            zeichne(linse(rx, ry, rng.uniform(-0.04, 0.04)), cx, cy + rng.uniform(-2, 2), rx, ry, (dunkel * 1.05, dunkel, dunkel * 0.95))
+            cx += rx * 2 + rng.uniform(4, 30)
+    # Kleine Striche und Punkte
+    for _ in range(170):
+        rx, ry = rng.uniform(0.008, 0.04) * w, rng.uniform(0.7, 1.6)
+        dunkel = rng.uniform(0.18, 0.42)
+        zeichne(linse(rx, ry, 0.0), rng.uniform(0, w), rng.uniform(0, h), rx, ry, (dunkel, dunkel, dunkel * 0.97))
+    # Astnarben: dunkle, nach unten offene Winkel („Augen“)
+    for _ in range(3):
+        breite, dicke = rng.uniform(12, 24), rng.uniform(2.5, 4.5)
+
+        def narbe(px, py, breite=breite, dicke=dicke):
+            bogen = -0.6 * np.abs(px) + breite * 0.25
+            return (np.abs(px) < breite) & (py < bogen + dicke) & (py > bogen - dicke * (1 - np.abs(px) / breite))
+
+        zeichne(narbe, rng.uniform(0, w), rng.uniform(0, h), breite, breite * 0.6, (0.13, 0.12, 0.11))
+    return np.clip(rgb, 0, 1)
+
+
 def blatt_textur():
     """Erzeugt die gemeinsame Textur (einmal pro Blender-Sitzung) und speichert sie als PNG."""
     if TEXTUR_NAME in bpy.data.images:
@@ -177,8 +239,11 @@ def blatt_textur():
             continue
         _blatt(bild, gitter, (x, 0.004), math.pi / 2 - neigung, laenge, rng.uniform(0.014, 0.022), rng.uniform(0.7, 1.0), form="halm", rippe=False)
 
-    # Weiße Fläche für Rinde & Co.
-    bild[: n // 2, n // 2 :] = 1.0
+    # Birkenrinde und daneben die weiße Fläche für Rinde & Co.
+    x0, x1 = int(BIRKE[0] * n), int(BIRKE[2] * n)
+    bild[: n // 2, x0:x1, :3] = _birkenrinde(np.random.default_rng(11), x1 - x0, n // 2)
+    bild[: n // 2, x0:x1, 3] = 1.0
+    bild[: n // 2, x1:] = 1.0
 
     img = bpy.data.images.new(TEXTUR_NAME, n, n, alpha=True)
     img.pixels.foreach_set(bild.ravel())
@@ -247,6 +312,7 @@ class Baum:
         self.rinden = {}        # Farbschlüssel (material_index) → Farbe
         self.leuchtend = set()  # Flächen mit Leuchtmaterial
         self.leucht_farbe = None
+        self.holz_uv = {}       # Holzfläche → {Vertex: UV} (z. B. Birkenrinde)
         self.hoehe = hoehe
 
     def rinde(self, hex_farbe):
@@ -260,9 +326,11 @@ class Baum:
         return Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1)))
 
     # --- Holz -------------------------------------------------------------
-    def rohr(self, punkte, radien, ecken, mat, spitze=True, streifen=None, muster=None, rauh=1.0):
+    def rohr(self, punkte, radien, ecken, mat, spitze=True, streifen=None, muster=None, rauh=1.0, uv=None):
         """Konisches Rohr entlang einer Punktfolge; `streifen`: Farbe für Rindenrillen,
-        `muster(ring, ecke)`: Farbe je Fläche (z. B. Birkenstriche), `rauh`: 0 = glatt rund."""
+        `muster(ring, ecke)`: Farbe je Fläche, `rauh`: 0 = glatt rund,
+        `uv(ring, ecke)`: Texturkoordinaten der Fläche (unten links, unten rechts, oben rechts,
+        oben links) – sonst bekommt das Holz nur die weiße Fläche der Textur."""
         bm = self.bm
         ringe = []
         normale = None
@@ -285,8 +353,12 @@ class Baum:
             ringe.append(ring)
         for i, (a, b) in enumerate(zip(ringe, ringe[1:])):
             for k in range(ecken):
-                f = bm.faces.new((a[k], a[(k + 1) % ecken], b[(k + 1) % ecken], b[k]))
+                ecken_f = (a[k], a[(k + 1) % ecken], b[(k + 1) % ecken], b[k])
+                f = bm.faces.new(ecken_f)
                 f.material_index = muster(i, k) if muster else streifen if k in bahnen else mat
+                if uv:
+                    # je Ecke gemerkt: `fertig` darf die Fläche noch umdrehen
+                    self.holz_uv[f] = dict(zip(ecken_f, uv(i, k)))
         if spitze:
             ende = punkte[-1] + (punkte[-1] - punkte[-2]).normalized() * radien[-1] * 1.5
             s = bm.verts.new(ende)
@@ -384,9 +456,12 @@ class Baum:
             c = self.rinden.get(f.material_index, Vector((0.12, 0.08, 0.05)))
             if rinden_muster:
                 c = rinden_muster(self.rng, f, c)
-            c = c * self.rng.uniform(0.9, 1.08)
+            textur = self.holz_uv.get(f)
+            # Einfarbiges Holz bekommt pro Fläche leichte Farbschwankungen; texturierte Rinde
+            # kaum, sonst sähe man die Flächen als Kästchen
+            c = c * (self.rng.uniform(0.97, 1.02) if textur else self.rng.uniform(0.9, 1.08))
             for loop in f.loops:
-                loop[self.uv].uv = FLECK
+                loop[self.uv].uv = textur[loop.vert] if textur else FLECK
                 k = c
                 if moos is not None:
                     k = k.lerp(moos, max(0.0, 1 - loop.vert.co.z / 1.2) * 0.65)
@@ -546,11 +621,10 @@ def birke(seed=1, name="Birke", laub="#EBC23A", staemme=2):
     r = baum.rng
     weiss = baum.rinde("#F2EFE8")
     grau = baum.rinde("#D2CCC2")
-    strich = baum.rinde("#2A2622")
     fuss = baum.rinde("#4E4842")
     gelb = farbe(laub)
     orange = farbe("#E0862A")
-    ecken = 9 if staemme < 3 else 7
+    ecken = 10 if staemme < 3 else 8
     dichte = 1.3 if staemme < 3 else 1.0
 
     for s in range(staemme):
@@ -568,40 +642,42 @@ def birke(seed=1, name="Birke", laub="#EBC23A", staemme=2):
             return (start + OBEN * hoehe * t + aussen * (neigung * hoehe * t + schwung * 0.6 * math.sin(math.pi * t))
                     + quer * schwung * 0.4 * math.sin(math.tau * t))
 
-        # Ringe etwa alle 30 cm, dazu schmale Bänder (5 cm): nur dort sitzen die Querstriche,
-        # damit sie fein und waagerecht wirken statt als grobe Kästchen
-        # Am Fuß enge Ringe (für den ausgefransten dunklen Rand), weiter oben etwa alle 30 cm;
-        # dazu schmale Bänder (3–6 cm): nur dort sitzen die Querstriche, damit sie fein und
-        # waagerecht wirken statt als grobe Kästchen
-        ts, baender = [0.0], set()
-        t = 0.0
-        while t < 0.999:
-            t = min(1.0, t + (0.09 if t * hoehe < 0.9 else r.uniform(0.28, 0.4)) / hoehe)
-            if 1.0 < t * hoehe and t < 0.95 and r.random() < 0.6:
-                baender.add(len(ts))
-                ts.append(t)
-                t += r.uniform(0.03, 0.06) / hoehe
-            ts.append(t)
+        # Die Rinde kommt aus der Textur (feine Querstriche, Schlieren, Astnarben); eine Kachel
+        # reicht einmal um den Stamm und 1,6 m hoch. Ringe liegen genau auf den Kachelgrenzen,
+        # am Fuß enger (für den ausgefransten dunklen Rand), sonst etwa alle 30 cm.
+        kachel = 1.6
+        zs, grenze = [0.0], kachel
+        while zs[-1] < hoehe - 1e-4:
+            z = min(hoehe, zs[-1] + (0.09 if zs[-1] < 0.9 else r.uniform(0.26, 0.36)))
+            if z > grenze - 0.05 and grenze < hoehe:
+                z, grenze = grenze, grenze + kachel
+            zs.append(z)
+        ts = [z / hoehe for z in zs]
         punkte = [punkt(t) for t in ts]
         radien = [radius * (1 - 0.72 * t) + radius * 0.45 * max(0.0, 1 - t * hoehe / 0.7) ** 2 for t in ts]
-        striche = set()
-        for j in baender:
-            for _ in range(r.randint(1, 3)):
-                k0, n = r.randrange(ecken), r.randint(1, 3)
-                striche.update((j, (k0 + d) % ecken) for d in range(n))
+        # Jede Kachel um ganze Flächen gedreht, damit sich das Muster nicht erkennbar wiederholt
+        drehung = [r.randrange(ecken) for _ in range(int(hoehe / kachel) + 2)]
+        bu0, bv0, bu1, bv1 = BIRKE
+
+        def rinde_uv(i, k, zs=zs):
+            j = int((zs[i] + 1e-4) // kachel)
+            va, vb = (zs[i] - j * kachel) / kachel, (zs[i + 1] - j * kachel) / kachel
+            ka = (k + drehung[j]) % ecken
+            ua, ub = bu0 + (bu1 - bu0) * ka / ecken, bu0 + (bu1 - bu0) * (ka + 1) / ecken
+            va, vb = bv0 + (bv1 - bv0) * va, bv0 + (bv1 - bv0) * vb
+            return [(ua, va), (ub, va), (ub, vb), (ua, vb)]
+
         # Dunkler Fuß: jede Längsbahn endet in anderer Höhe, dazu vereinzelte dunkle Zungen
         fuss_hoehe = [r.uniform(0.2, 0.6) for _ in range(ecken)]
         zungen = {k: r.uniform(0.6, 0.95) for k in range(ecken) if r.random() < 0.3}
 
-        def muster(i, k, ts=ts, hoehe=hoehe, striche=striche, fuss_hoehe=fuss_hoehe, zungen=zungen):
-            z = ts[i] * hoehe
+        def muster(i, k, zs=zs, fuss_hoehe=fuss_hoehe, zungen=zungen):
+            z = zs[i]
             if z < fuss_hoehe[k] or z < zungen.get(k, 0.0):
                 return fuss
-            if z < fuss_hoehe[k] + 0.2:
-                return grau
-            return strich if (i, k) in striche else weiss
+            return grau if z < fuss_hoehe[k] + 0.2 else weiss
 
-        baum.rohr(punkte, radien, ecken, weiss, spitze=True, muster=muster, rauh=0.15)
+        baum.rohr(punkte, radien, ecken, weiss, spitze=True, muster=muster, rauh=0.15, uv=rinde_uv)
 
         # Krone: ein paar große, hohe Laubmassen am oberen Stamm …
         for t in ((0.66, 0.81, 0.95) if staemme < 3 else (0.7, 0.92)):

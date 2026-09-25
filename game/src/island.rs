@@ -304,6 +304,8 @@ pub fn build(ctx: &mut Context) -> Island {
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
+            // Eichen: meist Standardgröße, etwa jede fünfte deutlich größer (und mit mehr Holz)
+            let oak = |rng: &mut Rng| if rng.chance(0.22) { (size * rng.range(1.35, 1.75), 8) } else { (size, 5) };
             let pick = |list: &[Variant], rng: &mut Rng| list[(rng.next_u32() as usize) % list.len()];
             // Für Modelle ohne eigenen Zufallswurf: Auswahl über die Zellnummer.
             let by_id = |list: &[Variant]| list[id as usize % list.len()];
@@ -385,7 +387,8 @@ pub fn build(ctx: &mut Context) -> Island {
                     }
                 } else if wet > 0.52 {
                     if roll < 0.2 {
-                        found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
+                        let (oak_size, health) = oak(&mut rng);
+                        found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), oak_size, health));
                     } else if roll < 0.25 {
                         found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
                     } else if roll < 0.31 {
@@ -398,7 +401,8 @@ pub fn build(ctx: &mut Context) -> Island {
                         found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
                     }
                 } else if roll < 0.02 {
-                    found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), size, 5));
+                    let (oak_size, health) = oak(&mut rng);
+                    found = Some(tree("Eiche", pick(&lib.oaks, &mut rng), oak_size, health));
                 } else if roll < 0.035 {
                     found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
                 } else if roll < 0.07 {
