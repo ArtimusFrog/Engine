@@ -1017,7 +1017,12 @@ impl Game for Playground {
         }
         if let (Some((name, distance)), Some(session)) = (self.demo_spot.take(), &mut self.session) {
             let world = session.world();
-            let target = world.places.labels.iter().find(|(label, _)| label.to_lowercase().contains(&name)).map(|&(_, at)| at);
+            let spawn = vec2(world.spawn.x, world.spawn.z);
+            let target = if name == "laterne" {
+                world.places.lanterns.iter().map(|l| vec2(l.x, l.z)).min_by(|a, b| a.distance(spawn).total_cmp(&b.distance(spawn)))
+            } else {
+                world.places.labels.iter().find(|(label, _)| label.to_lowercase().contains(&name)).map(|&(_, at)| at)
+            };
             if let (Some(at), Some(local)) = (target, session.local_player()) {
                 let ground = world.terrain.height_at(at.x, at.y);
                 let mut away = (vec2(world.spawn.x, world.spawn.z) - at).normalize_or(Vec2::Y);

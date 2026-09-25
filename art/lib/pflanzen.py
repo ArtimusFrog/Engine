@@ -97,3 +97,60 @@ def schilf(seed=1, name="Schilf"):
             baum.flaeche([k0 - s, k0 + s, k0 + s + Vector((0, 0, 0.26)), k0 - s + Vector((0, 0, 0.26))],
                          [(fu, fv)] * 4, [kolben] * 4, [OBEN] * 4)
     return baum.fertig()
+
+
+def farn(seed=1, name="Farn"):
+    """Farn: 8–11 Wedel aus dem Boden, bogig nach außen hängend (Wedel-Karten aus der Atlas-Textur)."""
+    from baeume import WEDEL
+    baum = Baum(name, seed, hoehe=1.0)
+    r = baum.rng
+    gruen = farbe(r.choice(["#3F7A2A", "#4A8A30", "#2F6B28"]))
+    u0, v0, u1, v1 = WEDEL
+    vm = (v0 + v1) / 2
+    wedel = r.randint(8, 11)
+    for k in range(wedel):
+        a = math.tau * k / wedel + r.uniform(-0.2, 0.2)
+        aussen = Vector((math.cos(a), math.sin(a), 0))
+        laenge = r.uniform(0.85, 1.25)
+        d = (aussen * 0.3 + Vector((0, 0, 1))).normalized()
+        segmente = 6
+        rippe = [Vector((0, 0, 0))]
+        for _ in range(segmente):
+            d = (d + aussen * 0.22 + Vector((0, 0, -0.13))).normalized()
+            rippe.append(rippe[-1] + d * laenge / segmente)
+        seite = aussen.cross(OBEN).normalized()
+        n = OBEN + aussen * 0.3
+        for i in range(segmente):
+            s0, s1 = i / segmente, (i + 1) / segmente
+            b0 = 0.22 * math.sin(math.pi * (0.12 + 0.85 * s0)) ** 0.7 + 0.02
+            b1 = 0.22 * math.sin(math.pi * (0.12 + 0.85 * s1)) ** 0.7 + 0.02
+            m0, m1 = rippe[i], rippe[i + 1]
+            l0, l1, r0, r1 = m0 - seite * b0, m1 - seite * b1, m0 + seite * b0, m1 + seite * b1
+            ua, ub = u0 + (u1 - u0) * s0, u0 + (u1 - u0) * s1
+            c0, c1 = gruen * (0.55 + 0.6 * s0), gruen * (0.55 + 0.6 * s1)
+            baum.flaeche([l0, l1, m1, m0], [(ua, v0), (ub, v0), (ub, vm), (ua, vm)], [c0 * 0.9, c1 * 0.9, c1, c0], [n] * 4)
+            baum.flaeche([m0, m1, r1, r0], [(ua, vm), (ub, vm), (ub, v1), (ua, v1)], [c0, c1, c1 * 0.9, c0 * 0.9], [n] * 4)
+    return baum.fertig()
+
+
+def efeu(seed=1, name="Efeu", breite=3.0, hoehe=2.5):
+    """Efeuvorhang für Felswände: Blattkarten auf einer senkrechten Fläche (entlang X, nach −Y
+    schauend), unten dichter, oben in Ranken auslaufend."""
+    from baeume import LAUB
+    baum = Baum(name, seed, hoehe=hoehe)
+    r = baum.rng
+    u0, v0, u1, v1 = LAUB
+    ranken = int(breite / 0.22)
+    for k in range(ranken):
+        x = -breite / 2 + (k + r.uniform(0.2, 0.8)) * breite / ranken
+        oben = hoehe * r.uniform(0.35, 1.0)
+        z = 0.0
+        while z < oben:
+            g = r.uniform(0.3, 0.44) * (1.0 - z / hoehe * 0.35)
+            mitte = Vector((x + r.uniform(-0.08, 0.08), -r.uniform(0.02, 0.1), z))
+            c = farbe(r.choice(["#2F5E22", "#3E7428", "#4C8430"])) * r.uniform(0.85, 1.1)
+            n = Vector((0, -1, 0.4)).normalized()
+            q = [mitte + Vector((-g, 0, 0)), mitte + Vector((g, 0, 0)), mitte + Vector((g, -0.05, g * 1.6)), mitte + Vector((-g, -0.05, g * 1.6))]
+            baum.flaeche(q, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)], [c * 0.8, c * 0.8, c, c], [n] * 4)
+            z += g * r.uniform(0.55, 0.85)
+    return baum.fertig()

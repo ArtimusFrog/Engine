@@ -25,6 +25,8 @@ pub struct Places {
     pub waterfall: Option<(Vec3, Vec3)>,
     /// Brandung: Punkte auf der Wasserlinie flacher Strände und Richtung aufs Land.
     pub surf: Vec<(Vec3, Vec2)>,
+    /// Wegelaternen (Fuß am Boden)
+    pub lanterns: Vec<Vec3>,
 }
 
 /// Mitte des Startlagers: ein Stück vom Startpunkt landeinwärts.

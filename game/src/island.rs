@@ -955,6 +955,12 @@ struct Library {
     shells: Vec<Variant>,
     /// Am und im Wasser
     reeds: Vec<Variant>,
+    /// Waldboden und Felsen
+    ferns: Vec<Variant>,
+    logs: Vec<Variant>,
+    stumps: Vec<Variant>,
+    ivy: Vec<Variant>,
+    lantern: Vec<Variant>,
     lilies: Vec<Variant>,
     bushes: Vec<Variant>,
     grass: Vec<Variant>,
@@ -1019,6 +1025,11 @@ impl Library {
             driftwood: asset_files::load_variants(ctx, "natur", "treibholz", Vec3::ONE, 0.0),
             shells: asset_files::load_variants(ctx, "natur", "muscheln", Vec3::ONE, 0.0),
             reeds: asset_files::load_variants(ctx, "natur", "schilf", Vec3::ONE, 0.0),
+            ferns: asset_files::load_variants(ctx, "natur", "farn", Vec3::ONE, 0.0),
+            logs: asset_files::load_variants(ctx, "natur", "baumstamm", Vec3::ONE, 0.0),
+            stumps: asset_files::load_variants(ctx, "natur", "baumstumpf", Vec3::ONE, 0.0),
+            ivy: asset_files::load_variants(ctx, "natur", "efeu", Vec3::ONE, 0.0),
+            lantern: asset_files::load_variants(ctx, "gebaeude", "laterne", Vec3::ONE, 0.0),
             lilies: asset_files::load_variants(ctx, "natur", "seerosen", Vec3::ONE, 0.0),
             bushes: slot(ctx, "busch", 3, &|s| models::bush(s * 3)),
             grass: slot(ctx, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
@@ -1268,6 +1279,20 @@ pub fn build(ctx: &mut Context) -> Island {
                         decor(ctx, by_id(&lib.red_mushroom), base, yaw, size, Vec4::ONE, Material::Standard);
                     } else if roll < 0.47 {
                         found = Some(node(&mut rng));
+                    } else if roll < 0.56 && !lib.ferns.is_empty() {
+                        decor(ctx, pick(&lib.ferns, &mut rng), base, yaw, size * 1.2, Vec4::ONE, GRASS);
+                    } else if roll < 0.575 && !lib.stumps.is_empty() {
+                        decor(ctx, pick(&lib.stumps, &mut rng), base, yaw, size, Vec4::ONE, Material::Standard);
+                    } else if roll < 0.585 && !lib.logs.is_empty() && slope < 0.2 {
+                        decor(ctx, pick(&lib.logs, &mut rng), base, yaw, size, Vec4::ONE, Material::Standard);
+                    } else if roll < 0.59 {
+                        // Hexenring: Pilze im Kreis
+                        for k in 0..8 {
+                            let w = k as f32 / 8.0 * std::f32::consts::TAU + rng.range(-0.2, 0.2);
+                            let q = p + Vec2::from_angle(w) * rng.range(1.1, 1.4);
+                            let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
+                            decor(ctx, by_id(&lib.red_mushroom), spot, yaw, rng.range(0.7, 1.1), Vec4::ONE, Material::Standard);
+                        }
                     }
                 } else if roll < 0.02 {
                     let (oak_size, health) = oak(&mut rng);
@@ -1280,6 +1305,32 @@ pub fn build(ctx: &mut Context) -> Island {
                     found = Some(node(&mut rng));
                 } else if roll < 0.28 {
                     decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, FLOWERS);
+                }
+            }
+
+            // Efeu an steilen Felswänden (mittlere Höhen), zum Hang hinaus gedreht
+            if found.is_none() && (0.5..0.8).contains(&slope) && (4.0..24.0).contains(&h) && !lib.ivy.is_empty() && hash01(ix, iz, SEED + 61) < 0.18 {
+                let out = vec2(normal.x, normal.z).normalize_or(Vec2::Y);
+                let turn = Quat::from_rotation_y(out.x.atan2(out.y));
+                let spot = base - vec3(out.x, 0.0, out.y) * 0.35 - Vec3::Y * 0.3;
+                decor(ctx, lib.ivy[0], spot, turn, rng.range(0.8, 1.3), Vec4::ONE, LEAVES);
+            }
+            // An den Pfaden: Wildblumen am Rand, ab und zu eine Laterne
+            let path_here = paths.at(p);
+            if (0.08..0.4).contains(&path_here) && p.distance(camp) > crate::orte::CAMP_RADIUS {
+                if hash01(ix, iz, SEED + 62) < 0.55 {
+                    for _ in 0..2 {
+                        let q = p + vec2(rng.range(-1.2, 1.2), rng.range(-1.2, 1.2));
+                        if paths.at(q) < 0.3 {
+                            let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
+                            decor(ctx, pick(&lib.flowers, &mut rng), spot, yaw, rng.range(0.8, 1.2), Vec4::ONE, FLOWERS);
+                        }
+                    }
+                }
+                if !lib.lantern.is_empty() && hash01(ix, iz, SEED + 63) < 0.06 && places.lanterns.iter().all(|l: &Vec3| vec2(l.x, l.z).distance(p) > 30.0) {
+                    decor(ctx, lib.lantern[0], base, yaw, 1.0, Vec4::ONE, Material::Standard);
+                    places.lanterns.push(base);
+                    places.lights.push((base + vec3(0.0, 1.66, 0.0) + yaw * vec3(0.42, 0.0, 0.0), vec3(2.2, 1.35, 0.55), 8.0));
                 }
             }
 

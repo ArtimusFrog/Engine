@@ -623,3 +623,95 @@ def bruecke(seed=10, breite=1.8):
             setzen(bm, (x, y, 0.08))
             teile.append(objekt("Sockel", bm, stein))
     return fertig("Bruecke", teile)
+
+
+def laterne(seed=11):
+    """Wegelaterne: Holzpfosten mit Querarm, daran eine Laterne aus Eisen mit leuchtendem Glas."""
+    zufall = random.Random(seed)
+    teile, leuchtend = [], []
+    holz = holzfarbe(zufall, "#6A4628", "#48301A")
+    eisen = einfarbig("#2E3034", 0.05, zufall)
+    bm = brett_bm(0.11, 0.11, 2.1, fase=0.015)
+    setzen(bm, (0, 0, 1.05))
+    teile.append(objekt("Pfosten", bm, holz))
+    bm = brett_bm(0.5, 0.07, 0.07, fase=0.01)
+    setzen(bm, (0.22, 0, 1.95))
+    teile.append(objekt("Arm", bm, holz))
+    bm = brett_bm(0.05, 0.05, 0.2, fase=0.0)
+    setzen(bm, (0.36, 0, 1.3), (0, -40, 0))
+    teile.append(objekt("Strebe", bm, holz))
+    bm = brett_bm(0.02, 0.02, 0.12, fase=0.0)
+    setzen(bm, (0.42, 0, 1.86))
+    teile.append(objekt("Haken", bm, eisen))
+    bm = brett_bm(0.22, 0.22, 0.03, fase=0.0)
+    setzen(bm, (0.42, 0, 1.52))
+    teile.append(objekt("Boden", bm, eisen))
+    for dx, dy in ((-0.1, -0.1), (0.1, -0.1), (-0.1, 0.1), (0.1, 0.1)):
+        bm = brett_bm(0.025, 0.025, 0.26, fase=0.0)
+        setzen(bm, (0.42 + dx, dy, 1.66))
+        teile.append(objekt("Stab", bm, eisen))
+    bm = brett_bm(0.17, 0.17, 0.22, fase=0.0)
+    setzen(bm, (0.42, 0, 1.66))
+    leuchtend.append(objekt("Glas", bm, einfarbig("#FFD27A", 0.04, zufall)))
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.2, radius2=0.03, depth=0.14)
+    setzen(bm, (0.42, 0, 1.86), (0, 0, 45))
+    teile.append(objekt("Dach", bm, eisen))
+    return fertig("Laterne", teile, leuchtend, ("#FFC060", 2.5))
+
+
+def baumstamm(seed=12):
+    """Umgestürzter, bemooster Baumstamm mit abgebrochenen Aststummeln und Wurzelteller."""
+    zufall = random.Random(seed)
+    teile = []
+    rinde = stammfarbe(zufall, "#5A4230", "#3E2C1E", "#C89A62", "#8C6A40")
+    moos = farbe("#4C7A2A")
+    laenge = zufall.uniform(3.2, 4.4)
+
+    def bemoost(poly, fase=False):
+        c = rinde(poly, fase)
+        return moos * zufall.uniform(0.85, 1.1) if fase != 2 and poly.normal.z > 0.55 and zufall.random() < 0.7 else c
+    bm = stamm_bm(0.28, laenge, ecken=12, radius_ende=0.2, knorrig=0.1, seed=seed, schritte=6)
+    setzen(bm, (-laenge / 2, 0, 0.24))
+    teile.append(objekt("Stamm", bm, bemoost))
+    for i in range(3):
+        bm = stamm_bm(0.07, zufall.uniform(0.3, 0.6), ecken=7, radius_ende=0.04, seed=seed + i)
+        setzen(bm, (0, 0, 0), (0, zufall.uniform(-60, -20), zufall.uniform(-60, 60) + (0 if i % 2 else 180)))
+        setzen(bm, (-laenge / 2 + zufall.uniform(0.8, laenge - 0.5), 0, 0.4))
+        teile.append(objekt("Ast", bm, bemoost))
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=10, radius1=0.62, radius2=0.62, depth=0.18)
+    for v in bm.verts:
+        v.co += Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-1, 1))) * 0.06
+    setzen(bm, (-laenge / 2 - 0.06, 0, 0.45), (0, 90, 0))
+    teile.append(objekt("Wurzelteller", bm, einfarbig("#4A3524", 0.12, zufall)))
+    for i in range(7):
+        w = math.tau * i / 7
+        bm = stamm_bm(0.05, zufall.uniform(0.35, 0.6), ecken=6, radius_ende=0.015, knorrig=0.2, seed=seed + 10 + i)
+        setzen(bm, (0, 0, 0), (0, math.degrees(math.sin(w)) * 0.6, math.degrees(math.cos(w)) * 0.6 + 180))
+        setzen(bm, (-laenge / 2 - 0.1, math.cos(w) * 0.4, 0.45 + math.sin(w) * 0.4))
+        teile.append(objekt("Wurzel", bm, rinde))
+    return fertig("Baumstamm", teile)
+
+
+def baumstumpf(seed=13):
+    """Baumstumpf mit Hirnholz oben, ausladenden Wurzeln und etwas Moos."""
+    zufall = random.Random(seed)
+    teile = []
+    rinde = stammfarbe(zufall, "#5A4230", "#3E2C1E", "#C89A62", "#8C6A40")
+    moos = farbe("#4C7A2A")
+
+    def bemoost(poly, fase=False):
+        c = rinde(poly, fase)
+        return moos * zufall.uniform(0.85, 1.1) if fase != 2 and poly.center.z < 0.18 and zufall.random() < 0.5 else c
+    hoehe = zufall.uniform(0.4, 0.65)
+    bm = stamm_bm(0.36, hoehe, ecken=14, radius_ende=0.3, knorrig=0.08, seed=seed, schritte=3)
+    setzen(bm, (0, 0, 0), (0, -90, 0))
+    teile.append(objekt("Stumpf", bm, bemoost))
+    for i in range(6):
+        w = math.degrees(math.tau * i / 6 + zufall.uniform(-0.2, 0.2))
+        bm = stamm_bm(0.12, zufall.uniform(0.45, 0.7), ecken=7, radius_ende=0.03, knorrig=0.15, seed=seed + i)
+        setzen(bm, (0, 0, 0), (0, 22, w))
+        setzen(bm, (0, 0, 0.14))
+        teile.append(objekt("Wurzel", bm, bemoost))
+    return fertig("Baumstumpf", teile)
