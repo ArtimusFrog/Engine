@@ -15,6 +15,7 @@ mod leben;
 mod markierungen;
 mod models;
 mod orte;
+mod wachen;
 mod playground;
 mod protocol;
 mod server;

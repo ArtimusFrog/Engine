@@ -104,6 +104,7 @@ fn group_name(folder: &str) -> String {
         "figuren" => "Figuren".into(),
         "gebaeude" => "Gebäude".into(),
         "bauwerke" => "Bauwerke".into(),
+        "npc" => "Figuren (NPC)".into(),
         "gegenstaende" => "Gegenstände".into(),
         "" => "Sonstiges".into(),
         other => other.to_string(),

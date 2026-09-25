@@ -150,11 +150,12 @@ pub struct World {
     capsule: MeshId,
     /// Geräusche seit dem letzten Bild (siehe `SoundEvent`).
     pub sound_events: Vec<SoundEvent>,
-    /// Zurückgelegte Strecke seit dem letzten Schritt je Spieler.
     /// Fliegende Zaubergeschosse (nur mit Fenster).
     bolts: Vec<Bolt>,
     /// Vögel, Möwen, Schmetterlinge, Fische (nur mit Fenster).
     wildlife: Option<crate::leben::Wildlife>,
+    /// Zwei Ritter, die vor dem Schlossportal patrouillieren (nur mit Fenster).
+    wachen: Option<crate::wachen::Wachen>,
     /// Wolken, Regen, Gewitter, Regenbogen, Polarlicht (aus Tag und Uhrzeit).
     pub weather: crate::wetter::Weather,
     /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
@@ -190,6 +191,7 @@ impl World {
             sound_events: Vec::new(),
             bolts: Vec::new(),
             wildlife: None,
+            wachen: None,
             weather: Default::default(),
         };
         for (id, spec) in island.resources {
@@ -919,6 +921,12 @@ impl World {
             wildlife.update(ctx, &|x, z| terrain.height_at(x, z), &|p| crate::island::is_meadow(terrain, p));
         }
         self.surf(ctx);
+        if self.wachen.is_none() && !ctx.is_headless() {
+            self.wachen = crate::wachen::Wachen::new(ctx);
+        }
+        if let Some(wachen) = &mut self.wachen {
+            wachen.update(ctx, &self.day);
+        }
         self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);
