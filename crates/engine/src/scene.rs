@@ -50,6 +50,9 @@ pub enum Material {
     Leaves { sway: f32 },
     /// Leuchtet von selbst (Kristalle, magische Pilze). `glow` = Helligkeit (≈ 0.5–3).
     Emissive { glow: f32 },
+    /// Boden der Landschaft: der Shader fügt feine Details hinzu (Grasbüschel, Farbflecken,
+    /// Gesteinsschichten an Hängen), damit er aus der Nähe nicht glatt wirkt.
+    Ground,
 }
 
 impl Material {
@@ -61,6 +64,7 @@ impl Material {
             Material::Foliage { sway } => [2.0, sway, 0.0, 0.0],
             Material::Leaves { sway } => [2.0, sway, 1.0, 0.0],
             Material::Emissive { glow } => [3.0, glow, 0.0, 0.0],
+            Material::Ground => [4.0, 0.0, 0.0, 0.0],
         }
     }
 }

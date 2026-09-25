@@ -102,6 +102,18 @@ impl Terrain {
         mesh
     }
 
+    /// Facettiertes Mesh mit einer Textur über die ganze Fläche (u, v = 0..1 von Ecke zu Ecke).
+    /// `tint(mitte, normale)` färbt jedes Dreieck zusätzlich (z. B. leichte Helligkeitsunterschiede).
+    pub fn mesh_textured(&self, texture: crate::assets::TextureId, tint: impl Fn(Vec3, Vec3) -> Vec3) -> MeshData {
+        let mut mesh = self.mesh(tint);
+        let size = self.size();
+        for vertex in &mut mesh.vertices {
+            vertex.uv = [(vertex.position[0] - self.origin.x) / size, (vertex.position[2] - self.origin.y) / size];
+        }
+        mesh.texture = Some(texture);
+        mesh
+    }
+
     /// Eckpunkte und Dreiecke für die Kollision (siehe `Physics::add_static_mesh`).
     pub fn collision_mesh(&self) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         let vertices = (0..self.points).flat_map(|z| (0..self.points).map(move |x| (x, z))).map(|(x, z)| self.point(x, z)).collect();

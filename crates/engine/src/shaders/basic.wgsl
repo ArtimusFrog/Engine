@@ -37,6 +37,7 @@ struct Globals {
 const MAT_WATER: f32 = 1.0;
 const MAT_FOLIAGE: f32 = 2.0;
 const MAT_EMISSIVE: f32 = 3.0;
+const MAT_GROUND: f32 = 4.0;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -267,6 +268,73 @@ fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
+fn hash2(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+// Weiches Rauschen (Wertrauschen) 0..1.
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i);
+    let b = hash2(i + vec2<f32>(1.0, 0.0));
+    let c = hash2(i + vec2<f32>(0.0, 1.0));
+    let d = hash2(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Feine Details auf dem Boden: Grasbüschel und Farbflecken auf Wiesen, Körnung auf Sand,
+// Gesteinsschichten an steilen Hängen. Aus der Ferne ausgeblendet, damit nichts flimmert.
+fn ground_detail(albedo: vec3<f32>, world: vec3<f32>, n: vec3<f32>, path_mask: f32) -> vec3<f32> {
+    let w = world.xz;
+    let dist = length(g.camera_pos.xyz - world);
+    let near = 1.0 - smoothstep(18.0, 60.0, dist);
+    let very_near = 1.0 - smoothstep(6.0, 22.0, dist);
+    // Wie „grasig“ ist die Farbe? (Grün deutlich über Rot und Blau)
+    let grass = clamp((albedo.g - max(albedo.r, albedo.b)) / max(albedo.g, 0.001) * 2.5, 0.0, 1.0);
+
+    // Büschel von 1–2 m und feine Körnung
+    let clumps = value_noise(w * 0.55) * 0.6 + value_noise(w * 1.3 + vec2<f32>(7.1, 3.3)) * 0.4;
+    let grain = value_noise(w * 4.5 + vec2<f32>(1.7, 9.2)) * 0.5 + value_noise(w * 9.0) * 0.5;
+    var c = albedo * (1.0 + (clumps - 0.5) * 0.28 * near + (grain - 0.5) * 0.16 * very_near);
+
+    // Wiesen: sonnige, gelbgrüne Spitzen und sattere, kühle Senken im Wechsel
+    let hue = value_noise(w * 0.18 + vec2<f32>(31.0, 5.0));
+    c = mix(c, c * vec3<f32>(1.18, 1.08, 0.72), grass * smoothstep(0.5, 0.85, hue) * 0.55);
+    c = mix(c, c * vec3<f32>(0.82, 0.95, 1.0), grass * smoothstep(0.45, 0.15, hue) * 0.45);
+    // Kleine dunkle Kleeflecken
+    let clover = smoothstep(0.72, 0.8, value_noise(w * 0.9 + vec2<f32>(3.0, 17.0)));
+    c = mix(c, c * vec3<f32>(0.7, 0.85, 0.75), grass * clover * 0.5 * near);
+
+    // Steile Hänge: waagerechte Gesteinsschichten
+    let steep = 1.0 - smoothstep(0.62, 0.8, n.y);
+    let strata = 0.86 + 0.14 * sin(world.y * 2.6 + value_noise(w * 0.25) * 5.0) + (value_noise(vec2<f32>(world.y * 3.0, w.x * 0.6 + w.y * 0.6)) - 0.5) * 0.16;
+    c *= mix(1.0, strata, steep * (1.0 - grass));
+
+    // Trampelpfade (Weg-Anteil aus dem Alphakanal der Bodentextur): ausgefranster Rand,
+    // niedergetretenes Gras daneben, festgetretene Erde mit Steinchen in der Mitte.
+    let path = clamp(path_mask, 0.0, 1.0);
+    let fray = (value_noise(w * 1.6 + vec2<f32>(5.0, 1.0)) - 0.5) * 0.42 + (value_noise(w * 5.5) - 0.5) * 0.2;
+    let sharp = smoothstep(0.42, 0.5, path + fray);
+    let soft = smoothstep(0.25, 0.7, path);
+    let on_path = mix(soft, sharp, near);
+    c = mix(c, c * vec3<f32>(0.78, 0.74, 0.52), smoothstep(0.08, 0.4, path) * 0.55 * (1.0 - on_path));
+    var dirt = mix(vec3<f32>(0.115, 0.075, 0.036), vec3<f32>(0.16, 0.108, 0.056), smoothstep(0.65, 1.0, path));
+    dirt *= 1.0 + (clumps - 0.5) * 0.35 + (grain - 0.5) * 0.3 * very_near;
+    // Steinchen: kleine runde Kiesel in einem Zufallsraster, nur aus der Nähe
+    let cell = floor(w * 2.6);
+    let center = vec2<f32>(hash2(cell), hash2(cell + vec2<f32>(17.0, 3.0))) * 0.5 + 0.25;
+    let offset = fract(w * 2.6) - center;
+    let size = 0.07 + hash2(cell + vec2<f32>(9.0, 1.0)) * 0.07;
+    let pebble = (1.0 - smoothstep(size * 0.75, size, length(offset))) * step(0.62, hash2(cell + vec2<f32>(5.0, 5.0))) * very_near;
+    // oben etwas heller (Licht von oben), unten dunkler Rand
+    let lit = 1.0 + clamp(-offset.y / size, -1.0, 1.0) * 0.15;
+    dirt = mix(dirt, vec3<f32>(0.135, 0.125, 0.11) * lit * (0.85 + hash2(cell + vec2<f32>(2.0, 8.0)) * 0.3), pebble);
+    c = mix(c, dirt, on_path);
+    return c;
+}
+
 // Nachtsicht: Im Dunkeln verlieren Farben an Sättigung und wirken bläulich.
 fn night_grade(color: vec3<f32>) -> vec3<f32> {
     let night = g.sky_misc.x;
@@ -290,11 +358,15 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     // Tatsächliche Ausrichtung der Fläche (die Normale in `in.normal` ist bei Laub „weich“ geschönt).
     let face = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     // Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
-    if (texel.a < 0.5) {
+    let kind = in.material.x;
+    if (texel.a < 0.5 && kind != MAT_GROUND) {
         discard;
     }
-    let albedo = in.color * texel.rgb;
-    let kind = in.material.x;
+    var albedo = in.color * texel.rgb;
+    if (kind == MAT_GROUND) {
+        // Alpha 1 = kein Weg, 0,5 = Wegmitte (siehe game/src/island.rs, `ground_texture`)
+        albedo = ground_detail(albedo, in.world_pos, normalize(in.normal), (1.0 - texel.a) * 2.0);
+    }
     var n = normalize(in.normal);
     // Blattkarten tragen weiche Kugel-Normalen aus Blender – die gelten für beide Seiten.
     let leaves = kind == MAT_FOLIAGE && in.material.z > 0.5;

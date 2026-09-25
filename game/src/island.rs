@@ -12,7 +12,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 2;
+pub const WORLD_ID: u32 = SEED + 3;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 330.0;
 const TERRAIN_SIZE: f32 = 880.0;
@@ -114,7 +114,153 @@ fn birch_grove(p: Vec2) -> f32 {
     fbm(p * 0.02 + vec2(13.0, 57.0), 2, SEED + 13) * 0.5 + 0.5
 }
 
-/// Farbe des Bodens (linear) für ein Dreieck mit Mittelpunkt `c` und Normale `n`.
+/// Auflösung der Bodentextur (über die ganze Landschaft, ≈ 0,43 m je Pixel).
+const GROUND_TEXTURE: usize = 2048;
+/// Rasterweite der Wege-Maske in Metern.
+const PATH_CELL: f32 = 1.0;
+
+/// Trampelpfade als Maske über die ganze Landschaft: 0 = kein Weg, 1 = Wegmitte.
+pub struct Paths {
+    mask: Vec<f32>,
+    res: usize,
+}
+
+impl Paths {
+    fn origin() -> Vec2 {
+        Vec2::splat(-TERRAIN_SIZE / 2.0)
+    }
+
+    /// Wege vom Startpunkt zum Bergsee, zum Strand, zum Tafelberg und ins Gebirge.
+    fn build(terrain: &Terrain, spawn: Vec3) -> Paths {
+        let res = (TERRAIN_SIZE / PATH_CELL) as usize;
+        let mut paths = Paths { mask: vec![0.0; res * res], res };
+        let start = vec2(spawn.x, spawn.z);
+        let r = ISLAND_RADIUS;
+        let mut targets = Vec::new();
+        // Seeufer auf der Seite zum Startpunkt
+        targets.push(LAKE_CENTER + (start - LAKE_CENTER).normalize() * (LAKE_RADIUS + 9.0));
+        // Fuß des Tafelbergs
+        let east = vec2(0.45 * r, 0.15 * r);
+        targets.push(east + (start - east).normalize() * (0.22 * r + 14.0));
+        // Strand: vom Startpunkt nach außen, bis der Sand beginnt
+        let outward = start.normalize_or(Vec2::Y);
+        if let Some(beach) = find_along(terrain, start, outward, |h| h < 2.6) {
+            targets.push(beach);
+        }
+        // Gebirge: Richtung Norden, bis das Gelände steil ansteigt
+        if let Some(foot) = find_along(terrain, start, (vec2(0.0, -0.45 * r) - start).normalize(), |h| h > 17.0) {
+            targets.push(foot);
+        }
+        let mut trails: Vec<Vec<Vec2>> = targets.iter().enumerate().map(|(i, &to)| trail(terrain, start, to, i as u32)).collect();
+        // Querweg vom Bergsee zum Gebirge
+        if trails.len() >= 4 {
+            let (from, to) = (*trails[0].last().expect("Weg hat Punkte"), *trails[3].last().expect("Weg hat Punkte"));
+            trails.push(trail(terrain, from, to, 9));
+        }
+        for (index, trail) in trails.iter().enumerate() {
+            for (k, pair) in trail.windows(2).enumerate() {
+                // Breite schwankt leicht; zum Ende hin (am Ziel) läuft der Weg aus.
+                let along = k as f32 / trail.len().max(2) as f32;
+                let wobble = fbm(pair[0] * 0.05, 2, SEED + 30 + index as u32) * 0.35;
+                let width = (1.15 + wobble) * (1.0 - smoothstep(0.85, 1.0, along) * 0.6);
+                paths.stamp(pair[0], pair[1], width);
+            }
+        }
+        paths
+    }
+
+    /// Trägt ein Wegstück ein (`width` = halbe Breite des festgetretenen Teils).
+    fn stamp(&mut self, a: Vec2, b: Vec2, width: f32) {
+        let reach = width + 1.5;
+        let (low, high) = (a.min(b) - Vec2::splat(reach), a.max(b) + Vec2::splat(reach));
+        let cell = |v: f32| ((v - Self::origin().x) / PATH_CELL).floor().clamp(0.0, (self.res - 1) as f32) as usize;
+        let segment = b - a;
+        let length_sq = segment.length_squared().max(1e-6);
+        for z in cell(low.y)..=cell(high.y) {
+            for x in cell(low.x)..=cell(high.x) {
+                let p = Self::origin() + (vec2(x as f32, z as f32) + 0.5) * PATH_CELL;
+                let t = ((p - a).dot(segment) / length_sq).clamp(0.0, 1.0);
+                let distance = p.distance(a + segment * t);
+                let value = 1.0 - smoothstep(width * 0.55, reach, distance);
+                let slot = &mut self.mask[z * self.res + x];
+                *slot = slot.max(value);
+            }
+        }
+    }
+
+    /// Wie sehr liegt der Punkt auf einem Weg (0..1, weich interpoliert)?
+    pub fn at(&self, p: Vec2) -> f32 {
+        let local = (p - Self::origin()) / PATH_CELL - Vec2::splat(0.5);
+        let base = local.floor();
+        let f = local - base;
+        let get = |dx: i32, dz: i32| {
+            let (x, z) = (base.x as i32 + dx, base.y as i32 + dz);
+            if x < 0 || z < 0 || x >= self.res as i32 || z >= self.res as i32 { 0.0 } else { self.mask[z as usize * self.res + x as usize] }
+        };
+        let top = get(0, 0) + (get(1, 0) - get(0, 0)) * f.x;
+        let bottom = get(0, 1) + (get(1, 1) - get(0, 1)) * f.x;
+        top + (bottom - top) * f.y
+    }
+}
+
+/// Erster Punkt entlang einer Richtung, an dem die Höhe `wanted` erfüllt (höchstens 400 m weit).
+fn find_along(terrain: &Terrain, from: Vec2, direction: Vec2, wanted: impl Fn(f32) -> bool) -> Option<Vec2> {
+    (1..100).map(|i| from + direction * (i as f32 * 4.0)).find(|p| wanted(terrain.height_at(p.x, p.y)) && !in_lake(*p)).map(|p| p - direction * 4.0)
+}
+
+/// Ein gewundener Pfad von `from` nach `to`: in 3-m-Schritten, meidet Wasser und steile
+/// Anstiege und schlängelt sich leicht. Nur Grundrechenarten und Wurzeln (keine
+/// Winkelfunktionen), damit jeder Rechner exakt denselben Weg findet.
+fn trail(terrain: &Terrain, from: Vec2, to: Vec2, seed: u32) -> Vec<Vec2> {
+    const STEP: f32 = 3.0;
+    // Drehung um 0,12 rad (cos, sin) als feste Zahlen
+    const TURN: (f32, f32) = (0.992_808_6, 0.119_712_21);
+    let rotate = |v: Vec2, times: i32| {
+        let mut v = v;
+        for _ in 0..times.abs() {
+            let s = if times > 0 { TURN.1 } else { -TURN.1 };
+            v = vec2(v.x * TURN.0 - v.y * s, v.x * s + v.y * TURN.0);
+        }
+        v.normalize()
+    };
+    let mut points = vec![from];
+    let mut here = from;
+    let mut heading = (to - from).normalize_or(Vec2::Y);
+    for _ in 0..600 {
+        let remaining = here.distance(to);
+        if remaining < STEP * 1.5 {
+            points.push(to);
+            break;
+        }
+        let goal = (to - here) / remaining;
+        // Schlängeln: seitlich vom direkten Weg abweichen, kurz vor dem Ziel nicht mehr.
+        let wander = fbm(here * 0.012 + vec2(seed as f32 * 17.3, 4.0), 2, SEED + 21) * 1.2 * smoothstep(10.0, 50.0, remaining);
+        let preferred = (goal + goal.perp() * wander).normalize();
+        let here_height = terrain.height_at(here.x, here.y);
+        let mut best: Option<(f32, Vec2)> = None;
+        for k in -5..=5 {
+            let direction = rotate(heading, k);
+            let next = here + direction * STEP;
+            let h = terrain.height_at(next.x, next.y);
+            if h < 1.8 || in_lake(next) {
+                continue;
+            }
+            let rise = (h - here_height).abs() / STEP;
+            let cost = (1.0 - direction.dot(preferred)) * 4.0 + rise * rise * 12.0 + (k as f32).abs() * 0.02;
+            if best.is_none_or(|(c, _)| cost < c) {
+                best = Some((cost, direction));
+            }
+        }
+        let Some((_, direction)) = best else { break };
+        heading = direction;
+        here += direction * STEP;
+        points.push(here);
+    }
+    points
+}
+
+/// Farbe des Bodens (linear) an der Stelle `c` mit Normale `n`. Wege malt erst der Shader
+/// (siehe `ground_texture`), damit ihre Ränder auch aus der Nähe scharf sind.
 fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     let p = vec2(c.x, c.z);
     let slope = 1.0 - n.y;
@@ -133,17 +279,61 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     color = color.lerp(color * vec3(1.35, 1.12, 0.8), smoothstep(0.55, 0.8, patches) * 0.6);
     color = color.lerp(color * 0.72, smoothstep(0.45, 0.2, patches) * 0.5);
     color = color.lerp(enchanted, smoothstep(0.58, 0.66, magic(p)));
+    // Waldboden: Laub und Erde in Flecken, wo es feucht ist
+    let litter = fbm(p * 0.07 + vec2(-3.0, 8.0), 3, SEED + 17) * 0.5 + 0.5;
+    let forest_floor = smoothstep(0.5, 0.62, moisture(p)) * smoothstep(0.5, 0.72, litter);
+    color = color.lerp(vec3(0.11, 0.075, 0.035), forest_floor * 0.55);
     color = color.lerp(alpine, smoothstep(15.0, 24.0, c.y));
+    // Trockenes, gelbliches Gras als Saum zum Strand
+    color = color.lerp(vec3(0.26, 0.25, 0.07), smoothstep(3.6, 2.5, c.y) * 0.7);
     color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
     color = wet_sand.lerp(color, smoothstep(-0.8, 0.6, c.y));
     // Seeufer: nasser, dunkler Grund rund um den Bergsee
     let ufer = smoothstep(LAKE_RADIUS + 6.0, LAKE_RADIUS - 2.0, (p - LAKE_CENTER).length()) * (1.0 - smoothstep(LAKE_LEVEL + 0.3, LAKE_LEVEL + 1.2, c.y));
     color = color.lerp(wet_sand * 0.85, ufer);
     color = color.lerp(rock, smoothstep(0.42, 0.58, slope));
-    color = color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)));
-    // Jedes Dreieck leicht anders – das macht den facettierten Look lebendig.
-    let jitter = hash01((c.x * 5.0).floor() as i32, (c.z * 5.0).floor() as i32, SEED) - 0.5;
-    color * (1.0 + jitter * 0.14)
+    color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)))
+}
+
+/// Jedes Dreieck leicht anders hell – das macht den facettierten Look lebendig.
+fn facet_jitter(c: Vec3) -> f32 {
+    1.0 + (hash01((c.x * 5.0).floor() as i32, (c.z * 5.0).floor() as i32, SEED) - 0.5) * 0.14
+}
+
+/// Bodentextur über die ganze Landschaft (sRGB), auf allen Kernen parallel berechnet.
+/// Im Alphakanal steckt der Weg-Anteil: 255 = kein Weg, 128 = Wegmitte (nie darunter, sonst
+/// würde der Shader den Boden als durchsichtig verwerfen). Daraus malt `Material::Ground` die Wege.
+fn ground_texture(terrain: &Terrain, paths: &Paths) -> Image {
+    let size = GROUND_TEXTURE;
+    let texel = TERRAIN_SIZE / size as f32;
+    let origin = Vec2::splat(-TERRAIN_SIZE / 2.0);
+    let mut rgba = vec![0u8; size * size * 4];
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+    let rows_per_thread = size.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (chunk_index, chunk) in rgba.chunks_mut(rows_per_thread * size * 4).enumerate() {
+            scope.spawn(move || {
+                for (i, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let (x, z) = (i % size, chunk_index * rows_per_thread + i / size);
+                    let p = origin + (vec2(x as f32, z as f32) + 0.5) * texel;
+                    let c = vec3(p.x, terrain.height_at(p.x, p.y), p.y);
+                    let color = ground_color(c, terrain.normal_at(p.x, p.y));
+                    for (k, channel) in color.to_array().into_iter().enumerate() {
+                        pixel[k] = (linear_to_srgb(channel) * 255.0).round() as u8;
+                    }
+                    // Wege nur im Grünen: nicht auf Sand und nicht hoch im Fels
+                    let path = paths.at(p) * smoothstep(2.3, 3.0, c.y) * (1.0 - smoothstep(15.0, 20.0, c.y));
+                    pixel[3] = 255 - (path.clamp(0.0, 1.0) * 127.0).round() as u8;
+                }
+            });
+        }
+    });
+    Image { width: size as u32, height: size as u32, rgba }
+}
+
+fn linear_to_srgb(v: f32) -> f32 {
+    let v = v.clamp(0.0, 1.0);
+    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
 /// Liegt der Punkt im Bergsee (unter dem Wasserspiegel)?
@@ -292,8 +482,18 @@ pub fn build(ctx: &mut Context) -> Island {
     ctx.env.shadow_range = 45.0;
 
     let terrain = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, height);
-    let terrain_mesh = ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(ground_color));
-    let ground = ctx.scene.spawn(Entity::new("Insel", terrain_mesh));
+    let spawn = find_spawn(&terrain);
+    let paths = Paths::build(&terrain, spawn);
+    // Mit Fenster: fein aufgelöste Bodentextur; der Server braucht nur die Form.
+    let terrain_mesh = if ctx.is_headless() {
+        ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(|c, n| ground_color(c, n) * facet_jitter(c)))
+    } else {
+        let started = std::time::Instant::now();
+        let texture = ctx.assets.named_texture(&format!("boden{WORLD_ID}"), || ground_texture(&terrain, &paths));
+        log::info!("Bodentextur in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
+        ctx.assets.named_mesh(&format!("insel{WORLD_ID}"), || terrain.mesh_textured(texture, |c, _| Vec3::splat(facet_jitter(c))))
+    };
+    let ground = ctx.scene.spawn(Entity::new("Insel", terrain_mesh).with_material(Material::Ground));
     let (vertices, triangles) = terrain.collision_mesh();
     ctx.physics.add_static_mesh(Some(ground), vertices, triangles);
 
@@ -312,7 +512,6 @@ pub fn build(ctx: &mut Context) -> Island {
     );
 
     let lib = Library::load(ctx);
-    let spawn = find_spawn(&terrain);
     let mut resources = Vec::new();
 
 
@@ -336,7 +535,8 @@ pub fn build(ctx: &mut Context) -> Island {
             let normal = terrain.normal_at(p.x, p.y);
             let slope = 1.0 - normal.y;
             let base = vec3(p.x, h, p.y);
-            let clearing = base.distance(spawn) < SPAWN_CLEARING;
+            // Auf Wegen und um den Startpunkt wächst nichts Großes.
+            let clearing = base.distance(spawn) < SPAWN_CLEARING || paths.at(p) > 0.15;
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
@@ -464,6 +664,9 @@ pub fn build(ctx: &mut Context) -> Island {
                         continue;
                     }
                     let q = vec2(x + rng.range(-1.6, 1.6), z + rng.range(-1.6, 1.6));
+                    if paths.at(q) > 0.3 {
+                        continue;
+                    }
                     let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
                     let turn = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
                     let mesh = if enchanted { by_id(&lib.teal_grass) } else { pick(&lib.grass, &mut rng) };
