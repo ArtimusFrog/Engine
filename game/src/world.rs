@@ -153,6 +153,8 @@ pub struct World {
     stride: HashMap<PlayerId, (Vec3, f32)>,
     /// Fliegende Zaubergeschosse (nur mit Fenster).
     bolts: Vec<Bolt>,
+    /// Vögel, Möwen, Schmetterlinge, Fische (nur mit Fenster).
+    wildlife: Option<crate::leben::Wildlife>,
     /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
     crystals: Vec<Vec3>,
 }
@@ -186,6 +188,7 @@ impl World {
             sound_events: Vec::new(),
             stride: HashMap::new(),
             bolts: Vec::new(),
+            wildlife: None,
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -214,6 +217,15 @@ impl World {
 
     /// Ein Takt Tier-Verhalten (nur auf dem Server): grasen, umherstreifen, fliehen.
     pub fn think_animals(&mut self, ctx: &Context) {
+        // Tagesablauf: Rehe ziehen morgens (5–9 Uhr) zum Trinken ans Ufer des Bergsees
+        let morning = (5.0..9.0).contains(&self.day.hour);
+        for animal in &mut self.animals {
+            animal.attraction = (morning && animal.kind == animals::AnimalKind::Deer).then(|| {
+                let (center, radius, _) = crate::island::lake();
+                let here = vec2(animal.position.x, animal.position.z);
+                center + (here - center).normalize_or(Vec2::X) * (radius + 3.0)
+            });
+        }
         let players: Vec<Vec3> = self.players.values().map(|a| ctx.physics.character_position(a.character)).collect();
         for animal in &mut self.animals {
             animal.think(Physics::FIXED_DT, &players, &self.terrain);
@@ -835,6 +847,15 @@ impl World {
         }
     }
 
+    /// Nur für Screenshots: Position des nächsten Vogelschwarms.
+    pub fn nearest_flock(&self, ctx: &Context, from: Vec3) -> Option<Vec3> {
+        self.wildlife.as_ref().and_then(|w| w.nearest_flock(ctx, from))
+    }
+
+    pub fn visible_butterflies(&self, ctx: &Context) -> usize {
+        self.wildlife.as_ref().map_or(0, |w| w.visible_butterflies(ctx))
+    }
+
     /// Mitte der Kristallvorkommen (am Boden).
     pub fn crystals(&self) -> &[Vec3] {
         &self.crystals
@@ -883,6 +904,14 @@ impl World {
         self.campfires(ctx);
         self.place_lights(ctx);
         self.waterfall_spray(ctx);
+        if self.wildlife.is_none() && !ctx.is_headless() {
+            let (forests, beaches) = crate::island::wildlife_spots(&self.terrain);
+            self.wildlife = Some(crate::leben::Wildlife::new(ctx, &forests, &beaches, crate::island::lake()));
+        }
+        if let Some(wildlife) = &mut self.wildlife {
+            let terrain = &self.terrain;
+            wildlife.update(ctx, &|x, z| terrain.height_at(x, z), &|p| crate::island::is_meadow(terrain, p));
+        }
         self.surf(ctx);
         self.update_bolts(ctx);
         for animal in &mut self.animals {

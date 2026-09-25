@@ -10,6 +10,7 @@ mod client;
 mod inventar;
 mod island;
 mod karte;
+mod leben;
 mod markierungen;
 mod models;
 mod orte;

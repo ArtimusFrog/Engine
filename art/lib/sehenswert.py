@@ -13,7 +13,8 @@ import bmesh
 from mathutils import Matrix, Vector
 
 from lager import brett_bm, einfarbig, fertig, holzfarbe, objekt, setzen, stamm_bm, stammfarbe, stein_bm
-from vorkommen import _steinfarbe, farbe
+from vorkommen import _material, _steinfarbe, farbe
+from werkstatt import vereinen
 
 
 def _moosstein(zufall, hell="#A39E93"):
@@ -511,3 +512,66 @@ def seerosen(seed=42):
         setzen(bm, (at[0], at[1], at[2] + 0.03))
         teile.append(objekt("Stempel", bm, einfarbig("#E8B83A", 0.05, zufall)))
     return fertig("Seerosen", teile)
+
+
+# ---------------------------------------------------------------------------
+# Kleine Tiere (Kulisse): Vogel, Möwe, Fisch – Flügel als eigene Teile, die das Spiel bewegt
+# ---------------------------------------------------------------------------
+def _vogel(name, koerper, fluegel, spitzen, schnabel, spannweite, seed):
+    """Vogel entlang +X (Kopf vorne), Flügel als eigene Objekte „FluegelL“/„FluegelR“ mit dem
+    Gelenk im Ursprung – das Spiel schlägt sie über die Knoten auf und ab."""
+    zufall = random.Random(seed)
+    teile = []
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=6, radius=1.0)
+    bmesh.ops.transform(bm, matrix=Matrix.Diagonal((0.16, 0.06, 0.06, 1.0)), verts=bm.verts)
+    teile.append(objekt("Koerper", bm, einfarbig(koerper, 0.05, zufall)))
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.02, radius2=0.0, depth=0.06)
+    setzen(bm, (0.18, 0, 0.005), (0, 90, 0))
+    teile.append(objekt("Schnabel", bm, einfarbig(schnabel, 0.03, zufall)))
+    bm = bmesh.new()
+    v = [bm.verts.new(p) for p in ((-0.12, 0, 0), (-0.26, 0.06, 0.01), (-0.26, -0.06, 0.01))]
+    bm.faces.new(v)
+    teile.append(objekt("Schwanz", bm, einfarbig(koerper, 0.05, zufall)))
+    # Kein fertig(): der Ursprung soll in der Körpermitte bleiben (das Flügelgelenk)
+    koerper_obj = vereinen(name, teile)
+    _material(koerper_obj)
+    for seite, knoten in ((1, "FluegelL"), (-1, "FluegelR")):
+        bm = bmesh.new()
+        halb = spannweite / 2
+        punkte = [(0.05, 0), (0.02, halb * 0.55), (-0.02, halb), (-0.1, halb * 0.8), (-0.08, 0)]
+        v = [bm.verts.new((x, y * seite, 0)) for x, y in punkte]
+        bm.faces.new(v if seite > 0 else list(reversed(v)))
+        spitze_ab = halb * 0.6
+
+        def farbe_fluegel(poly, fase=False):
+            return farbe(spitzen) if abs(poly.center.y) > spitze_ab else farbe(fluegel)
+        fluegel_obj = vereinen(knoten, [objekt(knoten, bm, farbe_fluegel)])
+        _material(fluegel_obj)
+    return koerper_obj
+
+
+def vogel(seed=50):
+    return _vogel("Vogel", "#3A3530", "#4A423A", "#2A2622", "#E0A030", 0.42, seed)
+
+
+def moewe(seed=51):
+    return _vogel("Moewe", "#F2F2EE", "#D8DCE0", "#2E3034", "#E8B830", 0.7, seed)
+
+
+def fisch(seed=52):
+    """Kleiner silbriger Fisch entlang +X, springt im Spiel in einem Bogen aus dem See."""
+    zufall = random.Random(seed)
+    teile = []
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=6, radius=1.0)
+    bmesh.ops.transform(bm, matrix=Matrix.Diagonal((0.18, 0.045, 0.07, 1.0)), verts=bm.verts)
+    teile.append(objekt("Koerper", bm, lambda poly, fase=False: farbe("#C8D2DA") if poly.center.z > 0 else farbe("#8A9AA6")))
+    bm = bmesh.new()
+    v = [bm.verts.new(p) for p in ((-0.16, 0, 0), (-0.28, 0, 0.08), (-0.25, 0, 0), (-0.28, 0, -0.08))]
+    bm.faces.new(v)
+    teile.append(objekt("Flosse", bm, einfarbig("#7A8A96", 0.04, zufall)))
+    obj = vereinen("Fisch", teile)
+    _material(obj)
+    return obj

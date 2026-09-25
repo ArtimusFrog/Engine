@@ -776,6 +776,43 @@ fn linear_to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
+/// Bergsee: Mitte, Radius, Wasserspiegel.
+pub fn lake() -> (Vec2, f32, f32) {
+    (LAKE_CENTER, LAKE_RADIUS, LAKE_LEVEL)
+}
+
+/// Wiese (für Schmetterlinge): grün, flach, nicht feucht, nicht im Gebirge.
+pub fn is_meadow(terrain: &Terrain, p: Vec2) -> bool {
+    let h = terrain.height_at(p.x, p.y);
+    (3.0..14.0).contains(&h) && moisture(p) < 0.52 && terrain.normal_at(p.x, p.y).y > 0.9 && !in_lake(p)
+}
+
+/// Wo Vogelschwärme kreisen (große Wälder) und Möwen fliegen (Strände).
+pub fn wildlife_spots(terrain: &Terrain) -> (Vec<Vec2>, Vec<Vec2>) {
+    let mut forests = Vec::new();
+    let mut beaches = Vec::new();
+    let r = ISLAND_RADIUS;
+    for iz in -6..=6 {
+        for ix in -6..=6 {
+            let p = vec2(ix as f32, iz as f32) * r / 6.0;
+            let h = terrain.height_at(p.x, p.y);
+            if (3.0..18.0).contains(&h) && moisture(p) > 0.56 && forests.iter().all(|&f: &Vec2| f.distance(p) > 110.0) {
+                forests.push(p);
+            }
+        }
+    }
+    for k in 0..12 {
+        let dir = Vec2::from_angle(k as f32 / 12.0 * std::f32::consts::TAU);
+        if let Some(rr) = (0..300).map(|i| r * 1.3 - i as f32).find(|&rr| terrain.height_at((dir * rr).x, (dir * rr).y) > 0.2) {
+            let p = dir * rr;
+            if terrain.height_at(p.x, p.y) < 2.5 && beaches.iter().all(|&b: &Vec2| b.distance(p) > 150.0) {
+                beaches.push(p);
+            }
+        }
+    }
+    (forests, beaches)
+}
+
 /// Bester Punkt eines 6-m-Rasters über die Insel (höchste Wertung, `None` = ungeeignet).
 fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
     let r = ISLAND_RADIUS * 1.05;

@@ -996,6 +996,21 @@ impl Game for Playground {
             }
         }
 
+        // Nur für Screenshots: Kamera auf den nächsten Vogelschwarm richten
+        if std::env::args().any(|a| a == "--demo-voegel") {
+            if let Some(session) = &self.session {
+                let world = session.world();
+                // Freie Kamera ein paar Meter neben dem Schwarm, Blick darauf
+                if let Some(flock) = world.nearest_flock(ctx, ctx.camera.position) {
+                    self.free_camera = true;
+                    ctx.camera.position = flock + vec3(-9.0, -2.5, -9.0);
+                    ctx.camera.look_at(flock);
+                }
+                if ctx.time.frame % 60 == 0 {
+                    log::info!("Schmetterlinge zu sehen: {}", world.visible_butterflies(ctx));
+                }
+            }
+        }
         if let (Some((name, distance)), Some(session)) = (self.demo_spot.take(), &mut self.session) {
             let world = session.world();
             let target = world.places.labels.iter().find(|(label, _)| label.to_lowercase().contains(&name)).map(|&(_, at)| at);

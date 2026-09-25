@@ -163,6 +163,8 @@ enum Plan {
 }
 
 pub struct Animal {
+    /// Server: Ziel, zu dem das Tier gerade gern hinzieht (Rehe morgens zum Trinken an den See).
+    pub attraction: Option<Vec2>,
     pub kind: AnimalKind,
     pub position: Vec3,
     /// Blickrichtung wie bei Spielern: 0 = nach -Z.
@@ -211,6 +213,7 @@ impl Animal {
         let facing = rng.range(0.0, std::f32::consts::TAU);
         let until = rng.range(0.0, 4.0);
         Animal {
+            attraction: None,
             kind,
             position,
             facing,
@@ -368,8 +371,20 @@ impl Animal {
         self.moved = true;
     }
 
-    /// Ein begehbarer Punkt im Revier.
+    /// Ein begehbarer Punkt im Revier – oder, wenn es einen Anziehungspunkt gibt und er nicht zu
+    /// weit ist, meist dorthin.
     fn pick_target(&mut self, terrain: &Terrain) -> Option<Vec2> {
+        let here = vec2(self.position.x, self.position.z);
+        if let Some(goal) = self.attraction.filter(|g| g.distance(here) < 160.0) {
+            if self.rng.chance(0.7) {
+                // In Etappen hinziehen (höchstens 25 m je Ziel), am Ziel ein wenig verteilt
+                let step = (goal - here).clamp_length_max(25.0);
+                let target = here + step + Vec2::from_angle(self.rng.range(0.0, std::f32::consts::TAU)) * self.rng.range(0.0, 3.0);
+                if terrain.height_at(target.x, target.y) > MIN_GROUND && !crate::island::in_lake(target) {
+                    return Some(target);
+                }
+            }
+        }
         for _ in 0..8 {
             let angle = self.rng.range(0.0, std::f32::consts::TAU);
             let distance = self.rng.range(3.0, WANDER_RADIUS);
