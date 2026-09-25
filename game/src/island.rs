@@ -63,6 +63,8 @@ pub struct Island {
     /// Rohstoffe mit ihrer ID (= Nummer der Rasterzelle, siehe `build`).
     pub resources: Vec<(u32, ResourceSpec)>,
     pub spawn: Vec3,
+    /// Magische Kristallvorkommen (Mitte am Boden) – für Licht und Funken in der Nähe.
+    pub crystals: Vec<Vec3>,
 }
 
 /// Wie weit Wind Laub bewegt.
@@ -379,6 +381,8 @@ struct Library {
     /// Abbaubare Vorkommen (Spitzhacke)
     stone_nodes: Vec<Variant>,
     ore_nodes: Vec<Variant>,
+    /// Magische Kristallvorkommen (leuchten, noch nicht abbaubar)
+    crystal_nodes: Vec<Variant>,
     bushes: Vec<Variant>,
     grass: Vec<Variant>,
     teal_grass: Vec<Variant>,
@@ -438,6 +442,7 @@ impl Library {
             magic_trees,
             stone_nodes,
             ore_nodes,
+            crystal_nodes: asset_files::load_variants(ctx, "natur", "kristallvorkommen", Vec3::ONE, 0.0),
             bushes: slot(ctx, "busch", 3, &|s| models::bush(s * 3)),
             grass: slot(ctx, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
             teal_grass: slot(ctx, "zaubergras", 1, &|_| models::grass(99, vec3(0.05, 0.35, 0.3))),
@@ -534,6 +539,7 @@ pub fn build(ctx: &mut Context) -> Island {
 
     let lib = Library::load(ctx);
     let mut resources = Vec::new();
+    let mut crystals = Vec::new();
 
 
     let spacing = 3.2;
@@ -626,6 +632,8 @@ pub fn build(ctx: &mut Context) -> Island {
                         found = Some(tree("Tanne", pick(&lib.pines, &mut rng), pine_size(&mut rng), 5));
                     } else if roll < 0.10 {
                         found = Some(node(&mut rng));
+                    } else if roll < 0.112 && !lib.crystal_nodes.is_empty() {
+                        crystals.push(crystal_node(ctx, pick(&lib.crystal_nodes, &mut rng), base, yaw, rng.range(1.0, 1.4)));
                     }
                 } else if h > 17.0 {
                     if roll < 0.17 {
@@ -642,6 +650,8 @@ pub fn build(ctx: &mut Context) -> Island {
                         decor(ctx, by_id(&lib.glow_mushroom), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.9 });
                     } else if roll < 0.42 {
                         decor(ctx, pick(&lib.magic_flowers, &mut rng), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.5 });
+                    } else if roll < 0.445 && !lib.crystal_nodes.is_empty() {
+                        crystals.push(crystal_node(ctx, pick(&lib.crystal_nodes, &mut rng), base, yaw, rng.range(0.9, 1.3)));
                     }
                 } else if birch_grove(p) > 0.64 && h < 14.0 {
                     // Birkenhain: helle Stämme dicht beieinander, dazwischen Büsche und Blumen
@@ -682,7 +692,7 @@ pub fn build(ctx: &mut Context) -> Island {
             }
 
             // Um Vorkommen herum kein hohes Gras, sonst verschwinden sie darin.
-            let node_here = found.as_ref().is_some_and(|s| s.kind.needs_pickaxe());
+            let node_here = found.as_ref().is_some_and(|s| s.kind.needs_pickaxe()) || crystals.last() == Some(&base);
             if let Some(spec) = found {
                 resources.push((id, spec));
             }
@@ -709,7 +719,21 @@ pub fn build(ctx: &mut Context) -> Island {
     }
 
     log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
-    Island { terrain, resources, spawn }
+    log::info!("{} Kristallvorkommen", crystals.len());
+    Island { terrain, resources, spawn, crystals }
+}
+
+/// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich
+/// aber noch nicht abbauen. Liefert die Mitte am Boden.
+fn crystal_node(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, scale: f32) -> Vec3 {
+    let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(scale));
+    let entity = ctx.scene.spawn(Entity::new("Kristallvorkommen", mesh).with_transform(transform));
+    if let Some(glow) = glow {
+        ctx.scene.spawn(Entity::new("Kristalle", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.5 }));
+    }
+    let collider = Transform::from_position(base + Vec3::Y * 0.6 * scale).with_rotation(rotation);
+    ctx.physics.add_body(entity, &collider, BodyDesc::fixed(Shape::Box { size: vec3(1.1, 1.2, 1.1) * scale }));
+    base
 }
 
 fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {

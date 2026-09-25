@@ -65,6 +65,8 @@ pub struct Playground {
     /// (`Some(erz?)` = noch hinstellen, sobald die Figur da ist).
     demo_mine: Option<u32>,
     demo_mine_request: Option<bool>,
+    /// Nur zum Testen: neben das nächste Kristallvorkommen stellen und hinschauen.
+    demo_crystal: Option<Option<Vec3>>,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -108,6 +110,7 @@ impl Playground {
             hotbar_slot: 0,
             demo_mine: None,
             demo_mine_request: None,
+            demo_crystal: None,
             autopilot,
             themed: false,
             local_ip: None,
@@ -749,6 +752,19 @@ fn demo_place_at_node(ctx: &mut Context, session: &mut Session, ore: bool) -> Op
     Some(id)
 }
 
+/// Nur zum Testen: stellt die eigene Figur vor das nächste Kristallvorkommen.
+fn demo_place_at_crystal(ctx: &mut Context, session: &mut Session) -> Option<Vec3> {
+    let local = session.local_player()?;
+    let world = session.world();
+    let crystal = world.crystals().iter().copied().min_by(|a, b| a.distance(world.spawn).total_cmp(&b.distance(world.spawn)))?;
+    let away = (world.spawn - crystal).with_y(0.0).normalize_or(Vec3::Z);
+    let stand = crystal + away * 3.0;
+    let stand = vec3(stand.x, world.terrain.height_at(stand.x, stand.z) + 1.0, stand.z);
+    let character = world.players.get(&local)?.character;
+    ctx.physics.teleport_character(character, stand);
+    Some(crystal)
+}
+
 /// Übersetzt die technischen Trennungsgründe des Netzwerks in verständliche Sätze.
 fn explain_disconnect(reason: &str) -> String {
     if reason.contains("terminated by server") || reason.contains("terminated by the server") {
@@ -783,6 +799,9 @@ impl Game for Playground {
             self.hotbar_slot = 1;
         }
         // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
+        if args.iter().any(|a| a == "--demo-kristall") {
+            self.demo_crystal = Some(None);
+        }
         if let Some(position) = args.iter().position(|a| a == "--demo-abbauen") {
             self.demo_mine_request = Some(args.get(position + 1).is_none_or(|a| a != "stein"));
         }
@@ -887,6 +906,17 @@ impl Game for Playground {
             }
         }
 
+        if let (Some(None), Some(session)) = (self.demo_crystal, &mut self.session) {
+            self.demo_crystal = Some(demo_place_at_crystal(ctx, session));
+        }
+        if let (Some(Some(crystal)), Some(session)) = (self.demo_crystal, &self.session) {
+            if let Some(player) = session.local_player().and_then(|p| session.world().player_position(ctx, p)) {
+                let to = crystal - player;
+                ctx.camera.yaw = to.x.atan2(-to.z) - 0.75;
+                ctx.camera.pitch = -0.12;
+                self.orbit.distance = 5.5;
+            }
+        }
         if let (Some(ore), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
             self.demo_mine = demo_place_at_node(ctx, session, ore);
         }

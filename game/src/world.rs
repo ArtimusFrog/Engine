@@ -129,6 +129,8 @@ pub struct World {
     stride: HashMap<PlayerId, (Vec3, f32)>,
     /// Fliegende Zaubergeschosse (nur mit Fenster).
     bolts: Vec<Bolt>,
+    /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
+    crystals: Vec<Vec3>,
 }
 
 impl World {
@@ -145,6 +147,7 @@ impl World {
             by_entity: HashMap::new(),
             inventories: HashMap::new(),
             puppets: HashMap::new(),
+            crystals: island.crystals,
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
             animals,
@@ -588,6 +591,44 @@ impl World {
         self.place_resource(ctx, id);
     }
 
+    /// Kristallvorkommen in der Nähe: blaues Licht (nachts kräftiger) und aufsteigende Funken.
+    fn crystal_glow(&mut self, ctx: &mut Context) {
+        let camera = ctx.camera.position;
+        let night = ctx.env.sky.stars;
+        let dt = ctx.time.delta;
+        for &crystal in &self.crystals {
+            let distance = crystal.distance(camera);
+            if distance > 60.0 {
+                continue;
+            }
+            let pulse = 0.85 + 0.15 * (ctx.time.elapsed * 1.3 + crystal.x).sin();
+            ctx.lights.push(PointLight { position: crystal + Vec3::Y * 1.0, color: vec3(0.25, 0.55, 1.6) * (0.35 + night * 1.3) * pulse, radius: 8.0 });
+            if distance < 30.0 && self.effects_rng.chance(dt * 3.0) {
+                let rng = &mut self.effects_rng;
+                let offset = vec3(rng.range(-0.6, 0.6), rng.range(0.3, 1.4), rng.range(-0.6, 0.6));
+                ctx.particles.burst(Burst {
+                    position: crystal + offset,
+                    count: 1,
+                    color: vec3(0.45, 0.8, 1.0),
+                    color_variation: 0.15,
+                    speed: 0.25,
+                    direction: Vec3::Y * 0.5,
+                    size: 0.05,
+                    life: 2.2,
+                    gravity: -0.35,
+                    glow: 5.0,
+                    grow: 0.0,
+                    round: true,
+                });
+            }
+        }
+    }
+
+    /// Mitte der Kristallvorkommen (am Boden).
+    pub fn crystals(&self) -> &[Vec3] {
+        &self.crystals
+    }
+
     /// Glühwürmchen in der Nacht rund um die Kamera, über Wiesen und im Wald.
     fn fireflies(&mut self, ctx: &mut Context) {
         let night = ctx.env.sky.stars;
@@ -627,6 +668,7 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
         self.fireflies(ctx);
+        self.crystal_glow(ctx);
         self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);

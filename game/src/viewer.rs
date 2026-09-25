@@ -237,13 +237,21 @@ impl Viewer {
         let meshes: Vec<MeshData>;
         let mut animated = None;
         if model.clips.is_empty() {
-            meshes = model.static_meshes(&textures);
-            for mesh in &meshes {
+            let groups = model.static_mesh_groups(&textures);
+            for (info, mesh) in &groups {
                 let id = ctx.assets.add_mesh(mesh.clone());
-                // Blattkarten (Bäume, Gras) wie auf der Insel: weiches Laub-Licht, leichter Wind.
-                let material = if mesh.alpha_cutout { Material::Leaves { sway: 0.02 } } else { Material::Standard };
+                // Blattkarten (Bäume, Gras) wie auf der Insel: weiches Laub-Licht, leichter Wind;
+                // Teile mit Emission leuchten wie im Spiel.
+                let material = if info.emissive > 0.0 {
+                    Material::Emissive { glow: 1.5 }
+                } else if mesh.alpha_cutout {
+                    Material::Leaves { sway: 0.02 }
+                } else {
+                    Material::Standard
+                };
                 entities.push(ctx.scene.spawn(Entity::new("Modell", id).with_material(material)));
             }
+            meshes = groups.into_iter().map(|(_, mesh)| mesh).collect();
         } else {
             // Animierte Modelle werden als ein Mesh verformt (eine Textur, Farben aus den Materialien).
             let texture = textures.first().copied();

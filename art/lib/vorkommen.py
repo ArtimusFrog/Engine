@@ -255,3 +255,144 @@ def erzvorkommen(seed):
     teile += _splitter(zufall, geroell, zufall.randint(5, 7), 1.15)
     teile += _splitter(zufall, rost_geroell, zufall.randint(4, 6), 1.05, groesse=(0.05, 0.09))
     return _abschliessen("Erzvorkommen", teile)
+
+
+# ---------------------------------------------------------------------------
+# Kristallvorkommen (magisch, leuchtend – noch nicht abbaubar)
+# ---------------------------------------------------------------------------
+def _kristall_mid(laenge, radius, zufall, seiten=6):
+    """Mid-Poly-Kristall entlang +Z (Fuß im Ursprung): leicht verjüngtes, leicht verdrehtes
+    Sechseckprisma aus drei Abschnitten, darauf eine Spitze mit abgeschrägten Facetten."""
+    bm = bmesh.new()
+    drall = zufall.uniform(-0.15, 0.15)
+    ringe = []
+    for hoehe, breite in ((0.0, 1.0), (0.35, 0.97), (0.68, 0.93), (0.78, 0.8)):
+        ring = []
+        for k in range(seiten):
+            w = math.tau * k / seiten + drall * hoehe
+            # leicht unregelmäßiger Querschnitt: nicht jede Seite gleich breit
+            r = radius * breite * (1.0 + 0.08 * math.sin(k * 2.3 + laenge * 7))
+            ring.append(bm.verts.new((math.cos(w) * r, math.sin(w) * r, laenge * hoehe)))
+        ringe.append(ring)
+    spitze = bm.verts.new((radius * zufall.uniform(-0.15, 0.15), radius * zufall.uniform(-0.15, 0.15), laenge))
+    for a, b in zip(ringe, ringe[1:]):
+        for k in range(seiten):
+            bm.faces.new((a[k], a[(k + 1) % seiten], b[(k + 1) % seiten], b[k]))
+    oben = ringe[-1]
+    for k in range(seiten):
+        bm.faces.new((oben[k], oben[(k + 1) % seiten], spitze))
+    bm.faces.new(list(reversed(ringe[0])))
+    return bm
+
+
+def _kristall_farbe(zufall, fuss, mitte, spitze, laenge):
+    """Unten tiefblau, nach oben heller bis fast weiß an der Spitze; Facetten im Wechsel."""
+    def von(poly, fase=False):
+        h = max(0.0, min(1.0, poly.center.z / max(laenge, 0.01)))
+        c = fuss.lerp(mitte, min(1.0, h * 1.4)).lerp(spitze, max(0.0, (h - 0.7) / 0.3))
+        return c * (1.12 if poly.index % 2 else 0.92) * zufall.uniform(0.95, 1.05)
+    return von
+
+
+def _kristallbueschel_mid(zufall, basis, achse, groesse, farben):
+    """Ein Büschel: großer Hauptkristall, darum 2–5 kleinere, fächerförmig nach außen."""
+    teile = []
+    quer = achse.orthogonal().normalized()
+    anzahl = zufall.randint(3, 6)
+    for i in range(anzahl):
+        haupt = i == 0
+        laenge = groesse * (zufall.uniform(0.95, 1.15) if haupt else zufall.uniform(0.35, 0.7))
+        radius = laenge * zufall.uniform(0.13, 0.17)
+        bm = _kristall_mid(laenge, radius, zufall)
+        if haupt:
+            richtung = achse
+        else:
+            w = math.tau * i / (anzahl - 1) + zufall.uniform(-0.3, 0.3)
+            seitlich = quer * math.cos(w) + achse.cross(quer) * math.sin(w)
+            richtung = (achse + seitlich * zufall.uniform(0.35, 0.8)).normalized()
+        dreh = Vector((0, 0, 1)).rotation_difference(richtung).to_matrix().to_4x4() @ Matrix.Rotation(zufall.uniform(0, math.tau), 4, "Z")
+        fuss = basis + (richtung - achse) * radius * 1.5 - richtung * laenge * 0.12
+        # Farben in lokalen Koordinaten berechnen (vor dem Drehen), dann an ihren Platz setzen
+        obj = _objekt(f"Kristall{i}", bm, _kristall_farbe(zufall, *farben, laenge))
+        obj.data.transform(Matrix.Translation(fuss) @ dreh)
+        teile.append(obj)
+    return teile
+
+
+def _kristall_material():
+    """Leuchtendes Material: Grundfarbe aus den Vertexfarben, dazu Emission (die Engine lässt
+    Teile mit Emission nachts glühen)."""
+    mat = bpy.data.materials.get("Kristall")
+    if mat is None:
+        mat = bpy.data.materials.new("Kristall")
+        try:
+            mat.use_nodes = True
+        except (AttributeError, TypeError):
+            pass
+        knoten, links = mat.node_tree.nodes, mat.node_tree.links
+        bsdf = next(k for k in knoten if k.type == "BSDF_PRINCIPLED")
+        vc = knoten.new("ShaderNodeVertexColor")
+        vc.layer_name = "Farbe"
+        links.new(vc.outputs["Color"], bsdf.inputs["Base Color"])
+        bsdf.inputs["Roughness"].default_value = 0.2
+        if "Emission Color" in bsdf.inputs:
+            bsdf.inputs["Emission Color"].default_value = srgb_zu_linear("#7CCBFF")
+            bsdf.inputs["Emission Strength"].default_value = 1.5
+    return mat
+
+
+def kristallvorkommen(seed):
+    zufall = random.Random(seed)
+    # Sockel: dunkler, bläulicher Schiefer mit leuchtend blauen Adern
+    schiefer = _steinfarbe(zufall, farbe("#232838"), farbe("#343B50"), farbe("#4C5670"), farbe("#6A7690"), schicht=22.0)
+    adern = [(Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-0.4, 0.4))).normalized(), zufall.uniform(-0.2, 0.3))
+             for _ in range(3)]
+    ader_farbe, ader_rand = farbe("#4FB4FF"), farbe("#2B5C9E")
+
+    def fels(poly, fase=False):
+        c = schiefer(poly, fase)
+        for normale, abstand in adern:
+            d = abs(Vector(poly.center).dot(normale) - abstand)
+            if d < 0.022:
+                return ader_farbe * zufall.uniform(0.9, 1.15)
+            if d < 0.05:
+                c = c.lerp(ader_rand, 0.5)
+        return c
+
+    felsen = _gruppe(zufall, fels, groesse=0.75, schnitte=(9, 12))
+    felsen += _splitter(zufall, _steinfarbe(zufall, farbe("#262B3A"), farbe("#3A4156"), farbe("#525C76"), farbe("#6A7690")),
+                        zufall.randint(5, 8), 1.1)
+
+    # Kristallbüschel: eines groß in der Mitte, dazu ein bis zwei kleinere am Rand
+    farben = (farbe("#1D4FB8"), farbe("#3C9CFF"), farbe("#D2F1FF"))
+    kristalle = _kristallbueschel_mid(zufall, Vector((0, 0, 0.35)), Vector((zufall.uniform(-0.1, 0.1), zufall.uniform(-0.1, 0.1), 1)).normalized(),
+                                      zufall.uniform(1.25, 1.55), farben)
+    for i in range(zufall.randint(1, 2)):
+        w = zufall.uniform(0, math.tau)
+        basis = Vector((math.cos(w) * 0.55, math.sin(w) * 0.55, 0.12))
+        achse = (Vector((math.cos(w), math.sin(w), 0)) * 0.6 + Vector((0, 0, 1))).normalized()
+        kristalle += _kristallbueschel_mid(zufall, basis, achse, zufall.uniform(0.55, 0.85), farben)
+    # Abgebrochene Splitter am Boden
+    for i in range(zufall.randint(3, 5)):
+        w = zufall.uniform(0, math.tau)
+        laenge = zufall.uniform(0.15, 0.28)
+        bm = _kristall_mid(laenge, laenge * 0.16, zufall)
+        obj = _objekt(f"Splitter{i}", bm, _kristall_farbe(zufall, *farben, laenge))
+        liegen = Matrix.Rotation(math.radians(zufall.uniform(70, 85)), 4, "X")
+        obj.data.transform(Matrix.Translation((math.cos(w) * zufall.uniform(0.8, 1.15), math.sin(w) * zufall.uniform(0.8, 1.15), 0.03))
+                           @ Matrix.Rotation(zufall.uniform(0, math.tau), 4, "Z") @ liegen)
+        kristalle.append(obj)
+
+    fels_obj = vereinen("Sockel", felsen)
+    _material(fels_obj)
+    kristall_obj = vereinen("Kristalle", kristalle)
+    kristall_obj.data.materials.clear()
+    kristall_obj.data.materials.append(_kristall_material())
+    for poly in kristall_obj.data.polygons:
+        poly.material_index = 0
+    obj = vereinen("Kristallvorkommen", [fels_obj, kristall_obj])
+    boden_abflachen(obj, 0.0)
+    ursprung_unten(obj)
+    dreiecke = sum(len(p.vertices) - 2 for p in obj.data.polygons)
+    print(f"VORKOMMEN Kristallvorkommen: {dreiecke} Dreiecke")
+    return obj
