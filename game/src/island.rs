@@ -12,17 +12,17 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 7;
+pub const WORLD_ID: u32 = SEED + 8;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
-pub const ISLAND_RADIUS: f32 = 520.0;
+pub const ISLAND_RADIUS: f32 = 760.0;
 /// Maßstab gegenüber der ersten, kleineren Insel (330 m): Bach und See wachsen mit.
 const SCALE: f32 = ISLAND_RADIUS / 330.0;
-const TERRAIN_SIZE: f32 = 1400.0;
-/// 2,5 m je Zelle
-const TERRAIN_CELLS: usize = 560;
+const TERRAIN_SIZE: f32 = 2040.0;
+/// 3 m je Zelle
+const TERRAIN_CELLS: usize = 680;
 /// Bergsee im Westen: Mitte, Radius der Wasserfläche und Höhe des Wasserspiegels.
 const LAKE_CENTER: Vec2 = vec2(-0.42 * ISLAND_RADIUS, 0.12 * ISLAND_RADIUS);
-const LAKE_RADIUS: f32 = 55.0;
+const LAKE_RADIUS: f32 = 38.0 * SCALE;
 const LAKE_LEVEL: f32 = 6.0;
 /// Um den Startpunkt bleibt eine Lichtung frei.
 const SPAWN_CLEARING: f32 = 12.0;
@@ -83,9 +83,10 @@ pub const MAP_EXTENT: f32 = ISLAND_RADIUS * 1.08;
 const MAP_SIZE: usize = 2048;
 
 /// Orte, die auf der Karte beschriftet werden.
-pub fn landmarks() -> [(&'static str, Vec2); 3] {
+pub fn landmarks() -> [(&'static str, Vec2); 4] {
     [
         ("Bergsee", LAKE_CENTER),
+        (FESTUNG_NAME, Vec2::ZERO),
         (BURG_NAME, BURG_ORT),
         ("Nebelgebirge", vec2(0.05 * ISLAND_RADIUS, -0.62 * ISLAND_RADIUS)),
     ]
@@ -121,7 +122,7 @@ fn map_image(terrain: &Terrain, paths: &Paths, trees: &[Vec2]) -> Image {
                         let mut c = ground_color(vec3(p.x, h, p.y), n) * shade * contour;
                         let path = paths.at(p) * smoothstep(2.3, 3.0, h);
                         c = c.lerp(vec3(0.3, 0.18, 0.08), smoothstep(0.3, 0.6, path));
-                        burg_karte(p).map_or(c, |burg| burg * shade)
+                        burg_karte(p).or_else(|| festung_karte(p)).map_or(c, |bau| bau * shade)
                     };
                     let mut srgb = linear.to_array().map(linear_to_srgb);
                     // Küstenlinie
@@ -618,9 +619,73 @@ fn burg_karte(p: Vec2) -> Option<Vec3> {
     })
 }
 
-/// Höhe der Landschaft an (x, z) – mit eingegrabenem Bach und dem Burgberg.
+// ---------------------------------------------------------------------------
+// Schattenfestung in der Inselmitte
+// ---------------------------------------------------------------------------
+
+pub const FESTUNG_NAME: &str = "Schattenfestung";
+
+/// Grundriss der Festung (Mitte = Inselmitte, das Tor zeigt nach Süden, +z): der Felssockel
+/// (Radius 44 m) und die Rampe davor bis z ≈ 72. Abstand zum Rand, negativ = drinnen.
+pub fn festung_rand(p: Vec2) -> f32 {
+    let kreis = p.length() - 44.0;
+    let q = vec2(p.x.abs() - 5.5, (p.y - 36.0).abs() - 36.0);
+    let rampe = q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0);
+    kreis.min(rampe)
+}
+
+/// Höhe, auf der die Festung steht: Mittel des natürlichen Geländes unter dem Grundriss.
+pub fn festung_hoehe() -> f32 {
+    static HOEHE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *HOEHE.get_or_init(|| {
+        let mut summe = 0.0;
+        let mut anzahl = 0.0;
+        for iz in -8..=8 {
+            for ix in -8..=8 {
+                let p = vec2(ix as f32, iz as f32) * 5.0;
+                if festung_rand(p) < 0.0 {
+                    summe += height_raw(p);
+                    anzahl += 1.0;
+                }
+            }
+        }
+        (summe / anzahl).max(3.0)
+    })
+}
+
+/// Unter der Festung und der Rampe ist der Boden eben, nach außen läuft er weich aus.
+fn festungsgrund(p: Vec2, h: f32) -> f32 {
+    let d = festung_rand(p);
+    if d > 30.0 {
+        return h;
+    }
+    let eben = festung_hoehe();
+    eben + (h - eben) * smoothstep(0.0, 25.0, d)
+}
+
+/// Auf dem Festungsgrund wächst nichts und steht nichts anderes.
+pub fn festung_frei(p: Vec2) -> bool {
+    festung_rand(p) < 8.0
+}
+
+/// Karte: dunkler Fels, Ringmauer, violetter Bergfried.
+fn festung_karte(p: Vec2) -> Option<Vec3> {
+    let r = p.length();
+    if r > 40.0 {
+        return None;
+    }
+    Some(if r < 9.0 {
+        vec3(0.34, 0.14, 0.48)
+    } else if (r - 28.0).abs() < 1.8 {
+        vec3(0.1, 0.08, 0.12)
+    } else {
+        vec3(0.22, 0.2, 0.25)
+    })
+}
+
+/// Höhe der Landschaft an (x, z) – mit eingegrabenem Bach, dem Burgberg und dem Festungsgrund.
 pub fn height(p: Vec2) -> f32 {
-    burgberg(p, height_mit_bach(p))
+    burgberg(p, festungsgrund(p, height_mit_bach(p)))
 }
 
 fn height_mit_bach(p: Vec2) -> f32 {
@@ -714,6 +779,8 @@ impl Paths {
         targets.push(LAKE_CENTER + (start - LAKE_CENTER).normalize() * (LAKE_RADIUS + 9.0));
         // Fuß der Auffahrt zur Burg auf dem Tafelberg
         targets.push(burg_weg_fuss() + (start - burg_weg_fuss()).normalize_or(Vec2::X) * 3.0);
+        // Fuß der Rampe zur Schattenfestung in der Inselmitte
+        targets.push(vec2(0.0, 76.0));
         // Strand: vom Startpunkt nach außen, bis der Sand beginnt
         let outward = start.normalize_or(Vec2::Y);
         if let Some(beach) = find_along(terrain, start, outward, |h| h < 2.6) {
@@ -970,7 +1037,7 @@ fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
         for ix in 0..=steps {
             let p = vec2(-r + ix as f32 * 6.0, -r + iz as f32 * 6.0);
             // Rund um die Burg und ihre Auffahrt ist kein Platz für andere Orte
-            if burg_rand(p) < 30.0 || burg_weg(p).0 < 15.0 {
+            if burg_rand(p) < 30.0 || burg_weg(p).0 < 15.0 || festung_rand(p) < 40.0 {
                 continue;
             }
             if let Some(s) = score(p) {
@@ -1203,10 +1270,18 @@ impl Library {
         // Neue Bäume/Felsen aus Blender bekommen das automatisch mit.
         let trees = [&library.oaks, &library.birches, &library.pines, &library.palms, &library.magic_trees];
         for variants in trees {
-            add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9))]);
+            add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9)), Level(260.0, Some(2.0)), Level(650.0, None)]);
         }
-        add_lods(ctx, &library.stone_nodes, &[Level(60.0, Some(0.3))]);
-        add_lods(ctx, &library.ore_nodes, &[Level(60.0, Some(0.3))]);
+        add_lods(ctx, &library.stone_nodes, &[Level(60.0, Some(0.3)), Level(350.0, None)]);
+        add_lods(ctx, &library.ore_nodes, &[Level(60.0, Some(0.3)), Level(350.0, None)]);
+        add_lods(ctx, &library.crystal_nodes, &[Level(120.0, Some(0.4)), Level(420.0, None)]);
+        // Kleinkram verschwindet je nach Größe – auf der großen Insel wären sonst Zehntausende im Bild
+        add_lods(ctx, &library.logs, &[Level(50.0, Some(0.25)), Level(170.0, None)]);
+        add_lods(ctx, &library.stumps, &[Level(40.0, Some(0.2)), Level(130.0, None)]);
+        for (variants, weit) in [(&library.driftwood, 110.0), (&library.shells, 60.0), (&library.reeds, 100.0), (&library.ferns, 80.0),
+                                 (&library.ivy, 90.0), (&library.lilies, 100.0), (&library.crystals, 160.0), (&library.lantern, 220.0)] {
+            add_lods(ctx, variants, &[Level(weit, None)]);
+        }
         add_lods(ctx, &library.bushes, &[Level(40.0, Some(0.25)), Level(150.0, None)]);
         for variants in [&library.grass, &library.teal_grass, &library.flowers] {
             add_lods(ctx, variants, &[Level(85.0, None)]);
@@ -1273,7 +1348,7 @@ pub fn build(ctx: &mut Context) -> Island {
     let water = ctx.assets.named_mesh("wasser", || MeshData::grid(128));
     ctx.scene.spawn(
         Entity::new("Meer", water)
-            .with_transform(Transform::default().with_scale(vec3(2800.0, 1.0, 2800.0)))
+            .with_transform(Transform::default().with_scale(vec3(4200.0, 1.0, 4200.0)))
             .with_material(Material::Water),
     );
     // Bergsee im Westen: eigene Wasserfläche auf Höhe des Seespiegels
@@ -1290,11 +1365,12 @@ pub fn build(ctx: &mut Context) -> Island {
     let mut places = crate::orte::Places::default();
     crate::orte::build_camp(ctx, &terrain, spawn, &mut places, &landmarks());
     crate::orte::build_castle(ctx, &mut places);
+    crate::orte::build_festung(ctx, &mut places);
     let camp = crate::orte::camp_center(spawn);
     let spots = find_sights(&terrain, spawn, camp);
     let mut blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
     blocked.extend(build_stream(ctx, &terrain, &paths, &mut places));
-    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p);
+    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p) || festung_frei(p);
 
 
     let spacing = 3.2;

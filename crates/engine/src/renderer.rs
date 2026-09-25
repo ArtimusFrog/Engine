@@ -593,10 +593,24 @@ impl Renderer {
         let slots = ctx.assets.mesh_slots();
         let mut main_list: Vec<(MeshId, Instance)> = Vec::new();
         let mut shadow_list: Vec<(MeshId, Instance)> = Vec::new();
-        for (entity, model) in ctx.scene.iter_world().filter(|(e, _)| e.visible) {
+        for (id, entity) in ctx.scene.iter_entities() {
+            if !entity.visible {
+                continue;
+            }
             let (center, radius) = slots[entity.mesh.0 as usize].bounds;
-            let world_center = model.transform_point3(center);
-            let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
+            // Objekte ohne Eltern (fast alles: Bäume, Gras, Felsen) werden erst geprüft und nur
+            // bei Bedarf in eine Matrix gerechnet – bei über 100.000 Objekten spart das viel Zeit.
+            let (world_center, scale, model) = match entity.parent {
+                None => {
+                    let t = &entity.transform;
+                    (t.position + t.rotation * (center * t.scale), t.scale.abs().max_element(), None)
+                }
+                Some(_) => {
+                    let model = ctx.scene.world_matrix(id);
+                    let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
+                    (model.transform_point3(center), scale, Some(model))
+                }
+            };
             // Etwas Luft für Wind und Wellen, die der Shader noch verschiebt.
             let world_radius = radius * scale + 1.0;
             let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
@@ -605,6 +619,7 @@ impl Renderer {
             if !seen && !casts_shadow {
                 continue;
             }
+            let model = model.unwrap_or_else(|| entity.transform.matrix());
             let item = (mesh, instance(model, entity.color, entity.material.shader_params()));
             if seen {
                 main_list.push(item);

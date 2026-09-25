@@ -189,6 +189,11 @@ impl Scene {
         }
     }
 
+    /// Alle Objekte mit ihrer ID (ohne Weltmatrix – die ist nur bei Bedarf zu berechnen).
+    pub fn iter_entities(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.entities.iter().enumerate().filter_map(|(i, e)| e.as_ref().map(|e| (EntityId(i), e)))
+    }
+
     /// Alle Objekte zusammen mit ihrer Weltmatrix.
     pub fn iter_world(&self) -> impl Iterator<Item = (&Entity, Mat4)> {
         self.entities

@@ -135,6 +135,9 @@ pub fn build_castle(ctx: &mut Context, places: &mut Places) {
         }
         let (vertices, triangles) = collision_mesh(ctx.assets.mesh(mesh), &transform);
         ctx.physics.add_static_mesh(Some(entity), vertices, triangles);
+        // Aus der Ferne vereinfacht; der Markt (viel Kleinkram) verschwindet ganz
+        let stufen = if name == "marktplatz" { vec![(140.0, Some(0.5)), (420.0, None)] } else { vec![(160.0, Some(0.8)), (420.0, Some(2.0))] };
+        fernstufen(ctx, mesh, glow, &stufen);
     }
     // Namen auf der Karte (die Burg selbst steht bei den großen Orten)
     places.labels.push(("Burgtor", crate::island::burg_welt(vec2(0.0, 75.0))));
@@ -163,6 +166,29 @@ pub fn build_castle(ctx: &mut Context, places: &mut Places) {
     }
 }
 
+/// Detailstufen für große Bauwerke: ab der Entfernung vereinfacht (Zellgröße in Metern) oder,
+/// bei `None`, gar nicht mehr gezeichnet. Leuchtende Teile verschwinden bei der doppelten
+/// Entfernung der ersten Stufe. Nur mit Fenster (der Server zeichnet nichts).
+fn fernstufen(ctx: &mut Context, mesh: MeshId, glow: Option<MeshId>, stufen: &[(f32, Option<f32>)]) {
+    if ctx.is_headless() || ctx.assets.has_lods(mesh) {
+        return;
+    }
+    let lods = stufen
+        .iter()
+        .map(|&(distance, zelle)| Lod {
+            distance,
+            mesh: zelle.map(|zelle| {
+                let grob = ctx.assets.mesh(mesh).simplified(zelle);
+                ctx.assets.add_mesh(grob)
+            }),
+        })
+        .collect();
+    ctx.assets.set_lods(mesh, lods);
+    if let (Some(glow), Some(&(erste, _))) = (glow, stufen.first()) {
+        ctx.assets.set_lods(glow, vec![Lod { distance: erste * 2.0, mesh: None }]);
+    }
+}
+
 /// Dreiecke eines Modells in Weltkoordinaten, gleiche Eckpunkte zusammengefasst (flach
 /// schattierte Modelle haben jede Ecke mehrfach).
 fn collision_mesh(mesh: &MeshData, transform: &Transform) -> (Vec<Vec3>, Vec<[u32; 3]>) {
@@ -185,6 +211,44 @@ fn collision_mesh(mesh: &MeshData, transform: &Transform) -> (Vec<Vec3>, Vec<[u3
         .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
         .collect();
     (vertices, triangles)
+}
+
+// ---------------------------------------------------------------------------
+// Schattenfestung (Modell aus art/lib/festung.py) in der Inselmitte
+// ---------------------------------------------------------------------------
+
+/// Stellt die Schattenfestung in die Inselmitte (Tor nach Süden), mit Kollision aus dem Modell
+/// und Licht von Geisterfeuern und Runenkreis.
+pub fn build_festung(ctx: &mut Context, places: &mut Places) {
+    use crate::island::festung_hoehe;
+    let origin = vec3(0.0, festung_hoehe(), 0.0);
+    log::info!("Schattenfestung auf {:.1} m Höhe", origin.y);
+    let Some(&(mesh, glow)) = asset_files::load_variants(ctx, "bauwerke", "schattenfestung", Vec3::ONE, 0.0).first() else {
+        log::warn!("Bauwerk schattenfestung fehlt");
+        return;
+    };
+    let transform = Transform::from_position(origin);
+    let entity = ctx.scene.spawn(Entity::new("Schattenfestung", mesh).with_transform(transform));
+    if let Some(glow) = glow {
+        ctx.scene.spawn(Entity::new("Schattenfestung (leuchtet)", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.1 }));
+    }
+    let (vertices, triangles) = collision_mesh(ctx.assets.mesh(mesh), &transform);
+    ctx.physics.add_static_mesh(Some(entity), vertices, triangles);
+    fernstufen(ctx, mesh, None, &[(150.0, Some(0.8)), (420.0, Some(2.0))]);
+    // Blender-Koordinaten der Festung (x, y, Höhe) → Welt
+    let blender = |x: f32, y: f32, z: f32| origin + vec3(x, z, -y);
+    let gruen = vec3(0.7, 2.6, 1.1);
+    let violett = vec3(1.8, 0.6, 2.8);
+    for s in [-1.0, 1.0] {
+        places.lights.push((blender(s * 3.9, -29.35, 12.6), gruen, 10.0));
+        places.lights.push((blender(s * 2.7, -57.45, 4.7), gruen, 9.0));
+        places.lights.push((blender(s * 2.7, -41.25, 9.6), gruen, 9.0));
+    }
+    for (x, y) in [(-4.0, -16.0), (4.0, -16.0), (6.0, 0.5), (-6.0, 0.5)] {
+        places.lights.push((blender(x, y, 12.5), gruen, 10.0));
+    }
+    places.labels.push(("Festungstor", vec2(0.0, 30.0)));
+    places.lights.push((blender(11.0, -8.0, 12.0), violett, 12.0));
 }
 
 // ---------------------------------------------------------------------------

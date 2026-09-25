@@ -20,6 +20,8 @@ use crate::protocol::Item;
 const WANDER_RADIUS: f32 = 16.0;
 /// Weiter entfernt von der Kamera werden Animationen nicht mehr berechnet.
 const ANIMATION_DISTANCE: f32 = 70.0;
+/// Weiter entfernte Tiere werden gar nicht gezeichnet (jedes Tier kostet einen eigenen Draw-Call).
+const SICHTWEITE: f32 = 260.0;
 /// Tiefer als das gilt als Wasser oder Strand – da gehen Tiere nicht hin.
 const MIN_GROUND: f32 = 1.4;
 /// So lange (Sekunden) bleibt ein erlegtes Tier weg, dann kommt ein neues in sein Revier.
@@ -427,7 +429,12 @@ impl Animal {
             }
             return;
         } else if let Some(entity) = ctx.scene.try_get_mut(visual.entity) {
-            entity.visible = true;
+            let sichtbar = self.position.distance(ctx.camera.position) < SICHTWEITE;
+            entity.visible = sichtbar;
+            if !sichtbar {
+                visual.shown = self.position;
+                return;
+            }
         }
         visual.shown = visual.shown.lerp(self.position, (dt * 15.0).min(1.0));
         if visual.shown.distance(self.position) > 5.0 {
@@ -639,17 +646,17 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
     // Füchse im Wald, Rehe überall im Grünen, Bären im Wald, Schafe in Herden auf Wiesen,
     // Wölfe als Rudel im Wald und am Berg.
     let groups: [(AnimalKind, usize, usize, usize, &dyn Fn(Vec2, f32) -> bool); 6] = [
-        (AnimalKind::Hare, 80, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
-        (AnimalKind::Fox, 30, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
-        (AnimalKind::Deer, 40, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
-        (AnimalKind::Bear, 16, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
-        (AnimalKind::Sheep, 60, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
-        (AnimalKind::Wolf, 24, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
+        (AnimalKind::Hare, 150, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
+        (AnimalKind::Fox, 55, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
+        (AnimalKind::Deer, 75, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
+        (AnimalKind::Bear, 30, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
+        (AnimalKind::Sheep, 110, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
+        (AnimalKind::Wolf, 45, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
     ];
     for (kind, count, near, herd, fits) in groups {
         let mut placed = 0;
         let mut tries = 0;
-        while placed < count && tries < 9000 {
+        while placed < count && tries < 20000 {
             tries += 1;
             // Ein paar Tiere in Sichtweite des Startpunkts, der Rest verteilt.
             let near_spawn = placed < near;
@@ -753,7 +760,7 @@ mod tests {
         let mut ctx = Context::headless();
         let world = crate::world::World::new(&mut ctx);
         let bears: Vec<_> = world.animals.iter().filter(|a| a.kind == AnimalKind::Bear).collect();
-        assert_eq!(bears.len(), 16, "Bären fehlen");
+        assert_eq!(bears.len(), 30, "Bären fehlen");
         let spawn = world.spawn;
         for bear in &bears {
             let offset = bear.position - spawn;
