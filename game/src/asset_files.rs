@@ -111,8 +111,7 @@ pub fn load_variants(ctx: &mut Context, folder: &str, name: &str, scale: Vec3, s
     result
 }
 
-/// Regeln für Assets je Ordner (siehe art/README.md). Fremde Pakete wie die
-/// KayKit-Figuren in `characters/` werden nicht geprüft.
+/// Regeln für Assets je Ordner (siehe art/README.md). Andere Ordner werden nicht geprüft.
 struct Rules {
     max_triangles: usize,
     required_clips: &'static [&'static str],
@@ -123,6 +122,7 @@ fn rules_for(path: &Path) -> Option<Rules> {
     match folder {
         "natur" => Some(Rules { max_triangles: 5000, required_clips: &[] }),
         "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"] }),
+        "figuren" => Some(Rules { max_triangles: 40000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen"] }),
         "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
         _ => None,
     }
@@ -212,9 +212,9 @@ mod tests {
 
     #[test]
     fn regeln_greifen() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/characters/axe_1handed.gltf");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/engine/testdaten/axe_1handed.gltf");
         let model = Model::from_file(path).unwrap();
-        assert!(check_model(Path::new(path), &model).is_empty(), "characters/ wird nicht geprüft");
+        assert!(check_model(Path::new(path), &model).is_empty(), "Testdaten werden nicht geprüft");
         let problems = check_model(Path::new("assets/tiere/axt.gltf"), &model);
         assert!(problems.iter().any(|p| p.contains("Boden")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("Idle")), "{problems:?}");

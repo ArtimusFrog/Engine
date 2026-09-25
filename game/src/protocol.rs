@@ -134,15 +134,17 @@ impl Inventory {
 /// Welche Figur ein Spieler spielt.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CharacterClass {
-    #[default]
+    // Ritter, Barbar und Schurkin gibt es zurzeit nicht (nur noch für alte Spielstände lesbar).
     Knight,
     Barbarian,
+    #[default]
     Mage,
     Rogue,
 }
 
 impl CharacterClass {
-    pub const ALL: [CharacterClass; 4] = [CharacterClass::Knight, CharacterClass::Barbarian, CharacterClass::Mage, CharacterClass::Rogue];
+    /// Wählbare Figuren.
+    pub const ALL: [CharacterClass; 1] = [CharacterClass::Mage];
 
     pub fn label(self) -> &'static str {
         match self {

@@ -626,8 +626,8 @@ impl Animator {
 mod tests {
     use super::*;
 
-    const KNIGHT: &[u8] = include_bytes!("../../../game/assets/characters/Knight.glb");
-    const BARBARIAN: &[u8] = include_bytes!("../../../game/assets/characters/Barbarian.glb");
+    const KNIGHT: &[u8] = include_bytes!("../testdaten/Knight.glb");
+    const BARBARIAN: &[u8] = include_bytes!("../testdaten/Barbarian.glb");
 
     #[test]
     fn ritter_laden_und_animieren() {
@@ -675,7 +675,7 @@ mod file_tests {
 
     #[test]
     fn gltf_mit_externen_dateien_laden_und_backen() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../game/assets/characters/axe_1handed.gltf");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdaten/axe_1handed.gltf");
         let model = Model::from_file(path).expect("Axt nicht lesbar");
         assert_eq!(model.images.len(), 1, "Textur aus der PNG-Datei fehlt");
         assert!(model.materials.len() >= 2, "Material aus der Datei fehlt");

@@ -78,6 +78,10 @@ impl Settings {
                     settings.fullscreen = true;
                 }
                 settings.settings_version = SETTINGS_VERSION;
+                // Nur noch Figuren aus CharacterClass::ALL sind wählbar (zurzeit der Magier).
+                if !crate::protocol::CharacterClass::ALL.contains(&settings.character) {
+                    settings.character = crate::protocol::CharacterClass::default();
+                }
                 settings
             }
             Err(_) => Settings::default(),

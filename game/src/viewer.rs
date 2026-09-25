@@ -94,7 +94,7 @@ fn group_name(folder: &str) -> String {
     match folder {
         "natur" => "Natur".into(),
         "tiere" => "Tiere".into(),
-        "characters" => "Figuren".into(),
+        "figuren" => "Figuren".into(),
         "gebaeude" => "Gebäude".into(),
         "gegenstaende" => "Gegenstände".into(),
         "" => "Sonstiges".into(),
@@ -334,7 +334,7 @@ impl Viewer {
             None => {
                 let root = ctx.scene.spawn(Entity::new("Vergleichsfigur", ctx.assets.cube()).with_transform(Transform::from_position(position)));
                 ctx.scene.get_mut(root).visible = false;
-                let puppet = Puppet::new(ctx, CharacterClass::Knight, root);
+                let puppet = Puppet::new(ctx, CharacterClass::Mage, root);
                 self.reference = Some((root, puppet));
             }
         }
