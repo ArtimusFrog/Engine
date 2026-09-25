@@ -21,6 +21,18 @@ pub struct Sounds {
     crackle: SoundId,
     thunder: SoundId,
     rain: LoopId,
+    /// Rauschen des Wasserfalls (am Ort)
+    waterfall: LoopId,
+    /// Musik für die Nacht und den Zauberwald (die Tagesmusik ist `music`)
+    music_night: LoopId,
+    music_magic: LoopId,
+    /// Aktuelle Anteile der drei Musikstücke (weich überblendet)
+    music_mix: [f32; 3],
+    gull: SoundId,
+    howl: SoundId,
+    /// Zeit bis zum nächsten Möwenruf bzw. Wolfsgeheul
+    next_gull: f32,
+    next_howl: f32,
     cast: SoundId,
     impact: SoundId,
     pickup: SoundId,
@@ -69,6 +81,23 @@ impl Sounds {
             step_sand: sound(a, "schritt_sand", || step(0.45, 5)),
             crackle: sound(a, "knistern", crackle),
             thunder: sound(a, "donner", thunder),
+            waterfall: {
+                let s = sound(a, "wasserfall", waterfall);
+                a.start_loop(s, Bus::Ambient)
+            },
+            music_night: {
+                let s = sound(a, "musik_nacht", music_night);
+                a.start_loop(s, Bus::Music)
+            },
+            music_magic: {
+                let s = sound(a, "musik_zauberwald", music_magic);
+                a.start_loop(s, Bus::Music)
+            },
+            music_mix: [1.0, 0.0, 0.0],
+            gull: sound(a, "moewe", gull),
+            howl: sound(a, "wolfsgeheul", howl),
+            next_gull: 4.0,
+            next_howl: 20.0,
             rain: {
                 let rain = sound(a, "regen", rain);
                 a.start_loop(rain, Bus::Ambient)
@@ -179,13 +208,54 @@ impl Sounds {
         ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
         ctx.audio.set_loop(self.birds, daylight * inland * 0.45 * (1.0 - rain), None, 1.0);
         ctx.audio.set_loop(self.crickets, (1.0 - daylight) * inland * 0.35 * (1.0 - rain), None, 1.0);
-        ctx.audio.set_loop(self.music, 0.35, None, 1.0);
+        // Wasserfall: lautes Rauschen am Fuß, weit zu hören
+        match world.places.waterfall {
+            Some((_, foot)) => ctx.audio.set_loop(self.waterfall, 0.85, Some(foot), 60.0),
+            None => ctx.audio.set_loop(self.waterfall, 0.0, None, 1.0),
+        }
+
+        // Möwen rufen tagsüber an der Küste
+        let dt = ctx.time.delta;
+        self.next_gull -= dt;
+        if self.next_gull <= 0.0 {
+            self.next_gull = self.rng.range(4.0, 11.0);
+            if let (Some(at), true) = (shore_at, daylight > 0.3 && rain < 0.5) {
+                let pos = at + vec3(self.rng.range(-15.0, 15.0), self.rng.range(8.0, 14.0), self.rng.range(-15.0, 15.0));
+                ctx.audio.play(self.gull, Play { at: Some(pos), volume: 0.45, pitch: self.rng.range(0.9, 1.15), range: 90.0, ..Default::default() });
+            }
+        }
+        // Wölfe heulen nachts aus den Bergen (vom nächsten Wolf aus)
+        self.next_howl -= dt;
+        if self.next_howl <= 0.0 {
+            self.next_howl = self.rng.range(25.0, 60.0);
+            if daylight < 0.2 {
+                let wolf = world
+                    .animals
+                    .iter()
+                    .filter(|a| a.kind == crate::animals::AnimalKind::Wolf && a.is_alive())
+                    .map(|a| a.position)
+                    .min_by(|a, b| a.distance(camera).total_cmp(&b.distance(camera)));
+                if let Some(at) = wolf.filter(|w| w.distance(camera) < 180.0) {
+                    ctx.audio.play(self.howl, Play { at: Some(at + Vec3::Y), volume: 0.8, pitch: self.rng.range(0.9, 1.1), range: 200.0, ..Default::default() });
+                }
+            }
+        }
+
+        // Musik: Tag, Nacht, Zauberwald – weich überblenden
+        let magic = crate::island::is_enchanted(vec2(camera.x, camera.z)) as u8 as f32;
+        let target = if magic > 0.5 { [0.0, 0.0, 1.0] } else if daylight < 0.3 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+        for (mix, goal) in self.music_mix.iter_mut().zip(target) {
+            *mix += (goal - *mix) * (dt * 0.25).min(1.0);
+        }
+        ctx.audio.set_loop(self.music, 0.35 * self.music_mix[0], None, 1.0);
+        ctx.audio.set_loop(self.music_night, 0.35 * self.music_mix[1], None, 1.0);
+        ctx.audio.set_loop(self.music_magic, 0.35 * self.music_mix[2], None, 1.0);
     }
 
     /// Im Menü: nur Musik und etwas Wind.
     pub fn menu(&mut self, ctx: &mut Context) {
         ctx.audio.set_loop(self.wind, 0.2, None, 1.0);
-        for quiet in [self.waves, self.birds, self.crickets, self.rain] {
+        for quiet in [self.waves, self.birds, self.crickets, self.rain, self.waterfall, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
         ctx.audio.set_loop(self.music, 0.5, None, 1.0);
@@ -265,6 +335,97 @@ fn step(brightness: f32, seed: u64) -> SoundBuffer {
     let mut noise = Noise::new(seed);
     let mut lp = LowPass::default();
     render(0.12, |t| lp.next(noise.next(), brightness) * envelope(t, 0.004, 0.03) * 1.3)
+}
+
+/// Wasserfall: breites, kräftiges Rauschen, tief und hell gemischt (Schleife).
+fn waterfall() -> SoundBuffer {
+    let mut noise = Noise::new(41);
+    let mut low = LowPass::default();
+    let mut mid = LowPass::default();
+    let mut buffer = render(6.0, |t| {
+        let n = noise.next();
+        let deep = low.next(n, 0.04) * 3.0;
+        let body = mid.next(n, 0.25) * 0.8;
+        let splash = (n - mid.next(n, 0.25)) * 0.25;
+        (deep + body + splash) * (0.9 + 0.1 * (t * 1.7).sin())
+    });
+    make_loopable(&mut buffer, 1.0);
+    buffer
+}
+
+/// Möwe: zwei, drei schrille, abfallende Rufe.
+fn gull() -> SoundBuffer {
+    let mut noise = Noise::new(42);
+    render(1.1, |t| {
+        let mut s = 0.0;
+        for k in 0..3 {
+            let local = t - k as f32 * 0.3;
+            if (0.0..0.26).contains(&local) {
+                let pitch = 1450.0 - local * 1800.0 + (local * 40.0).sin() * 60.0;
+                let tone = sine(local, pitch) * 0.6 + sine(local, pitch * 2.0) * 0.25 + noise.next() * 0.08;
+                s += tone * envelope(local, 0.02, 0.12) * (1.0 - k as f32 * 0.2);
+            }
+        }
+        s
+    })
+}
+
+/// Wolfsgeheul: langer, steigender und dann fallender Ton mit leichtem Zittern.
+fn howl() -> SoundBuffer {
+    render(3.6, |t| {
+        let shape = if t < 0.8 { t / 0.8 } else { 1.0 - ((t - 0.8) / 2.8).powf(1.5) * 0.4 };
+        let pitch = 330.0 + 180.0 * shape + (t * 5.5).sin() * 6.0;
+        let tone = sine(t, pitch) * 0.7 + sine(t, pitch * 2.0) * 0.18 + sine(t, pitch * 3.0) * 0.06;
+        let swell = (t / 0.4).min(1.0) * (1.0 - (t - 2.9).max(0.0) / 0.7).max(0.0);
+        tone * swell * 0.6
+    })
+}
+
+/// Musik in der Nacht: ruhige Mollakkorde (Dm – Am – B – C), wenige, weiche Töne.
+fn music_night() -> SoundBuffer {
+    const CHORDS: [[f32; 3]; 4] = [[146.83, 174.61, 220.00], [110.00, 130.81, 164.81], [116.54, 146.83, 174.61], [130.81, 164.81, 196.00]];
+    const SCALE: [f32; 5] = [587.33, 698.46, 783.99, 880.00, 1046.50];
+    pad_music(CHORDS, SCALE, 8.0, 0.45, 12)
+}
+
+/// Musik im Zauberwald: schwebende Akkorde mit Glöckchen (E-Lydisch).
+fn music_magic() -> SoundBuffer {
+    const CHORDS: [[f32; 3]; 4] = [[164.81, 207.65, 246.94], [185.00, 233.08, 277.18], [164.81, 207.65, 246.94], [138.59, 164.81, 207.65]];
+    const SCALE: [f32; 5] = [1318.51, 1479.98, 1661.22, 1864.66, 1975.53];
+    pad_music(CHORDS, SCALE, 7.0, 0.7, 13)
+}
+
+/// Gemeinsamer Aufbau: weiche Flächenakkorde und darüber einzelne Töne aus einer Tonleiter.
+fn pad_music(chords: [[f32; 3]; 4], scale: [f32; 5], chord_len: f32, density: f32, seed: u64) -> SoundBuffer {
+    let total = chord_len * chords.len() as f32;
+    let mut rng = Rng::new(seed);
+    let mut notes: Vec<(f32, f32)> = Vec::new();
+    let mut beat = 0.0;
+    while beat < total - 2.0 {
+        if rng.chance(density) {
+            notes.push((beat + rng.range(0.0, 0.3), scale[(rng.next_u32() % 5) as usize]));
+        }
+        beat += 1.25;
+    }
+    let mut buffer = render(total, |t| {
+        let index = ((t / chord_len) as usize).min(chords.len() - 1);
+        let local = t - index as f32 * chord_len;
+        let swell = (local / 2.0).min(1.0) * ((chord_len - local) / 2.0).min(1.0);
+        let mut pad = 0.0;
+        for &f in &chords[index] {
+            pad += sine(t, f) * 0.6 + sine(t, f * 1.004) * 0.35 + sine(t, f * 2.0) * 0.08;
+        }
+        let mut melody = 0.0;
+        for &(start, f) in &notes {
+            let local = t - start;
+            if (0.0..3.0).contains(&local) {
+                melody += (sine(local, f) + sine(local, f * 3.0) * 0.08) * envelope(local, 0.01, 0.8);
+            }
+        }
+        pad * swell * 0.07 + melody * 0.09
+    });
+    make_loopable(&mut buffer, 1.5);
+    buffer
 }
 
 /// Donner: tiefes, rollendes Grollen mit einem Krachen am Anfang.
@@ -445,13 +606,18 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 17] = [
+    let all: [(&str, fn() -> SoundBuffer); 22] = [
         ("hacken", chop),
         ("stein", stone),
         ("erz", ore),
         ("knistern", crackle),
         ("donner", thunder),
         ("regen", rain),
+        ("wasserfall", waterfall),
+        ("moewe", gull),
+        ("wolfsgeheul", howl),
+        ("musik_nacht", music_night),
+        ("musik_zauberwald", music_magic),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
         ("schritt_gras", || step(0.18, 3)),

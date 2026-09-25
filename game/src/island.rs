@@ -776,6 +776,11 @@ fn linear_to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
+/// Im Zauberwald? (für Musik und Stimmung)
+pub fn is_enchanted(p: Vec2) -> bool {
+    magic(p) > 0.62 && height(p) < 18.0
+}
+
 /// Bergsee: Mitte, Radius, Wasserspiegel.
 pub fn lake() -> (Vec2, f32, f32) {
     (LAKE_CENTER, LAKE_RADIUS, LAKE_LEVEL)
