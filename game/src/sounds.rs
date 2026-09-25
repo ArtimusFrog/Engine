@@ -13,6 +13,7 @@ use crate::world::{SoundEvent, World};
 pub struct Sounds {
     chop: SoundId,
     stone: SoundId,
+    ore: SoundId,
     tree_falls: SoundId,
     rock_breaks: SoundId,
     step_grass: SoundId,
@@ -58,6 +59,7 @@ impl Sounds {
         Sounds {
             chop: sound(a, "hacken", chop),
             stone: sound(a, "stein", stone),
+            ore: sound(a, "erz", ore),
             tree_falls: sound(a, "baum_faellt", tree_falls),
             rock_breaks: sound(a, "fels_bricht", rock_breaks),
             step_grass: sound(a, "schritt_gras", || step(0.18, 3)),
@@ -85,6 +87,7 @@ impl Sounds {
                     let (hit, done) = match kind {
                         ResourceKind::Wood => (self.chop, self.tree_falls),
                         ResourceKind::Stone => (self.stone, self.rock_breaks),
+                        ResourceKind::Ore => (self.ore, self.rock_breaks),
                     };
                     ctx.audio.play(hit, Play { at: Some(at + Vec3::Y), pitch, range: 45.0, ..Default::default() });
                     if finished {
@@ -195,6 +198,19 @@ fn stone() -> SoundBuffer {
         let click = (n - lp.next(n, 0.2)) * envelope(t, 0.0005, 0.02) * 1.1;
         let ring = (sine(t, 1870.0) * 0.5 + sine(t, 2710.0) * 0.3 + sine(t, 3920.0) * 0.15) * envelope(t, 0.001, 0.12) * 0.45;
         let body = sine(t, 180.0) * envelope(t, 0.001, 0.05) * 0.4;
+        click + ring + body
+    })
+}
+
+/// Spitzhacke auf Erz: harter Schlag mit hellem, metallischem Klingen.
+fn ore() -> SoundBuffer {
+    let mut noise = Noise::new(13);
+    let mut lp = LowPass::default();
+    render(0.8, |t| {
+        let n = noise.next();
+        let click = (n - lp.next(n, 0.15)) * envelope(t, 0.0005, 0.018) * 1.2;
+        let ring = (sine(t, 2350.0) * 0.45 + sine(t, 3180.0) * 0.3 + sine(t, 4410.0) * 0.2 + sine(t, 1210.0) * 0.25) * envelope(t, 0.001, 0.22) * 0.5;
+        let body = sine(t, 150.0) * envelope(t, 0.001, 0.05) * 0.45;
         click + ring + body
     })
 }
@@ -367,9 +383,10 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 13] = [
+    let all: [(&str, fn() -> SoundBuffer); 14] = [
         ("hacken", chop),
         ("stein", stone),
+        ("erz", ore),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
         ("schritt_gras", || step(0.18, 3)),

@@ -269,13 +269,105 @@ def wolle():
     objekt("Fadenende", bm, faden, glatt=True)
 
 
-GEGENSTAENDE = {"holz": holz, "stein": stein, "fleisch": fleisch, "fell": fell, "wolle": wolle}
+def erz():
+    """Eisenerz: dunkler Brocken mit rostroten Adern und herausragenden, metallisch glänzenden Stücken."""
+    fels = material("Basalt", "#38373E", rau=0.8, muster=True, muster_farbe="#1F1E23", muster_skala=6.0)
+    rost = material("Erzrost", "#B8662F", rau=0.6, muster=True, muster_farbe="#7A3F1E", muster_skala=9.0)
+    glanz = bpy.data.materials.new("Erzglanz")
+    setze(glanz, use_nodes=True)
+    bsdf = next(n for n in glanz.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Base Color"].default_value = linear("#C9D1DC")
+    bsdf.inputs["Metallic"].default_value = 1.0
+    bsdf.inputs["Roughness"].default_value = 0.25
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=0.8)
+    bewegen(bm, groesse=(1.1, 0.95, 0.8))
+    zufall = random.Random(12)
+    ebenen = [Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-0.3, 1))).normalized() for _ in range(8)]
+    for v in bm.verts:
+        for n in ebenen:
+            abstand = v.co.dot(n) - 0.58
+            if abstand > 0:
+                v.co -= n * abstand
+    verbeulen(bm, 0.025, seed=5)
+    bm.normal_update()
+    for f in bm.faces:
+        f.material_index = 1 if zufall.random() < 0.16 else 0
+    brocken = objekt("Erzbrocken", bm, fels, rost)
+    # Herausragende Erzstücke
+    mitte = Vector((0, 0, 0))
+    punkte = [Vector(p).normalized() for p in ((0.5, -0.6, 0.6), (-0.4, -0.7, 0.4), (0.8, -0.2, 0.1), (-0.1, -0.5, 0.85), (0.3, 0.2, 0.9))]
+    for i, richtung in enumerate(punkte):
+        k = bmesh.new()
+        bmesh.ops.create_icosphere(k, subdivisions=0, radius=1.0)
+        bewegen(k, groesse=(0.13, 0.11, 0.26 + 0.06 * (i % 2)))
+        drehung = Vector((0, 0, 1)).rotation_difference(richtung).to_matrix().to_4x4()
+        bmesh.ops.transform(k, matrix=Matrix.Translation(mitte + richtung * 0.62) @ drehung, verts=k.verts)
+        objekt(f"Erzstueck{i}", k, glanz if i % 2 == 0 else rost)
+    brocken.rotation_euler.z = 0.3
+
+
+def _aus_magier(knoten, drehung, nur_oben=None):
+    """Holt ein Anbauteil (Stab, Spitzhacke) aus dem fertigen Magier-Modell – so sieht das Symbol
+    genau aus wie im Spiel. `drehung` legt es schräg ins Bild."""
+    bpy.ops.import_scene.gltf(filepath=str(REPO / "game" / "assets" / "figuren" / "magier.gltf"))
+    for obj in bpy.context.scene.objects:
+        if obj.type == "ARMATURE":
+            obj.data.pose_position = "REST"
+    bpy.context.view_layer.update()
+    ziel = bpy.data.objects[knoten]
+    welt = ziel.matrix_world.copy()
+    daten = ziel.data.copy()
+    daten.transform(welt)
+    if nur_oben:
+        # Nur das obere Stück zeigen (beim langen Stab: Kristall und Krallen)
+        bm = bmesh.new()
+        bm.from_mesh(daten)
+        oben = max(v.co.z for v in bm.verts)
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.z < oben - nur_oben], context="VERTS")
+        bm.to_mesh(daten)
+        bm.free()
+    mitte = sum((Vector(v.co) for v in daten.vertices), Vector()) / len(daten.vertices)
+    daten.transform(Matrix.Translation(-mitte))
+    daten.transform(drehung)
+    for obj in list(bpy.context.scene.objects):
+        bpy.data.objects.remove(obj)
+    teil = bpy.data.objects.new(knoten, daten)
+    bpy.context.scene.collection.objects.link(teil)
+    # Vertexfarben als Grundfarbe
+    mat = bpy.data.materials.new("Vertexfarben")
+    setze(mat, use_nodes=True)
+    knoten_baum = mat.node_tree.nodes
+    bsdf = next(n for n in knoten_baum if n.type == "BSDF_PRINCIPLED")
+    attribut = knoten_baum.new("ShaderNodeAttribute")
+    attribut.attribute_name = daten.color_attributes[0].name if daten.color_attributes else "Col"
+    mat.node_tree.links.new(attribut.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.6
+    daten.materials.clear()
+    daten.materials.append(mat)
+
+
+def spitzhacke():
+    # Stiel (im Modell nach unten hängend) schräg von links unten nach rechts oben, Spitze nach rechts unten
+    s = 0.7071
+    drehung = Matrix(((0, -s, -s), (-1, 0, 0), (0, s, -s))).to_4x4()
+    _aus_magier("Spitzhacke", drehung)
+
+
+def zauberstab():
+    _aus_magier("Stab", Matrix.Rotation(math.radians(45), 4, "Y"), nur_oben=0.75)
+
+
+GEGENSTAENDE = {"holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
+                "spitzhacke": spitzhacke, "zauberstab": zauberstab}
+# Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
+BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25)}
 
 
 # ---------------------------------------------------------------------------
 # Bühne: Kamera von schräg oben, Licht, Rendern, Kontur
 # ---------------------------------------------------------------------------
-def buehne():
+def buehne(blick=(0.55, -1.0, 0.75)):
     szene = bpy.context.scene
     try:
         szene.render.engine = "CYCLES"
@@ -308,7 +400,7 @@ def buehne():
     kamera_daten.type = "ORTHO"
     kamera = bpy.data.objects.new("Kamera", kamera_daten)
     szene.collection.objects.link(kamera)
-    richtung = Vector((0.55, -1.0, 0.75)).normalized()
+    richtung = Vector(blick).normalized()
     kamera.location = mitte + richtung * 10
     kamera.rotation_euler = (-richtung).to_track_quat("-Z", "Y").to_euler()
     szene.camera = kamera
@@ -375,7 +467,7 @@ def main():
     for name in namen:
         leeren()
         GEGENSTAENDE[name]()
-        buehne()
+        buehne(BLICK.get(name, (0.55, -1.0, 0.75)))
         pfad = ZIEL / f"{name}.png"
         bpy.context.scene.render.filepath = str(pfad)
         bpy.ops.render.render(write_still=True)

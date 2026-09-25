@@ -6,8 +6,8 @@ use engine::prelude::*;
 
 use crate::animals::{self, Animal};
 use crate::island::{self, ResourceKind, ResourceSpec};
-use crate::characters::{Action, Puppet};
-use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, HOST_PLAYER};
+use crate::characters::{Action, Puppet, MINE_STRIKE};
+use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, PlayerInput, Tool, HOST_PLAYER};
 
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_SPEED: f32 = 9.0;
@@ -19,8 +19,10 @@ pub const CAST_RANGE: f32 = 45.0;
 pub const BOLT_SPEED: f32 = 34.0;
 /// So lange holt der Magier aus, bevor das Geschoss losfliegt (Sekunden, passt zur Animation).
 pub const CAST_DELAY: f32 = 0.22;
-/// Takte zwischen zwei Schlägen auf einen Rohstoff.
+/// Takte zwischen zwei Schlägen auf einen Baum.
 pub const HARVEST_COOLDOWN_TICKS: u64 = 22;
+/// Takte zwischen zwei Schlägen mit der Spitzhacke (so lang wie die Animation „Abbauen“).
+pub const MINE_COOLDOWN_TICKS: u64 = 48;
 /// Wie nah man einem Rohstoff sein muss (Meter vom Rand).
 pub const HARVEST_REACH: f32 = 2.2;
 /// Nach dieser Zeit wachsen Bäume nach und Felsen tauchen wieder auf (2 Minuten).
@@ -31,6 +33,8 @@ pub struct Avatar {
     pub character: CharacterId,
     /// Blickrichtung (Yaw in Radiant), folgt der Laufrichtung.
     pub facing: f32,
+    /// Werkzeug in der Hand (aus der Auswahlleiste).
+    pub tool: Tool,
     pub last_cast_tick: u64,
     pub last_harvest_tick: u64,
     pub name: String,
@@ -53,6 +57,15 @@ pub struct Resource {
     pub regrows_at: Option<u64>,
     /// Restzeit des Wackelns nach einem Treffer (Sekunden).
     shake: f32,
+    /// Optik: Lebensstand, den das Modell gerade zeigt (Vorkommen schrumpfen mit jedem Schlag).
+    shown_health: u8,
+    /// Optik: Schlag mit der Spitzhacke, der erst noch auftrifft (Restzeit in Sekunden).
+    strike: Option<f32>,
+    /// Optik: Stauchen nach einem Treffer (1 → 0), Wachsen nach dem Nachwachsen (0 → 1),
+    /// aktuelle Größe (weich nachgeführt).
+    pop: f32,
+    grow: f32,
+    size: f32,
 }
 
 impl Resource {
@@ -145,7 +158,22 @@ impl World {
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
-            world.resources.insert(id, Resource { spec, health, entity: None, body: None, regrows_at: None, shake: 0.0 });
+            world.resources.insert(
+                id,
+                Resource {
+                    spec,
+                    health,
+                    entity: None,
+                    body: None,
+                    regrows_at: None,
+                    shake: 0.0,
+                    shown_health: health,
+                    strike: None,
+                    pop: 0.0,
+                    grow: 1.0,
+                    size: 1.0,
+                },
+            );
             world.place_resource(ctx, id);
         }
         world
@@ -179,7 +207,7 @@ impl World {
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
         self.players.insert(
             id,
-            Avatar { entity, character, facing: 0.0, last_cast_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
+            Avatar { entity, character, facing: 0.0, tool: Tool::default(), last_cast_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
         );
         self.inventories.entry(id).or_default();
         log::info!("{name} ({id}) ist da");
@@ -198,15 +226,18 @@ impl World {
     /// Bewegt eine Spielfigur einen Takt weit. Läuft auf dem Server für alle Spieler und
     /// auf dem Client zusätzlich für die eigene Figur (Vorhersage).
     pub fn apply_input(&mut self, ctx: &mut Context, id: PlayerId, input: &PlayerInput) {
+        // Beim Abbauen zum Rohstoff drehen (wie beim Zaubern zum Ziel).
+        let harvest_target = input.harvest.and_then(|r| self.resources.get(&r)).map(|r| r.spec.transform.position);
         let Some(avatar) = self.players.get_mut(&id) else { return };
+        avatar.tool = input.tool;
         let wish = vec3(input.wish.x, 0.0, input.wish.y).clamp_length_max(1.0);
         let speed = if input.sprint { SPRINT_SPEED } else { WALK_SPEED };
         ctx.physics.drive_character(avatar.character, wish * speed, input.jump);
         if wish.length_squared() > 0.01 {
             avatar.facing = wish.x.atan2(-wish.z);
         }
-        // Beim Zaubern zum Ziel drehen.
-        if let Some(target) = input.cast {
+        // Beim Zaubern und Abbauen zum Ziel drehen.
+        if let Some(target) = input.cast.or(harvest_target) {
             let from = ctx.physics.character_position(avatar.character);
             let to = target - from;
             if vec2(to.x, to.z).length_squared() > 0.01 {
@@ -441,6 +472,7 @@ impl World {
         if let Some(body) = resource.body.take() {
             ctx.physics.remove_body(body);
         }
+        resource.strike = None;
         if let Some(entity) = resource.entity.take() {
             ctx.scene.despawn(entity);
             self.by_entity.remove(&entity);
@@ -462,12 +494,32 @@ impl World {
     }
 
     /// Ein Treffer ist angekommen: Zustand übernehmen und – falls gewünscht – Effekte zeigen.
+    /// Bei Vorkommen kommen die Effekte erst, wenn die Spitzhacke in der Animation auftrifft.
     pub fn resource_hit(&mut self, ctx: &mut Context, id: u32, health: u8, effects: bool) {
         let Some(resource) = self.resources.get_mut(&id) else { return };
         if !resource.is_present() {
             return;
         }
         resource.health = health;
+        if health == 0 {
+            resource.regrows_at = Some(ctx.time.tick + RESPAWN_TICKS);
+        }
+        let delayed = resource.spec.kind.needs_pickaxe() && !ctx.is_headless();
+        if delayed && (effects || resource.strike.is_some()) {
+            // Das Modell zeigt den Stand erst beim Auftreffen; weg ist es dann auch erst dort.
+            if effects && resource.strike.is_none() {
+                resource.strike = Some(MINE_STRIKE);
+            }
+            if health == 0 {
+                if let Some(body) = resource.body.take() {
+                    ctx.physics.remove_body(body);
+                }
+            }
+            return;
+        }
+        if !delayed || !effects {
+            resource.shown_health = health;
+        }
         if effects {
             resource.shake = 0.35;
             hit_particles(ctx, &resource.spec, health == 0);
@@ -477,7 +529,23 @@ impl World {
             }
         }
         if health == 0 {
-            resource.regrows_at = Some(ctx.time.tick + RESPAWN_TICKS);
+            self.remove_resource_visual(ctx, id);
+        }
+    }
+
+    /// Die Spitzhacke trifft (Optik): Wackeln, Stauchen, Splitter, Klang – und ist das Vorkommen
+    /// erschöpft, zerfällt es.
+    fn strike(&mut self, ctx: &mut Context, id: u32) {
+        let Some(resource) = self.resources.get_mut(&id) else { return };
+        resource.strike = None;
+        resource.shown_health = resource.health;
+        resource.shake = 0.3;
+        resource.pop = 1.0;
+        let finished = !resource.is_present();
+        hit_particles(ctx, &resource.spec, finished);
+        let (kind, at) = (resource.spec.kind, resource.spec.transform.position);
+        self.sound_events.push(SoundEvent::Hit { kind, at, finished });
+        if finished {
             self.remove_resource_visual(ctx, id);
         }
     }
@@ -485,6 +553,12 @@ impl World {
     /// Nur Optik: Wackeln und Splitter sofort zeigen, bevor der Server antwortet.
     pub fn preview_hit(&mut self, ctx: &mut Context, id: u32) {
         if let Some(resource) = self.resources.get_mut(&id).filter(|r| r.is_present()) {
+            if resource.spec.kind.needs_pickaxe() {
+                if resource.strike.is_none() && !ctx.is_headless() {
+                    resource.strike = Some(MINE_STRIKE);
+                }
+                return;
+            }
             resource.shake = 0.35;
             hit_particles(ctx, &resource.spec, false);
             if !ctx.is_headless() {
@@ -501,6 +575,16 @@ impl World {
         }
         resource.regrows_at = None;
         resource.health = resource.spec.max_health;
+        resource.shown_health = resource.health;
+        // Ein Rest vom Zerfallen könnte noch zu sehen sein.
+        if resource.entity.is_some() {
+            self.remove_resource_visual(ctx, id);
+        }
+        if let Some(resource) = self.resources.get_mut(&id) {
+            // Wächst sichtbar aus dem Boden (ohne Fenster sofort fertig).
+            resource.grow = if ctx.is_headless() { 1.0 } else { 0.0 };
+            resource.size = 1.0;
+        }
         self.place_resource(ctx, id);
     }
 
@@ -572,11 +656,52 @@ impl World {
                 }
             }
         }
-        for resource in self.resources.values_mut().filter(|r| r.shake > 0.0) {
+        for (id, avatar) in &self.players {
+            if let Some(puppet) = self.puppets.get_mut(id) {
+                puppet.set_tool(avatar.tool);
+            }
+        }
+
+        // Schläge mit der Spitzhacke, die jetzt auftreffen
+        let mut struck = Vec::new();
+        for (&id, resource) in self.resources.iter_mut() {
+            if let Some(left) = &mut resource.strike {
+                *left -= dt;
+                if *left <= 0.0 {
+                    struck.push(id);
+                }
+            }
+        }
+        for id in struck {
+            self.strike(ctx, id);
+        }
+
+        // Wackeln, Stauchen, Schrumpfen (Vorkommen werden mit jedem Schlag kleiner) und Nachwachsen
+        for resource in self.resources.values_mut() {
+            let target = if resource.spec.kind.needs_pickaxe() {
+                0.55 + 0.45 * resource.shown_health as f32 / resource.spec.max_health.max(1) as f32
+            } else {
+                1.0
+            };
+            if resource.shake <= 0.0 && resource.pop <= 0.0 && resource.grow >= 1.0 && (resource.size - target).abs() < 0.001 {
+                continue;
+            }
             resource.shake = (resource.shake - dt).max(0.0);
+            resource.pop = (resource.pop - dt * 4.0).max(0.0);
+            resource.grow = (resource.grow + dt / 0.9).min(1.0);
+            resource.size += (target - resource.size) * (dt * 10.0).min(1.0);
+            if (resource.size - target).abs() < 0.001 {
+                resource.size = target;
+            }
             let Some(entity) = resource.entity.and_then(|e| ctx.scene.try_get_mut(e)) else { continue };
             let wobble = (ctx.time.elapsed * 45.0).sin() * resource.shake * 0.12;
             entity.transform.rotation = resource.spec.transform.rotation * Quat::from_rotation_x(wobble) * Quat::from_rotation_z(wobble * 0.6);
+            // Aus dem Boden wachsen: schnell, mit leichtem Überschwingen
+            let g = resource.grow;
+            let grown = 1.0 - (1.0 - g).powi(3) + (g * std::f32::consts::PI).sin() * 0.08;
+            let squash = (resource.pop * std::f32::consts::PI).sin() * 0.12;
+            let scale = resource.spec.transform.scale * resource.size * grown;
+            entity.transform.scale = scale * vec3(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
         }
     }
 }
@@ -613,18 +738,64 @@ fn hit_particles(ctx: &mut Context, spec: &ResourceSpec, finished: bool) {
                 round: false,
             });
         }
-        ResourceKind::Stone => {
+        ResourceKind::Stone | ResourceKind::Ore => {
+            let ore = spec.kind == ResourceKind::Ore;
+            let at = base + Vec3::Y * 0.6 * scale;
+            // Splitter
             ctx.particles.burst(Burst {
-                position: base + Vec3::Y * spec.transform.scale.y * 0.5,
-                count: 14 * many,
-                color: vec3(0.3, 0.29, 0.28),
+                position: at,
+                count: 12 * many,
+                color: if ore { vec3(0.09, 0.085, 0.1) } else { vec3(0.36, 0.34, 0.31) },
                 color_variation: 0.25,
-                speed: 6.0,
+                speed: if finished { 7.0 } else { 5.0 },
                 direction: Vec3::Y * 0.8,
-                size: 0.15,
-                life: 1.0,
+                size: if finished { 0.2 } else { 0.12 },
+                life: 1.1,
                 ..Default::default()
             });
+            // Staubwolke
+            ctx.particles.burst(Burst {
+                position: at,
+                count: 5 * many,
+                color: if ore { vec3(0.3, 0.26, 0.24) } else { vec3(0.55, 0.52, 0.48) },
+                color_variation: 0.1,
+                speed: 1.2,
+                direction: Vec3::Y * 0.3,
+                size: 0.3,
+                life: 1.4,
+                gravity: -0.3,
+                glow: 0.0,
+                grow: 2.0,
+                round: true,
+            });
+            if ore {
+                // Rostrote Erzbrocken und Funken vom Eisen der Hacke
+                ctx.particles.burst(Burst {
+                    position: at,
+                    count: 6 * many,
+                    color: vec3(0.55, 0.16, 0.04),
+                    color_variation: 0.2,
+                    speed: 5.0,
+                    direction: Vec3::Y * 0.8,
+                    size: 0.12,
+                    life: 1.1,
+                    ..Default::default()
+                });
+                ctx.particles.burst(Burst {
+                    position: at + Vec3::Y * 0.1,
+                    count: 10 * many,
+                    color: vec3(1.0, 0.65, 0.2),
+                    color_variation: 0.15,
+                    speed: 6.5,
+                    direction: Vec3::Y * 0.5,
+                    size: 0.04,
+                    life: 0.45,
+                    gravity: 9.0,
+                    glow: 6.0,
+                    grow: 0.0,
+                    round: false,
+                });
+            }
         }
     }
 }

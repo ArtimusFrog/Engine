@@ -135,7 +135,7 @@ impl Replica {
             ServerMessage::Snapshot(snapshot) => self.receive_snapshot(ctx, world, snapshot),
             ServerMessage::ResourceHit { id, health, by } => {
                 if Some(by) != self.local_id {
-                    world.play_action(by, Action::Chop);
+                    world.play_action(by, harvest_action(world, id));
                 }
                 // Eigene Schläge wurden schon vorab gezeigt – nicht doppelt.
                 let shown = self.previewed.remove(&id).is_some_and(|tick| ctx.time.tick < tick + 60);
@@ -143,7 +143,7 @@ impl Replica {
             }
             ServerMessage::ResourceGone { id, by } => {
                 if Some(by) != self.local_id {
-                    world.play_action(by, Action::Chop);
+                    world.play_action(by, harvest_action(world, id));
                 }
                 self.previewed.remove(&id);
                 world.resource_hit(ctx, id, 0, true);
@@ -269,6 +269,7 @@ impl Replica {
             };
             ctx.physics.move_character_to(avatar.character, position);
             avatar.facing = facing;
+            avatar.tool = target.tool;
         }
 
         // Objekte, die nur im älteren Snapshot vorkommen, sind inzwischen zur Ruhe gekommen.
@@ -305,6 +306,14 @@ impl Replica {
                 None => animal.apply(target.position, target.facing, target.gait, target.health),
             }
         }
+    }
+}
+
+/// Hacken (Baum) oder Abbauen (Vorkommen mit der Spitzhacke)?
+pub fn harvest_action(world: &World, id: u32) -> Action {
+    match world.resources.get(&id) {
+        Some(resource) if resource.spec.kind.needs_pickaxe() => Action::Mine,
+        _ => Action::Chop,
     }
 }
 

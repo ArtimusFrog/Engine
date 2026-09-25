@@ -10,7 +10,7 @@ use engine::prelude::*;
 use crate::characters::Action;
 use crate::protocol::*;
 use crate::save::{player_key, WorldSave};
-use crate::world::{World, BOLT_SPEED, CAST_COOLDOWN_TICKS, CAST_DELAY, CAST_RANGE, HARVEST_COOLDOWN_TICKS};
+use crate::world::{World, BOLT_SPEED, CAST_COOLDOWN_TICKS, CAST_DELAY, CAST_RANGE, HARVEST_COOLDOWN_TICKS, MINE_COOLDOWN_TICKS};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -153,11 +153,14 @@ impl Authority {
         }
     }
 
-    /// Ein Schlag auf einen Rohstoff. Der Server prüft Reichweite und Tempo selbst,
-    /// damit niemand aus der Ferne oder zu schnell abbauen kann.
+    /// Ein Schlag auf einen Rohstoff. Der Server prüft Reichweite, Tempo und Werkzeug selbst,
+    /// damit niemand aus der Ferne, zu schnell oder ohne Spitzhacke abbauen kann.
     fn harvest(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) {
         let Some(avatar) = world.players.get(&player) else { return };
-        if ctx.time.tick < avatar.last_harvest_tick + HARVEST_COOLDOWN_TICKS || !world.in_reach(ctx, player, id, 1.0) {
+        let Some(kind) = world.resources.get(&id).map(|r| r.spec.kind) else { return };
+        let mining = kind.needs_pickaxe();
+        let cooldown = if mining { MINE_COOLDOWN_TICKS } else { HARVEST_COOLDOWN_TICKS };
+        if (mining && avatar.tool != Tool::Pickaxe) || ctx.time.tick < avatar.last_harvest_tick + cooldown || !world.in_reach(ctx, player, id, 1.0) {
             return;
         }
         if let Some(avatar) = world.players.get_mut(&player) {
@@ -168,7 +171,7 @@ impl Authority {
         let health = resource.health.saturating_sub(1);
 
         world.resource_hit(ctx, id, health, true);
-        world.play_action(player, Action::Chop);
+        world.play_action(player, if mining { Action::Mine } else { Action::Chop });
         let by = player;
         self.broadcast(if health == 0 { ServerMessage::ResourceGone { id, by } } else { ServerMessage::ResourceHit { id, health, by } });
 
@@ -183,7 +186,7 @@ impl Authority {
     /// der Client liefert nur die Richtung (und höchstens `CAST_RANGE` weit).
     fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
         let Some(avatar) = world.players.get_mut(&player) else { return };
-        if ctx.time.tick < avatar.last_cast_tick + CAST_COOLDOWN_TICKS || !target.is_finite() {
+        if avatar.tool != Tool::Staff || ctx.time.tick < avatar.last_cast_tick + CAST_COOLDOWN_TICKS || !target.is_finite() {
             return;
         }
         avatar.last_cast_tick = ctx.time.tick;
@@ -377,6 +380,7 @@ impl Authority {
                     grounded: state.grounded,
                     facing: avatar.facing,
                     last_input: self.clients.get(&id).map_or(0, |c| c.last_processed),
+                    tool: avatar.tool,
                 }
             })
             .collect();

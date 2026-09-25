@@ -45,6 +45,12 @@ PALETTE = {
     "eisen": "#8C939C",
     "eisen_dunkel": "#4B5058",
     "gold": "#E8B64A",
+    # Vorkommen (Stein und Erz zum Abbauen)
+    "basalt": "#4E4D55",
+    "basalt_hell": "#6A6973",
+    "erz_rost": "#B8662F",
+    "erz_dunkel": "#7A3F1E",
+    "erz_glanz": "#DCE3EC",
     # Stoff, Fell und Sonstiges
     "stoff_rot": "#B23A3A",
     "stoff_blau": "#3A5BB2",

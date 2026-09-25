@@ -360,12 +360,17 @@ pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
                 painter.circle_stroke(end, 6.0 * s, Stroke::new(1.5 * s, Color32::from_rgb(90, 55, 25)));
             }
         }
-        Item::Stone => {
+        Item::Stone | Item::Ore => {
             let points = [v(-13.0, 8.0), v(-11.0, -5.0), v(-2.0, -12.0), v(10.0, -9.0), v(14.0, 2.0), v(9.0, 11.0), v(-6.0, 12.0)];
             painter.add(egui::Shape::convex_polygon(points.to_vec(), Color32::from_rgb(128, 131, 140), outline));
             let top = [v(-11.0, -5.0), v(-2.0, -12.0), v(10.0, -9.0), v(3.0, -3.0), v(-7.0, -1.0)];
             painter.add(egui::Shape::convex_polygon(top.to_vec(), Color32::from_rgb(170, 173, 182), Stroke::NONE));
             painter.line_segment([v(3.0, -3.0), v(9.0, 11.0)], Stroke::new(1.2 * s, Color32::from_rgb(95, 97, 105)));
+            if item == Item::Ore {
+                for (x, y) in [(-5.0, 3.0), (5.0, -6.0), (8.0, 5.0)] {
+                    painter.circle_filled(v(x, y), 2.6 * s, Color32::from_rgb(190, 100, 45));
+                }
+            }
         }
         Item::Meat => {
             // Keule: schräges, ovales Fleischstück mit herausstehendem Knochen

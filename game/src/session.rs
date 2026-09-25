@@ -92,7 +92,8 @@ impl Session {
         if let Some(replica) = &mut self.replica {
             self.world.preview_hit(ctx, id);
             if let Some(local) = replica.local_id() {
-                self.world.play_action(local, Action::Chop);
+                let action = crate::client::harvest_action(&self.world, id);
+                self.world.play_action(local, action);
             }
             replica.note_preview(id, ctx.time.tick);
         }
@@ -178,7 +179,7 @@ impl Drop for Session {
 mod tests {
     use super::*;
     use crate::island::ResourceKind;
-    use crate::protocol::CharacterClass;
+    use crate::protocol::{CharacterClass, Tool};
 
     fn hello(name: &str) -> Hello {
         Hello { name: name.into(), class: CharacterClass::Mage }
@@ -191,6 +192,8 @@ mod tests {
         autopilot: bool,
         harvest: Option<u32>,
         cast: Option<Vec3>,
+        /// Stab statt Spitzhacke in der Hand
+        staff: bool,
     }
 
     impl Game for TestGame {
@@ -201,6 +204,8 @@ mod tests {
                 wish: if self.autopilot { vec2(0.0, -1.0) } else { Vec2::ZERO },
                 jump: self.autopilot && ctx.time.tick % 120 == 60,
                 harvest: self.harvest,
+                // Zum Zaubern den Stab nehmen, sonst die Spitzhacke
+                tool: if self.cast.is_some() || self.staff { Tool::Staff } else { Tool::Pickaxe },
                 cast: self.cast.take(),
                 ..Default::default()
             };
@@ -223,12 +228,12 @@ mod tests {
             let mut server_ctx = Context::headless();
             let session = Session::start(&mut server_ctx, Mode::Server { port: 0 }, &hello("Server")).unwrap();
             let port = session.port().expect("Server hat keinen Port");
-            let server = TestGame { session, autopilot: false, harvest: None, cast: None };
+            let server = TestGame { session, autopilot: false, harvest: None, cast: None, staff: false };
 
             let mut client_ctx = Context::headless();
             let address = format!("127.0.0.1:{port}");
             let session = Session::start(&mut client_ctx, Mode::Join { address }, &hello("Testerin")).unwrap();
-            let client = TestGame { session, autopilot: client_autopilot, harvest: None, cast: None };
+            let client = TestGame { session, autopilot: client_autopilot, harvest: None, cast: None, staff: false };
             Pair { server, server_ctx, client, client_ctx }
         }
 
@@ -357,6 +362,58 @@ mod tests {
         let inventory = pair.client.session.local_inventory();
         assert_eq!(inventory.wood, hits - 1 + 4, "Holz im Inventar");
         assert_eq!(inventory.stone, 0);
+    }
+
+    /// Stellt die Figur des Clients neben das nächste Vorkommen dieser Art und liefert dessen ID.
+    fn neben_vorkommen(pair: &mut Pair, kind: ResourceKind) -> u32 {
+        let player = pair.client.session.local_player().unwrap();
+        let world = pair.server.session.world();
+        let (&id, resource) = world
+            .resources
+            .iter()
+            .filter(|(_, r)| r.spec.kind == kind)
+            .min_by(|a, b| a.1.spec.transform.position.distance(world.spawn).total_cmp(&b.1.spec.transform.position.distance(world.spawn)))
+            .expect("Kein Vorkommen auf der Insel");
+        let stand = resource.spec.transform.position + vec3(1.6, 0.0, 0.0);
+        let stand = vec3(stand.x, world.terrain.height_at(stand.x, stand.z) + 1.0, stand.z);
+        let character = world.players[&player].character;
+        pair.server_ctx.physics.teleport_character(character, stand);
+        id
+    }
+
+    #[test]
+    fn erz_mit_der_spitzhacke_abbauen() {
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let ore = neben_vorkommen(&mut pair, ResourceKind::Ore);
+        let hits = pair.server.session.world().resources[&ore].spec.max_health as u32;
+        pair.client.harvest = Some(ore);
+        pair.run(hits * crate::world::MINE_COOLDOWN_TICKS as u32 + 90);
+
+        assert!(!pair.server.session.world().resources[&ore].is_present(), "Erzvorkommen steht auf dem Server noch");
+        assert!(!pair.client.session.world().resources[&ore].is_present(), "Erzvorkommen steht beim Client noch");
+        let inventory = pair.client.session.local_inventory();
+        assert_eq!(inventory.ore, hits - 1 + 4, "Erz im Inventar");
+        assert_eq!(inventory.stone, 0);
+    }
+
+    #[test]
+    fn ohne_spitzhacke_kein_abbau() {
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let stone = neben_vorkommen(&mut pair, ResourceKind::Stone);
+        let full = pair.server.session.world().resources[&stone].spec.max_health;
+        // Mit dem Stab in der Hand passiert nichts …
+        pair.client.staff = true;
+        pair.client.harvest = Some(stone);
+        pair.run(150);
+        assert_eq!(pair.server.session.world().resources[&stone].health, full, "Abbau ohne Spitzhacke");
+        assert_eq!(pair.client.session.local_inventory().stone, 0);
+        // … mit der Spitzhacke schon.
+        pair.client.staff = false;
+        pair.run(80);
+        assert!(pair.server.session.world().resources[&stone].health < full, "Spitzhacke baut nicht ab");
+        assert!(pair.client.session.local_inventory().stone > 0);
     }
 
     #[test]

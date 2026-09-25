@@ -1,5 +1,7 @@
 //! Spielfigur: der Magier aus Blender (`art/modelle/figuren/magier.py` → `figuren/magier.gltf`)
-//! mit Skelett-Animationen: Idle, Laufen, Rennen, Springen, Hieb, Werfen, Zaubern.
+//! mit Skelett-Animationen: Idle, Laufen, Rennen, Springen, Hieb, Werfen, Zaubern, Abbauen.
+//! In der rechten Hand hält er je nach Werkzeug den Stab oder die Spitzhacke (zwei starre
+//! Anbauteile im Modell, von denen immer nur eines sichtbar ist).
 //!
 //! Die Figur hat echte Maße (etwa 1,85 m, mit Hut mehr) und wird nicht skaliert.
 
@@ -8,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use engine::prelude::*;
 
 use crate::asset_files;
-use crate::protocol::CharacterClass;
+use crate::protocol::{CharacterClass, Tool};
 
 /// Die Kapsel hat ihren Mittelpunkt auf halber Höhe (1,8 m), das Modell steht mit den Füßen im Ursprung.
 const FEET_OFFSET: f32 = -0.9;
@@ -38,7 +40,12 @@ fn model() -> Option<Arc<Model>> {
 pub enum Action {
     Chop,
     Cast,
+    /// Mit der Spitzhacke auf ein Vorkommen schlagen
+    Mine,
 }
+
+/// Wie lange (Sekunden) nach dem Beginn von „Abbauen“ die Hacke auftrifft (Bild 16 von 30, Tempo 1,25).
+pub const MINE_STRIKE: f32 = 16.0 / 30.0 / 1.25;
 
 /// Die sichtbare, animierte Figur eines Spielers.
 pub struct Puppet {
@@ -49,6 +56,7 @@ pub struct Puppet {
     last_position: Option<Vec3>,
     speed: f32,
     acting: bool,
+    tool: Option<Tool>,
 }
 
 impl Puppet {
@@ -74,7 +82,21 @@ impl Puppet {
         );
         figure.visible = animator.is_some();
         let figure = ctx.scene.spawn(figure);
-        Puppet { animator, figure, mesh, last_position: None, speed: 0.0, acting: false }
+        let mut puppet = Puppet { animator, figure, mesh, last_position: None, speed: 0.0, acting: false, tool: None };
+        puppet.set_tool(Tool::default());
+        puppet
+    }
+
+    /// Zeigt das Werkzeug in der Hand: Stab oder Spitzhacke.
+    pub fn set_tool(&mut self, tool: Tool) {
+        if self.tool == Some(tool) {
+            return;
+        }
+        self.tool = Some(tool);
+        if let Some(animator) = &mut self.animator {
+            animator.set_visible("Stab", tool == Tool::Staff);
+            animator.set_visible("Spitzhacke", tool == Tool::Pickaxe);
+        }
     }
 
     /// Blendet die ganze Figur ein oder aus (z. B. Vergleichsfigur im Asset-Betrachter).
@@ -88,6 +110,7 @@ impl Puppet {
         let (clip, speed) = match action {
             Action::Chop => ("Hieb", 1.3),
             Action::Cast => ("Zaubern", 1.35),
+            Action::Mine => ("Abbauen", 1.25),
         };
         // Ältere Modelle ohne „Zaubern“: dann eben die Wurfbewegung.
         if !animator.play(clip, false, 0.08) {

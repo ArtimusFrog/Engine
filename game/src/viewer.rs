@@ -87,6 +87,11 @@ pub struct Viewer {
     distance: f32,
     pointer_over_ui: bool,
     themed: bool,
+    /// Nur für Screenshots (`--zoom`, `--standbild`): fester Abstand und Animation bis zu
+    /// diesem Zeitpunkt (Sekunden) abspielen, dann anhalten.
+    fixed_zoom: Option<f32>,
+    freeze_at: Option<f32>,
+    played: f32,
 }
 
 /// Gruppenname für einen Ordner im Asset-Verzeichnis.
@@ -132,6 +137,9 @@ impl Viewer {
             distance: 5.0,
             pointer_over_ui: false,
             themed: false,
+            fixed_zoom: None,
+            freeze_at: None,
+            played: 0.0,
         }
     }
 
@@ -370,7 +378,13 @@ impl Viewer {
 
         if let Some(Some((animator, mesh, texture))) = self.shown.as_mut().map(|s| s.animated.as_mut()) {
             animator.set_speed(self.speed);
-            if self.playing {
+            if let Some(until) = self.freeze_at {
+                let step = (until - self.played).clamp(0.0, dt);
+                if step > 0.0 {
+                    animator.update(step);
+                    self.played += step;
+                }
+            } else if self.playing {
                 animator.update(dt);
             }
             ctx.assets.update_mesh(*mesh, animator.skinned_mesh(*texture));
@@ -392,6 +406,9 @@ impl Viewer {
         }
         if self.turntable {
             ctx.camera.yaw += dt * 0.4;
+        }
+        if let Some(zoom) = self.fixed_zoom {
+            self.distance = zoom;
         }
         let target = self.center();
         ctx.camera.position = target - ctx.camera.forward() * self.distance;
@@ -604,6 +621,11 @@ impl Game for Viewer {
         }
         if let Some(winkel) = value("--drehen") {
             ctx.camera.yaw = winkel.to_radians();
+        }
+        self.fixed_zoom = value("--zoom");
+        self.freeze_at = value("--standbild");
+        if args.iter().any(|a| a == "--ohne-vergleich") {
+            self.show_reference = false;
         }
         match &self.source {
             Some(source) if blender::needs_build(source) => self.start_build(),

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use engine::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, StrokeKind};
 use engine::prelude::Image;
 
-use crate::protocol::{Inventory, Item};
+use crate::protocol::{Inventory, Item, Tool};
 use crate::ui;
 
 const COLUMNS: usize = 6;
@@ -59,18 +59,20 @@ impl Tab {
     }
 }
 
-/// Die gerenderten Symbole als egui-Texturen: groß (Fenster) und klein (Übersicht).
+/// Die gerenderten Symbole (Gegenstände und Werkzeuge) als egui-Texturen, nach Dateinamen:
+/// groß (Fenster, Auswahlleiste) und klein (Übersicht).
 struct Icons {
-    large: HashMap<Item, egui::TextureHandle>,
-    small: HashMap<Item, egui::TextureHandle>,
+    large: HashMap<&'static str, egui::TextureHandle>,
+    small: HashMap<&'static str, egui::TextureHandle>,
 }
 
 impl Icons {
     fn load(ctx: &egui::Context) -> Icons {
         let mut icons = Icons { large: HashMap::new(), small: HashMap::new() };
         let Some(dir) = crate::asset_files::asset_dir() else { return icons };
-        for item in Item::ALL {
-            let path = dir.join("icons").join(format!("{}.png", item.icon_file()));
+        let files = Item::ALL.iter().map(|i| i.icon_file()).chain(Tool::HOTBAR.iter().map(|t| t.icon_file()));
+        for file in files {
+            let path = dir.join("icons").join(format!("{file}.png"));
             let image = match Image::load_png(&path) {
                 Ok(image) => image,
                 Err(message) => {
@@ -92,21 +94,25 @@ impl Icons {
             }
             let options = egui::TextureOptions::LINEAR;
             let texture = |level: &Image| egui::ColorImage::from_rgba_premultiplied([level.width as usize, level.height as usize], &level.rgba);
-            icons.large.insert(item, ctx.load_texture(format!("symbol_{}", item.icon_file()), texture(&level), options));
+            icons.large.insert(file, ctx.load_texture(format!("symbol_{file}"), texture(&level), options));
             let small = half(&level);
-            icons.small.insert(item, ctx.load_texture(format!("symbol_{}_klein", item.icon_file()), texture(&small), options));
+            icons.small.insert(file, ctx.load_texture(format!("symbol_{file}_klein"), texture(&small), options));
         }
         icons
     }
 
-    fn paint(&self, painter: &egui::Painter, rect: Rect, item: Item) {
+    /// Malt ein Symbol; `true`, wenn es das Bild gab.
+    fn paint_file(&self, painter: &egui::Painter, rect: Rect, file: &str, tint: Color32) -> bool {
         let set = if rect.width() > 40.0 { &self.large } else { &self.small };
-        match set.get(&item) {
-            Some(texture) => {
-                let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                painter.image(texture.id(), rect, uv, Color32::WHITE);
-            }
-            None => ui::item_icon(painter, rect.shrink(rect.width() * 0.1), item),
+        let Some(texture) = set.get(file) else { return false };
+        let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        painter.image(texture.id(), rect, uv, tint);
+        true
+    }
+
+    fn paint(&self, painter: &egui::Painter, rect: Rect, item: Item) {
+        if !self.paint_file(painter, rect, item.icon_file(), Color32::WHITE) {
+            ui::item_icon(painter, rect.shrink(rect.width() * 0.1), item);
         }
     }
 }
@@ -231,6 +237,61 @@ impl InventoryUi {
             key_hint(&painter, egui::pos2(rect.right() - MARGIN, footer_top + 22.0), "I", "Schließen");
         });
         close
+    }
+
+    /// Auswahlleiste unten in der Mitte: Werkzeuge auf den Plätzen 1–8, der gewählte leuchtet.
+    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize) {
+        self.icons(ctx);
+        let icons = self.icons.as_ref().expect("Symbole geladen");
+        const SLOTS: usize = 8;
+        let slot = 50.0;
+        let gap = 5.0;
+        let width = SLOTS as f32 * slot + (SLOTS - 1) as f32 * gap + 20.0;
+        egui::Area::new(egui::Id::new("auswahlleiste")).anchor(Align2::CENTER_BOTTOM, [0.0, -14.0]).interactable(false).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, slot + 20.0), egui::Sense::hover());
+            let painter = ui.painter();
+            let shadow = egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(130) };
+            painter.add(shadow.as_shape(rect, 8));
+            painter.rect_filled(rect, 8.0, Color32::from_rgb(10, 8, 6));
+            gradient(painter, rect.shrink(2.0), LEATHER_TOP, LEATHER_BOTTOM, false);
+            painter.rect_stroke(rect.shrink(1.0), 7.0, Stroke::new(1.5, GOLD), StrokeKind::Inside);
+            painter.rect_stroke(rect.shrink(3.5), 5.0, Stroke::new(1.0, GOLD_DARK), StrokeKind::Inside);
+            for side in [rect.left_center(), rect.right_center()] {
+                diamond(painter, side, 7.0, GOLD, GOLD_DARK);
+            }
+            for index in 0..SLOTS {
+                let slot_rect = Rect::from_min_size(rect.left_top() + egui::vec2(10.0 + index as f32 * (slot + gap), 10.0), egui::vec2(slot, slot));
+                let tool = Tool::HOTBAR.get(index).copied();
+                let active = index == selected && tool.is_some();
+                if active {
+                    // Goldener Schein um den gewählten Platz
+                    for (grow, alpha) in [(6.0, 30), (3.5, 60)] {
+                        painter.rect_stroke(slot_rect.expand(grow), 7.0, Stroke::new(3.0, Color32::from_rgba_unmultiplied(244, 214, 142, alpha)), StrokeKind::Outside);
+                    }
+                }
+                slot_frame(painter, slot_rect, active, tool.is_some());
+                if active {
+                    painter.rect_stroke(slot_rect, 4.0, Stroke::new(2.0, GOLD_LIGHT), StrokeKind::Inside);
+                }
+                if let Some(tool) = tool {
+                    let tint = if active { Color32::WHITE } else { Color32::from_gray(185) };
+                    if !icons.paint_file(painter, slot_rect.shrink(3.0), tool.icon_file(), tint) {
+                        painter.text(slot_rect.center(), Align2::CENTER_CENTER, &tool.label()[..1], FontId::proportional(20.0), PARCHMENT);
+                    }
+                }
+                // Tastennummer oben links
+                let number = (index + 1).to_string();
+                let corner = slot_rect.left_top() + egui::vec2(4.0, 2.0);
+                painter.text(corner + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &number, FontId::proportional(12.0), Color32::BLACK);
+                painter.text(corner, Align2::LEFT_TOP, &number, FontId::proportional(12.0), if active { GOLD_LIGHT } else { MUTED });
+            }
+            // Name des Werkzeugs über der Leiste
+            if let Some(tool) = Tool::HOTBAR.get(selected) {
+                let above = egui::pos2(rect.center().x, rect.top() - 6.0);
+                painter.text(above + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, tool.label(), FontId::proportional(15.0), Color32::BLACK);
+                painter.text(above, Align2::CENTER_BOTTOM, tool.label(), FontId::proportional(15.0), GOLD_LIGHT);
+            }
+        });
     }
 
     /// Kleine Übersicht unten rechts, solange das Fenster zu ist.

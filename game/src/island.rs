@@ -12,7 +12,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 3;
+pub const WORLD_ID: u32 = SEED + 4;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 330.0;
 const TERRAIN_SIZE: f32 = 880.0;
@@ -28,7 +28,17 @@ const SPAWN_CLEARING: f32 = 12.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ResourceKind {
     Wood,
+    /// Steinvorkommen (nur mit der Spitzhacke)
     Stone,
+    /// Erzvorkommen (nur mit der Spitzhacke)
+    Ore,
+}
+
+impl ResourceKind {
+    /// Braucht man zum Abbauen die Spitzhacke?
+    pub fn needs_pickaxe(self) -> bool {
+        matches!(self, ResourceKind::Stone | ResourceKind::Ore)
+    }
 }
 
 /// Ein abbaubarer Rohstoff, so wie er beim Aufbau der Insel entsteht.
@@ -366,7 +376,9 @@ struct Library {
     pines: Vec<Variant>,
     palms: Vec<Variant>,
     magic_trees: Vec<Variant>,
-    rocks: Vec<Variant>,
+    /// Abbaubare Vorkommen (Spitzhacke)
+    stone_nodes: Vec<Variant>,
+    ore_nodes: Vec<Variant>,
     bushes: Vec<Variant>,
     grass: Vec<Variant>,
     teal_grass: Vec<Variant>,
@@ -395,9 +407,16 @@ impl Library {
             slot(ctx, name, colors.len() as u32, &|i| build(colors[i as usize - 1]))
         };
 
-        let mut rocks = asset_files::load_variants(ctx, "natur", "fels", ROCK_SCALE, 0.25);
-        if rocks.is_empty() {
-            rocks = (0..5).map(|i| (ctx.assets.named_mesh(&format!("fels{i}"), || models::rock((i + 1) * 7)), None)).collect();
+        // Stein- und Erzvorkommen aus Blender; fehlen sie, eingebaute Felsen als Ersatz.
+        let mut stone_nodes = asset_files::load_variants(ctx, "natur", "steinvorkommen", Vec3::ONE, 0.0);
+        if stone_nodes.is_empty() {
+            stone_nodes = (0..5)
+                .map(|i| (ctx.assets.named_mesh(&format!("fels{i}"), || models::rock((i + 1) * 7).displace(|p| p * ROCK_SCALE * 0.6)), None))
+                .collect();
+        }
+        let mut ore_nodes = asset_files::load_variants(ctx, "natur", "erzvorkommen", Vec3::ONE, 0.0);
+        if ore_nodes.is_empty() {
+            ore_nodes = stone_nodes.clone();
         }
         let mut magic_trees = asset_files::load_variants(ctx, "natur", "zauberbaum", Vec3::ONE, 0.0);
         if magic_trees.is_empty() {
@@ -417,7 +436,8 @@ impl Library {
             pines: slot(ctx, "tanne", 3, &|s| models::pine(s * 29, false)),
             palms: slot(ctx, "palme", 2, &|s| models::palm(s * 13)),
             magic_trees,
-            rocks,
+            stone_nodes,
+            ore_nodes,
             bushes: slot(ctx, "busch", 3, &|s| models::bush(s * 3)),
             grass: slot(ctx, "gras", 3, &|s| models::grass(s * 5, vec3(0.16, 0.4, 0.06))),
             teal_grass: slot(ctx, "zaubergras", 1, &|_| models::grass(99, vec3(0.05, 0.35, 0.3))),
@@ -433,7 +453,8 @@ impl Library {
         for variants in trees {
             add_lods(ctx, variants, &[Level(45.0, Some(0.35)), Level(110.0, Some(0.9))]);
         }
-        add_lods(ctx, &library.rocks, &[Level(60.0, Some(0.3))]);
+        add_lods(ctx, &library.stone_nodes, &[Level(60.0, Some(0.3))]);
+        add_lods(ctx, &library.ore_nodes, &[Level(60.0, Some(0.3))]);
         add_lods(ctx, &library.bushes, &[Level(40.0, Some(0.25)), Level(150.0, None)]);
         for variants in [&library.grass, &library.teal_grass, &library.flowers] {
             add_lods(ctx, variants, &[Level(85.0, None)]);
@@ -564,19 +585,27 @@ pub fn build(ctx: &mut Context) -> Island {
                 collider_offset: Vec3::Y * 2.0 * size,
                 max_health: health,
             };
-            let rock = |(mesh, glow_part): Variant, rng: &mut Rng| {
-                let scale = vec3(rng.range(1.4, 2.6), rng.range(1.0, 1.8), rng.range(1.4, 2.6));
+            // Vorkommen: im Gebirge und an steilen Hängen oft Erz, im Flachland meist Stein, am Strand nie Erz.
+            let ore_chance = if h > 17.0 || slope > 0.55 { 0.45 } else if h < 2.4 { 0.0 } else { 0.18 };
+            let node = |rng: &mut Rng| {
+                let (list, name, kind, health) = if rng.chance(ore_chance) {
+                    (&lib.ore_nodes, "Erzvorkommen", ResourceKind::Ore, 6)
+                } else {
+                    (&lib.stone_nodes, "Steinvorkommen", ResourceKind::Stone, 5)
+                };
+                let (mesh, glow_part) = pick(list, rng);
+                let scale = rng.range(0.85, 1.2);
                 ResourceSpec {
-                    kind: ResourceKind::Stone,
-                    name: "Fels",
+                    kind,
+                    name,
                     mesh,
-                    transform: Transform::from_position(base + Vec3::Y * scale.y * 0.12).with_rotation(yaw).with_scale(scale),
+                    transform: Transform::from_position(base - Vec3::Y * 0.05).with_rotation(yaw).with_scale(Vec3::splat(scale)),
                     color: Vec4::ONE,
                     material: Material::Standard,
                     glow_part,
-                    collider: Shape::Box { size: scale * vec3(0.9, 0.7, 0.9) },
-                    collider_offset: Vec3::ZERO,
-                    max_health: 6,
+                    collider: Shape::Box { size: vec3(1.3, 0.9, 1.3) * scale },
+                    collider_offset: Vec3::Y * 0.45 * scale,
+                    max_health: health,
                 }
             };
 
@@ -584,25 +613,25 @@ pub fn build(ctx: &mut Context) -> Island {
             if !clearing {
                 if slope > 0.55 {
                     if roll < 0.08 {
-                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                        found = Some(node(&mut rng));
                     }
                 } else if h < 2.4 {
                     if roll < 0.035 {
                         found = Some(tree("Palme", pick(&lib.palms, &mut rng), size, 4));
                     } else if roll < 0.05 {
-                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                        found = Some(node(&mut rng));
                     }
                 } else if h > 28.0 {
                     if roll < 0.06 {
                         found = Some(tree("Tanne", pick(&lib.pines, &mut rng), pine_size(&mut rng), 5));
                     } else if roll < 0.10 {
-                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                        found = Some(node(&mut rng));
                     }
                 } else if h > 17.0 {
                     if roll < 0.17 {
                         found = Some(tree("Tanne", pick(&lib.pines, &mut rng), pine_size(&mut rng), 5));
                     } else if roll < 0.24 {
-                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                        found = Some(node(&mut rng));
                     }
                 } else if enchanted {
                     if roll < 0.13 {
@@ -636,7 +665,7 @@ pub fn build(ctx: &mut Context) -> Island {
                     } else if roll < 0.45 {
                         decor(ctx, by_id(&lib.red_mushroom), base, yaw, size, Vec4::ONE, Material::Standard);
                     } else if roll < 0.47 {
-                        found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                        found = Some(node(&mut rng));
                     }
                 } else if roll < 0.02 {
                     let (oak_size, health) = oak(&mut rng);
@@ -646,12 +675,14 @@ pub fn build(ctx: &mut Context) -> Island {
                 } else if roll < 0.07 {
                     decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
                 } else if roll < 0.09 {
-                    found = Some(rock(pick(&lib.rocks, &mut rng), &mut rng));
+                    found = Some(node(&mut rng));
                 } else if roll < 0.28 {
                     decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, FLOWERS);
                 }
             }
 
+            // Um Vorkommen herum kein hohes Gras, sonst verschwinden sie darin.
+            let node_here = found.as_ref().is_some_and(|s| s.kind.needs_pickaxe());
             if let Some(spec) = found {
                 resources.push((id, spec));
             }
@@ -664,7 +695,7 @@ pub fn build(ctx: &mut Context) -> Island {
                         continue;
                     }
                     let q = vec2(x + rng.range(-1.6, 1.6), z + rng.range(-1.6, 1.6));
-                    if paths.at(q) > 0.3 {
+                    if paths.at(q) > 0.3 || (node_here && q.distance(p) < 1.8) {
                         continue;
                     }
                     let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);

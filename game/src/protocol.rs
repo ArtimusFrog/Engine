@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000B;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000C;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -28,6 +28,38 @@ pub struct PlayerInput {
     pub cast: Option<Vec3>,
     /// ID eines Rohstoffs, auf den in diesem Takt geschlagen wird.
     pub harvest: Option<u32>,
+    /// Werkzeug in der Hand (Auswahlleiste).
+    pub tool: Tool,
+}
+
+/// Werkzeuge in der Auswahlleiste. Jeder Spieler hat sie von Anfang an.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Tool {
+    /// Baut Stein- und Erzvorkommen ab.
+    #[default]
+    Pickaxe,
+    /// Zaubert (Angriff auf Tiere).
+    Staff,
+}
+
+impl Tool {
+    /// Belegung der Auswahlleiste (Platz 1, 2, …).
+    pub const HOTBAR: [Tool; 2] = [Tool::Pickaxe, Tool::Staff];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Pickaxe => "Spitzhacke",
+            Tool::Staff => "Zauberstab",
+        }
+    }
+
+    /// Symbol in `game/assets/icons/`.
+    pub fn icon_file(self) -> &'static str {
+        match self {
+            Tool::Pickaxe => "spitzhacke",
+            Tool::Staff => "zauberstab",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +76,7 @@ pub struct PlayerState {
     pub facing: f32,
     /// Letzte Eingabe dieses Spielers, die im Zustand schon enthalten ist.
     pub last_input: u32,
+    pub tool: Tool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,6 +165,8 @@ pub struct Inventory {
     pub pelt: u32,
     #[serde(default)]
     pub wool: u32,
+    #[serde(default)]
+    pub ore: u32,
 }
 
 /// Alles, was im Inventar liegen kann.
@@ -139,18 +174,20 @@ pub struct Inventory {
 pub enum Item {
     Wood,
     Stone,
+    Ore,
     Meat,
     Pelt,
     Wool,
 }
 
 impl Item {
-    pub const ALL: [Item; 5] = [Item::Wood, Item::Stone, Item::Meat, Item::Pelt, Item::Wool];
+    pub const ALL: [Item; 6] = [Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
 
     pub fn label(self) -> &'static str {
         match self {
             Item::Wood => "Holz",
             Item::Stone => "Stein",
+            Item::Ore => "Eisenerz",
             Item::Meat => "Fleisch",
             Item::Pelt => "Fell",
             Item::Wool => "Wolle",
@@ -162,6 +199,7 @@ impl Item {
         match self {
             Item::Wood => "holz",
             Item::Stone => "stein",
+            Item::Ore => "erz",
             Item::Meat => "fleisch",
             Item::Pelt => "fell",
             Item::Wool => "wolle",
@@ -177,6 +215,7 @@ impl Item {
     pub fn kind_line(self) -> &'static str {
         match self {
             Item::Wood | Item::Stone => "Rohstoff · Baumaterial",
+            Item::Ore => "Rohstoff · Metall",
             Item::Meat => "Tierbeute · Nahrung",
             Item::Pelt | Item::Wool => "Tierbeute · Handwerksmaterial",
         }
@@ -185,7 +224,8 @@ impl Item {
     pub fn description(self) -> &'static str {
         match self {
             Item::Wood => "Von Bäumen geschlagen. Brennt gut und lässt sich verbauen.",
-            Item::Stone => "Aus Felsen gebrochen. Hart und schwer.",
+            Item::Stone => "Mit der Spitzhacke aus Steinvorkommen gebrochen. Hart und schwer.",
+            Item::Ore => "Rostrotes Eisenerz aus dunklen Erzvorkommen. Lässt sich zu Eisen schmelzen.",
             Item::Meat => "Rohes Fleisch von erlegten Tieren.",
             Item::Pelt => "Warmes Fell von Hase, Fuchs, Reh, Wolf oder Bär.",
             Item::Wool => "Weiche Schafwolle.",
@@ -198,6 +238,7 @@ impl Inventory {
         match kind {
             crate::island::ResourceKind::Wood => self.wood += amount,
             crate::island::ResourceKind::Stone => self.stone += amount,
+            crate::island::ResourceKind::Ore => self.ore += amount,
         }
     }
 
@@ -205,6 +246,7 @@ impl Inventory {
         match item {
             Item::Wood => self.wood,
             Item::Stone => self.stone,
+            Item::Ore => self.ore,
             Item::Meat => self.meat,
             Item::Pelt => self.pelt,
             Item::Wool => self.wool,
@@ -215,6 +257,7 @@ impl Inventory {
         let slot = match item {
             Item::Wood => &mut self.wood,
             Item::Stone => &mut self.stone,
+            Item::Ore => &mut self.ore,
             Item::Meat => &mut self.meat,
             Item::Pelt => &mut self.pelt,
             Item::Wool => &mut self.wool,

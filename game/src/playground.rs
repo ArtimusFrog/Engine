@@ -3,7 +3,7 @@
 use engine::egui::{self, Align2, Color32, RichText};
 use engine::prelude::*;
 
-use crate::protocol::{Item, PlayerInput, DEFAULT_PORT, MAX_NAME_CHARS};
+use crate::protocol::{Item, PlayerInput, Tool, DEFAULT_PORT, MAX_NAME_CHARS};
 use crate::session::{Mode, Session};
 use crate::settings::Settings;
 use crate::sounds::Sounds;
@@ -59,6 +59,12 @@ pub struct Playground {
     inventory_open: bool,
     /// Symbole und Zustand des Inventar-Fensters.
     inventory_ui: crate::inventar::InventoryUi,
+    /// Gewählter Platz der Auswahlleiste (Werkzeug in der Hand).
+    hotbar_slot: usize,
+    /// Nur zum Testen: Figur steht an einem Vorkommen und baut es ab
+    /// (`Some(erz?)` = noch hinstellen, sobald die Figur da ist).
+    demo_mine: Option<u32>,
+    demo_mine_request: Option<bool>,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -99,6 +105,9 @@ impl Playground {
             last_cast: -10.0,
             inventory_open: false,
             inventory_ui: Default::default(),
+            hotbar_slot: 0,
+            demo_mine: None,
+            demo_mine_request: None,
             autopilot,
             themed: false,
             local_ip: None,
@@ -184,6 +193,7 @@ impl Playground {
             jump: self.jump_requested,
             cast: self.cast_requested.take(),
             harvest: self.harvest_requested.take(),
+            tool: self.tool(),
         };
         self.jump_requested = false;
         input
@@ -200,6 +210,31 @@ impl Playground {
         // Ziele hinter der Reichweite des Magiers zählen nicht.
         let animal = animal.filter(|_| point.distance(player) <= crate::world::CAST_RANGE);
         Some((point, animal))
+    }
+
+    /// Werkzeug in der Hand (aus der Auswahlleiste).
+    fn tool(&self) -> Tool {
+        Tool::HOTBAR.get(self.hotbar_slot).copied().unwrap_or_default()
+    }
+
+    /// Schlägt auf den anvisierten Rohstoff, sobald die Abklingzeit um ist. Vorkommen gehen
+    /// nur mit der Spitzhacke.
+    fn harvest_aimed(&mut self, ctx: &mut Context) {
+        let tool = self.tool();
+        let Some(id) = self.aim else { return };
+        let Some(session) = &mut self.session else { return };
+        let Some(kind) = session.world().resources.get(&id).map(|r| r.spec.kind) else { return };
+        if kind.needs_pickaxe() && tool != Tool::Pickaxe {
+            return;
+        }
+        let ticks = if kind.needs_pickaxe() { crate::world::MINE_COOLDOWN_TICKS } else { crate::world::HARVEST_COOLDOWN_TICKS };
+        // Etwas Luft, damit der Server den Schlag nicht als zu früh verwirft.
+        if ctx.time.elapsed - self.last_harvest < ticks as f32 * Physics::FIXED_DT + 0.03 {
+            return;
+        }
+        self.last_harvest = ctx.time.elapsed;
+        self.harvest_requested = Some(id);
+        session.preview_harvest(ctx, id);
     }
 
     fn toggle_inventory(&mut self, ctx: &mut Context) {
@@ -223,11 +258,29 @@ impl Playground {
                 if ctx.input.key_pressed(KeyCode::KeyI) && !self.free_camera {
                     self.toggle_inventory(ctx);
                 }
-                // Linksklick: Zauber aufs Fadenkreuz (im Takt der Abklingzeit).
+                // Auswahlleiste: Tasten 1–8 oder Mausrad
+                let digits = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8];
+                for (slot, key) in digits.into_iter().enumerate() {
+                    if ctx.input.key_pressed(key) && slot < Tool::HOTBAR.len() {
+                        self.hotbar_slot = slot;
+                    }
+                }
+                let scroll = ctx.input.scroll();
+                if ctx.cursor_locked && scroll.abs() > 0.1 {
+                    let count = Tool::HOTBAR.len();
+                    self.hotbar_slot = if scroll < 0.0 { (self.hotbar_slot + 1) % count } else { (self.hotbar_slot + count - 1) % count };
+                }
+                // Linksklick: Werkzeug benutzen – mit dem Stab zaubern, mit der Spitzhacke abbauen (gedrückt halten).
                 let cast_cooldown = crate::world::CAST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT + 0.05;
                 if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open {
                     ctx.cursor_locked = true;
-                } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && ctx.time.elapsed - self.last_cast >= cast_cooldown {
+                } else if ctx.cursor_locked && self.tool() == Tool::Pickaxe && ctx.input.mouse(MouseButton::Left) {
+                    self.harvest_aimed(ctx);
+                } else if ctx.cursor_locked
+                    && self.tool() == Tool::Staff
+                    && ctx.input.mouse_pressed(MouseButton::Left)
+                    && ctx.time.elapsed - self.last_cast >= cast_cooldown
+                {
                     if let Some((target, _)) = self.spell_aim(ctx) {
                         self.last_cast = ctx.time.elapsed;
                         self.cast_requested = Some(target);
@@ -237,16 +290,10 @@ impl Playground {
                     }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
-                // Rechte Maustaste halten: im Takt der Abklingzeit zuschlagen.
-                let cooldown = crate::world::HARVEST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT;
-                if let (true, true, Some(id)) = (ctx.cursor_locked, ctx.input.mouse(MouseButton::Right), self.aim) {
-                    if ctx.time.elapsed - self.last_harvest >= cooldown {
-                        self.last_harvest = ctx.time.elapsed;
-                        self.harvest_requested = Some(id);
-                        if let Some(session) = &mut self.session {
-                            session.preview_harvest(ctx, id);
-                        }
-                    }
+                // Rechte Maustaste halten: im Takt der Abklingzeit zuschlagen (Bäume immer,
+                // Vorkommen nur mit der Spitzhacke).
+                if ctx.cursor_locked && ctx.input.mouse(MouseButton::Right) {
+                    self.harvest_aimed(ctx);
                 }
                 // F6: eine Stunde vorspulen (nur wer die Welt berechnet)
                 if ctx.input.key_pressed(KeyCode::F6) {
@@ -374,14 +421,16 @@ impl Playground {
         let Some(resource) = session.world().resources.get(&id) else { return };
         let center = egui_ctx.content_rect().center();
         let painter = egui_ctx.layer_painter(egui::LayerId::background());
-        let action = match resource.spec.kind {
-            crate::island::ResourceKind::Wood => "Rechtsklick: Holz hacken",
-            crate::island::ResourceKind::Stone => "Rechtsklick: Stein abbauen",
+        let pickaxe = self.tool() == Tool::Pickaxe;
+        let (action, color) = match resource.spec.kind {
+            crate::island::ResourceKind::Wood => ("Rechtsklick: Holz hacken", Color32::from_white_alpha(200)),
+            _ if pickaxe => ("Linksklick: Abbauen", Color32::from_white_alpha(200)),
+            _ => ("Spitzhacke nehmen: Taste 1", Color32::from_rgb(255, 170, 90)),
         };
         let big = egui::FontId::proportional(18.0);
         painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, resource.spec.name, big, Color32::WHITE);
         let small = egui::FontId::proportional(14.0);
-        painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, action, small, Color32::from_white_alpha(200));
+        painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, action, small, color);
         // Lebensbalken
         let fraction = resource.health as f32 / resource.spec.max_health as f32;
         let bar = egui::Rect::from_center_size(center + egui::vec2(0.0, 76.0), egui::vec2(110.0, 7.0));
@@ -632,6 +681,7 @@ impl Playground {
         if !self.inventory_open {
             self.inventory_ui.hud(egui_ctx, &session.local_inventory());
         }
+        self.inventory_ui.hotbar(egui_ctx, self.hotbar_slot);
 
         // Status oben rechts
         egui::Area::new(egui::Id::new("status"))
@@ -662,14 +712,15 @@ impl Playground {
         }
 
         let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · Linksklick Zaubern · Rechtsklick Abbauen · I Inventar · Tab Spieler · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1/2 Werkzeug · Linksklick Benutzen · Rechtsklick Holz hacken · I Inventar · Esc Menü"
         } else if self.inventory_open {
             ""
         } else {
             "Klicken zum Spielen"
         };
+        // Über der Auswahlleiste
         egui::Area::new(egui::Id::new("hinweis"))
-            .anchor(Align2::CENTER_BOTTOM, [0.0, -16.0])
+            .anchor(Align2::CENTER_BOTTOM, [0.0, if ctx.cursor_locked { -118.0 } else { -122.0 }])
             .interactable(false)
             .show(egui_ctx, |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -677,6 +728,25 @@ impl Playground {
                 ui.label(RichText::new(hint).size(size).color(Color32::from_white_alpha(200)));
             });
     }
+}
+
+/// Nur zum Testen: stellt die eigene Figur neben das nächste Stein- oder Erzvorkommen.
+fn demo_place_at_node(ctx: &mut Context, session: &mut Session, ore: bool) -> Option<u32> {
+    let local = session.local_player()?;
+    let world = session.world();
+    let wanted = if ore { crate::island::ResourceKind::Ore } else { crate::island::ResourceKind::Stone };
+    let (&id, resource) = world
+        .resources
+        .iter()
+        .filter(|(_, r)| r.spec.kind == wanted && r.is_present())
+        .min_by(|a, b| a.1.spec.transform.position.distance(world.spawn).total_cmp(&b.1.spec.transform.position.distance(world.spawn)))?;
+    let base = resource.spec.transform.position;
+    let to_spawn = (world.spawn - base).with_y(0.0).normalize_or(Vec3::Z);
+    let stand = base + to_spawn * 1.9;
+    let stand = vec3(stand.x, world.terrain.height_at(stand.x, stand.z) + 1.0, stand.z);
+    let character = world.players.get(&local)?.character;
+    ctx.physics.teleport_character(character, stand);
+    Some(id)
 }
 
 /// Übersetzt die technischen Trennungsgründe des Netzwerks in verständliche Sätze.
@@ -709,6 +779,13 @@ impl Game for Playground {
         }
         self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
         self.demo_cast = args.iter().any(|a| a == "--demo-zaubern");
+        if self.demo_cast {
+            self.hotbar_slot = 1;
+        }
+        // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
+        if let Some(position) = args.iter().position(|a| a == "--demo-abbauen") {
+            self.demo_mine_request = Some(args.get(position + 1).is_none_or(|a| a != "stein"));
+        }
         match self.start.take() {
             Some(mode) => self.start_session(ctx, mode),
             None => self.show_menu(ctx, None),
@@ -748,7 +825,7 @@ impl Game for Playground {
             if let Some(session) = &mut self.session {
                 if let Some(local) = session.local_player() {
                     let inventory = session.world_mut().inventories.entry(local).or_default();
-                    for (item, amount) in [(Item::Wood, 23), (Item::Stone, 11), (Item::Meat, 5), (Item::Pelt, 3), (Item::Wool, 6)] {
+                    for (item, amount) in [(Item::Wood, 23), (Item::Stone, 11), (Item::Ore, 7), (Item::Meat, 5), (Item::Pelt, 3), (Item::Wool, 6)] {
                         inventory.add_item(item, amount);
                     }
                 }
@@ -810,6 +887,20 @@ impl Game for Playground {
             }
         }
 
+        if let (Some(ore), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
+            self.demo_mine = demo_place_at_node(ctx, session, ore);
+        }
+        if let (Some(id), Some(session)) = (self.demo_mine, &self.session) {
+            let world = session.world();
+            if let (Some(player), Some(resource)) = (session.local_player().and_then(|p| world.player_position(ctx, p)), world.resources.get(&id)) {
+                let to = resource.spec.transform.position - player;
+                ctx.camera.yaw = to.x.atan2(-to.z) + 1.0;
+                ctx.camera.pitch = -0.28;
+                self.orbit.distance = 5.0;
+            }
+            self.aim = Some(id);
+            self.harvest_aimed(ctx);
+        }
         if let Some(session) = &mut self.session {
             if self.demo_cast {
                 let world = session.world();

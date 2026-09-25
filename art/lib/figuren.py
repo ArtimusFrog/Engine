@@ -21,7 +21,7 @@ import random
 
 import bmesh
 import bpy
-from mathutils import Quaternion, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 from werkstatt import animation, ruhepose, skelett, srgb_zu_linear
 
@@ -46,6 +46,15 @@ class Figur:
         self.rng = random.Random(seed)
         self.teile = []
         self.knochen = []
+        # Starre Anbauteile (Waffen, Werkzeuge): (Name, Knochen, Objekte)
+        self.starr = []
+
+    def als_starr(self, gruppe, knochen, anfang):
+        """Alle Teile ab Index `anfang` werden ein starres Anbauteil am Knochen (z. B. etwas in der
+        Hand). Im Spiel ist es ein eigener Knoten, den man ein- und ausblenden kann."""
+        objekte = self.teile[anfang:]
+        del self.teile[anfang:]
+        self.starr.append((gruppe, knochen, objekte))
 
     # --- Teile ------------------------------------------------------------
     def _objekt(self, bm, name, farbe_von, gewichte_von, glatt=False):
@@ -247,6 +256,27 @@ class Figur:
         haupt.parent = armatur
         mod = haupt.modifiers.new("Skelett", "ARMATURE")
         mod.object = armatur
+        # Starre Anbauteile an ihren Knochen hängen (die Eckpunkte liegen schon an der richtigen Stelle).
+        for gruppe, knochen, objekte in self.starr:
+            bpy.ops.object.select_all(action="DESELECT")
+            for obj in objekte:
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = objekte[0]
+            bpy.ops.object.join()
+            teil = objekte[0]
+            teil.name = gruppe
+            teil.data.name = gruppe
+            teil.vertex_groups.clear()
+            teil.data.materials.clear()
+            teil.data.materials.append(mat)
+            bone = armatur.data.bones[knochen]
+            teil.parent = armatur
+            teil.parent_type = "BONE"
+            teil.parent_bone = knochen
+            # Knochen-Eltern sitzen am Ende des Knochens: diese Lage wieder herausrechnen.
+            teil.matrix_parent_inverse = (armatur.matrix_world @ bone.matrix_local @ Matrix.Translation((0, bone.length, 0))).inverted()
+            dreiecke_teil = sum(len(p.vertices) - 2 for p in teil.data.polygons)
+            print(f"ANBAUTEIL {gruppe} an {knochen}: {dreiecke_teil} Dreiecke")
         animationen(armatur)
         ruhepose(armatur)
         dreiecke = sum(len(p.vertices) - 2 for p in haupt.data.polygons)
@@ -706,6 +736,7 @@ def magier(seed=12, name="Magier"):
         f.stern("Hutstern", mitte + aussen * radius * 1.02, aussen, 0.02 * (1 - t * 0.5), gold, hut_gewicht)
 
     # ================= Stab =================
+    stab_anfang = len(f.teile)
     stab_gewicht = lambda co: {"Hand.R": 1.0}
     stab_ringe = []
     for i in range(20):
@@ -738,6 +769,12 @@ def magier(seed=12, name="Magier"):
         bm.faces.new((kranz2[k], kranz2[(k + 1) % 8], spitze_o))
         bm.faces.new((kranz[(k + 1) % 8], kranz[k], spitze_u))
     f._objekt(bm, "Kristall", lambda poly: kristall * (0.85 + 0.4 * max(0.0, poly.normal.z) + 0.15 * (poly.index % 3)), stab_gewicht)
+    f.als_starr("Stab", "Hand.R", stab_anfang)
+
+    # ================= Spitzhacke (statt des Stabs in der Hand, im Spiel umschaltbar) =================
+    hacke_anfang = len(f.teile)
+    _spitzhacke(f, STAB_X, STAB_Y, stab_gewicht)
+    f.als_starr("Spitzhacke", "Hand.R", hacke_anfang)
 
     # ================= Skelett =================
     f.knochen_dazu("Becken", (0, 0, 0.95), (0, 0, 1.1), None, HOCH)
@@ -788,6 +825,53 @@ def _gehen(phi, schwung, knie, arm, huepfen, vorbeugen, ellbogen):
         ("Bauch", "rot", (vorbeugen * 0.5, 0, 0)), ("Brust", "rot", (vorbeugen * 0.5, -8 * s, 0)),
         ("Kopf", "rot", (-vorbeugen * 0.6, 2 * s, 0)), ("Hut", "rot", (4 * math.sin(2 * phi) + vorbeugen * 0.5, 0, 3 * s)),
     ]
+
+
+def _spitzhacke(f, x, y, gewicht):
+    """Spitzhacke, am oberen Stielende gegriffen: der Stiel hängt aus der Faust nach unten, der
+    Kopf sitzt unten, die Spitze zeigt nach vorne (-Y) – beim Schwung die führende Kante."""
+    holz = farbe("#8B5A2B")
+    holz_dunkel = farbe("#6A4220")
+    leder = farbe("#3D2A1C")
+    eisen = farbe("#5E646E")
+    eisen_hell = farbe("#C3CAD4")
+    eisen_dunkel = farbe("#3E434B")
+    X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
+    oben, unten, kopf_z = 1.02, 0.25, 0.3
+
+    # Stiel: leicht gebaucht, oben ein Knauf, am Griff mit Leder umwickelt
+    ringe = []
+    for i in range(16):
+        t = i / 15
+        z = unten + (oben - unten) * t
+        r = 0.019 + 0.004 * math.sin(t * math.pi) + (0.004 if t > 0.97 else 0.0)
+        ringe.append((Vector((x, y, z)), X, Y, r, r * 0.92))
+
+    def stiel_farbe(i, k, p):
+        z = p.center.z
+        if z > 0.8:
+            return leder * (0.8 if int(z * 70) % 2 else 1.0)
+        return (holz if (k + int(i * 3)) % 5 else holz_dunkel) * (0.9 + 0.1 * math.sin(z * 40))
+
+    f.loft("Hackenstiel", ringe, 10, stiel_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+
+    # Eisenkopf: von der breiten Flachseite (+Y) über das Auge bis zur gebogenen Spitze (-Y).
+    # Beide Enden biegen sich leicht zum Griff (nach oben).
+    profil = [(0.2, 0.012, 0.05, 0.03), (0.15, 0.017, 0.042, 0.012), (0.08, 0.024, 0.034, 0.002), (0.03, 0.031, 0.037, 0.0),
+              (0.0, 0.033, 0.04, 0.0), (-0.04, 0.03, 0.035, 0.0), (-0.1, 0.022, 0.026, 0.005), (-0.16, 0.016, 0.018, 0.016),
+              (-0.22, 0.01, 0.011, 0.032), (-0.27, 0.004, 0.005, 0.05), (-0.295, 0.001, 0.001, 0.06)]
+    kopf = [(Vector((x, y + dy, kopf_z + hoch)), X, Z, breite, hoehe) for dy, breite, hoehe, hoch in profil]
+
+    def kopf_farbe(i, k, p):
+        ende = abs(p.center.y - y) > 0.17
+        return (eisen_hell if ende else eisen) * (0.92 + 0.08 * (k % 2))
+
+    f.loft("Hackenkopf", kopf, 8, kopf_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    # Eisenbeschlag, wo der Stiel durch den Kopf geht
+    beschlag = [(Vector((x, y, kopf_z + dz)), X, Y, 0.028, 0.026) for dz in (-0.075, -0.05, 0.045, 0.07)]
+    f.loft("Beschlag", beschlag, 10, lambda i, k, p: eisen_dunkel, gewicht, oben_zu=True, unten_zu=True)
+    # Keil oben im Auge
+    f.kugel("Keil", Vector((x, y, kopf_z + 0.043)), Vector((0.012, 0.024, 0.01)), eisen_dunkel, gewicht, segmente=8, ringe=4, glatt=False)
 
 
 def _magier_animationen(armatur):
@@ -852,3 +936,19 @@ def _magier_animationen(armatur):
                     (bild, "Oberschenkel.L", "rot", (-brust_x * 0.8, 0, 0)), (bild, "Unterschenkel.L", "rot", (6 + abs(brust_x), 0, 0)),
                     (bild, "Oberschenkel.R", "rot", (brust_x * 0.5, 0, 0)), (bild, "Unterschenkel.R", "rot", (6 + abs(brust_x) * 0.5, 0, 0))]
     animation(armatur, "Zaubern", 28, zaubern)
+
+    # Abbauen: Spitzhacke mit beiden Händen hoch über den Kopf, dann kraftvoll nach vorne unten
+    # schlagen (Einschlag bei Bild 16), kurz nachziehen, zurück. Der Stiel hängt in Ruhe nach unten,
+    # über dem Kopf zeigt er nach oben, beim Einschlag schräg nach vorne zum Boden.
+    abbauen = []
+    for bild, arm_r, ell_r, arm_l, ell_l, brust_x, knie, senken in (
+            (0, 0, -6, 0, -12, 0, 6, 0.0), (9, -170, -30, -150, -50, -12, 10, 0.0), (13, -120, -15, -110, -30, 8, 16, -0.02),
+            (16, -40, -4, -48, -12, 28, 30, -0.07), (21, -34, -10, -40, -18, 24, 26, -0.06), (30, 0, -6, 0, -12, 0, 6, 0.0)):
+        abbauen += [(bild, "Oberarm.R", "rot", (arm_r, 0, 0)), (bild, "Unterarm.R", "rot", (ell_r, 0, 0)),
+                    (bild, "Oberarm.L", "rot", (arm_l, 0, -12)), (bild, "Unterarm.L", "rot", (ell_l, 0, 0)),
+                    (bild, "Brust", "rot", (brust_x, 0, 0)), (bild, "Bauch", "rot", (brust_x * 0.5, 0, 0)),
+                    (bild, "Kopf", "rot", (-brust_x * 0.4, 0, 0)), (bild, "Hut", "rot", (-brust_x * 0.5, 0, 0)),
+                    (bild, "Oberschenkel.L", "rot", (-knie * 0.7, 0, 0)), (bild, "Unterschenkel.L", "rot", (knie, 0, 0)),
+                    (bild, "Oberschenkel.R", "rot", (-knie * 0.4, 0, 0)), (bild, "Unterschenkel.R", "rot", (knie * 0.7, 0, 0)),
+                    (bild, "Becken", "pos", (0, 0, senken))]
+    animation(armatur, "Abbauen", 30, abbauen)
