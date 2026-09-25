@@ -84,6 +84,11 @@ fn magic(p: Vec2) -> f32 {
     fbm(p * 0.009 + vec2(-71.0, 22.0), 3, SEED + 7) * 0.5 + 0.5
 }
 
+/// Wo Birken in Hainen zusammenstehen (> 0.64).
+fn birch_grove(p: Vec2) -> f32 {
+    fbm(p * 0.02 + vec2(13.0, 57.0), 2, SEED + 13) * 0.5 + 0.5
+}
+
 /// Farbe des Bodens (linear) für ein Dreieck mit Mittelpunkt `c` und Normale `n`.
 fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     let p = vec2(c.x, c.z);
@@ -368,6 +373,15 @@ pub fn build(ctx: &mut Context) -> Island {
                         decor(ctx, by_id(&lib.glow_mushroom), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.9 });
                     } else if roll < 0.42 {
                         decor(ctx, pick(&lib.magic_flowers, &mut rng), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.5 });
+                    }
+                } else if birch_grove(p) > 0.64 && h < 14.0 {
+                    // Birkenhain: helle Stämme dicht beieinander, dazwischen Büsche und Blumen
+                    if roll < 0.17 {
+                        found = Some(tree("Birke", pick(&lib.birches, &mut rng), size, 4));
+                    } else if roll < 0.21 {
+                        decor(ctx, pick(&lib.bushes, &mut rng), base, yaw, size, Vec4::ONE, LEAVES);
+                    } else if roll < 0.36 {
+                        decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, FLOWERS);
                     }
                 } else if wet > 0.52 {
                     if roll < 0.2 {

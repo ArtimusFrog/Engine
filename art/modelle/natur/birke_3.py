@@ -1,5 +1,5 @@
-"""Birke, Gelbgrün."""
+"""Einzelne Birke, frisches Gelbgrün."""
 
 from baeume import birke
 
-birke(seed=13, laub="#C6C83A")
+birke(seed=13, laub="#B4D444", staemme=1)

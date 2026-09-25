@@ -287,6 +287,8 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Textur vor allen Verzweigungen lesen (WGSL verlangt einheitlichen Kontrollfluss).
     let texel = textureSample(albedo_texture, albedo_sampler, in.uv);
+    // Tatsächliche Ausrichtung der Fläche (die Normale in `in.normal` ist bei Laub „weich“ geschönt).
+    let face = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     // Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
     if (texel.a < 0.5) {
         discard;
@@ -296,6 +298,15 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     var n = normalize(in.normal);
     // Blattkarten tragen weiche Kugel-Normalen aus Blender – die gelten für beide Seiten.
     let leaves = kind == MAT_FOLIAGE && in.material.z > 0.5;
+    // Blattkarten, die man fast von der Kante sieht, würden als Striche auffallen:
+    // sie werden mit feinem Raster ausgedünnt, je flacher der Blick, desto stärker.
+    if (leaves) {
+        let facing = abs(dot(face, normalize(g.camera_pos.xyz - in.world_pos)));
+        let noise = fract(sin(dot(floor(in.clip.xy), vec2<f32>(12.9898, 78.233))) * 43758.5453);
+        if (noise > smoothstep(0.05, 0.3, facing)) {
+            discard;
+        }
+    }
     // Beidseitige Flächen: von hinten gesehen zeigt die Normale zum Betrachter.
     if (!front && !leaves) {
         n = -n;

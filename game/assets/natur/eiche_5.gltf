@@ -15,7 +15,7 @@
 	"nodes":[
 		{
 			"mesh":0,
-			"name":"Birke"
+			"name":"Eiche"
 		}
 	],
 	"materials":[
@@ -34,7 +34,7 @@
 	],
 	"meshes":[
 		{
-			"name":"Birke",
+			"name":"Eiche",
 			"primitives":[
 				{
 					"attributes":{
@@ -66,73 +66,73 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":3907,
+			"count":8501,
 			"max":[
-				2.5619685649871826,
-				11.470147132873535,
-				2.2033019065856934
+				5.69878625869751,
+				9.97166633605957,
+				4.350720405578613
 			],
 			"min":[
-				-2.1556506156921387,
+				-5.911873817443848,
 				0,
-				-1.7241339683532715
+				-5.675390243530273
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":3907,
+			"count":8501,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":3907,
+			"count":8501,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5126,
-			"count":3907,
+			"count":8501,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":4,
 			"componentType":5123,
-			"count":6111,
+			"count":13227,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":46884,
+			"byteLength":102012,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":46884,
-			"byteOffset":46884,
+			"byteLength":102012,
+			"byteOffset":102012,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":31256,
-			"byteOffset":93768,
+			"byteLength":68008,
+			"byteOffset":204024,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":46884,
-			"byteOffset":125024,
+			"byteLength":102012,
+			"byteOffset":272032,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":12222,
-			"byteOffset":171908,
+			"byteLength":26454,
+			"byteOffset":374044,
 			"target":34963
 		}
 	],
@@ -144,8 +144,8 @@
 	],
 	"buffers":[
 		{
-			"byteLength":184132,
-			"uri":"birke_3.bin"
+			"byteLength":400500,
+			"uri":"eiche_5.bin"
 		}
 	]
 }

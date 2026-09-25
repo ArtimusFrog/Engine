@@ -260,8 +260,9 @@ class Baum:
         return Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1)))
 
     # --- Holz -------------------------------------------------------------
-    def rohr(self, punkte, radien, ecken, mat, spitze=True, streifen=None):
-        """Konisches Rohr entlang einer Punktfolge; `streifen`: Farbe für Rindenrillen."""
+    def rohr(self, punkte, radien, ecken, mat, spitze=True, streifen=None, muster=None, rauh=1.0):
+        """Konisches Rohr entlang einer Punktfolge; `streifen`: Farbe für Rindenrillen,
+        `muster(ring, ecke)`: Farbe je Fläche (z. B. Birkenstriche), `rauh`: 0 = glatt rund."""
         bm = self.bm
         ringe = []
         normale = None
@@ -279,13 +280,13 @@ class Baum:
             ring = []
             for k in range(ecken):
                 a = versatz + math.tau * k / ecken
-                r = radien[i] * self.rng.uniform(0.92, 1.06)
+                r = radien[i] * (1 + self.rng.uniform(-0.08, 0.06) * rauh)
                 ring.append(bm.verts.new(p + (normale * math.cos(a) + binormale * math.sin(a)) * r))
             ringe.append(ring)
-        for a, b in zip(ringe, ringe[1:]):
+        for i, (a, b) in enumerate(zip(ringe, ringe[1:])):
             for k in range(ecken):
                 f = bm.faces.new((a[k], a[(k + 1) % ecken], b[(k + 1) % ecken], b[k]))
-                f.material_index = streifen if k in bahnen else mat
+                f.material_index = muster(i, k) if muster else streifen if k in bahnen else mat
         if spitze:
             ende = punkte[-1] + (punkte[-1] - punkte[-2]).normalized() * radien[-1] * 1.5
             s = bm.verts.new(ende)
@@ -343,10 +344,11 @@ class Baum:
         sonne = max(0.0, oben) * min(1.0, aussen) * 0.55
         return c.lerp(Vector((c.x * 1.3 + 0.01, c.y * 1.25 + 0.01, c.z * 0.75)), sonne)
 
-    def krone(self, mitte, radius, grund, dichte=1.0, platt=0.8, karte=1.0, kern=0.72):
-        """Dunkler Kern gegen Durchblicken plus viele Blattkarten auf der Hülle."""
+    def krone(self, mitte, radius, grund, dichte=1.0, platt=0.8, karte=1.0, kern=0.72, kern_stufen=1, kern_hell=0.5):
+        """Dunkler Kern gegen Durchblicken plus viele Blattkarten auf der Hülle.
+        `platt` < 1 ergibt flache Laub-Polster, `karte` skaliert die Blattkarten."""
         r = self.rng
-        self.kugel(mitte, radius * kern, grund * 0.5, platt=platt, dunkel_unten=0.4)
+        self.kugel(mitte, radius * kern, grund * kern_hell, stufen=kern_stufen, platt=platt, dunkel_unten=0.4)
         for _ in range(int(dichte * (30 * radius * radius + 16))):
             d = self.zufallsrichtung()
             if d.length < 0.05:
@@ -475,35 +477,154 @@ def eiche(seed=1, name="Eiche", laub="#5FA83A"):
 
 
 # ---------------------------------------------------------------------------
-# Birke: schlanker weißer Stamm mit schwarzen Strichen, hohe lockere Krone
+# Schirm-Eiche: alter, mächtiger Stamm mit Brettwurzeln, weit ausladende Äste,
+# flache, gestufte Laub-Polster
 # ---------------------------------------------------------------------------
-def birke(seed=1, name="Birke", laub="#E2B42A"):
-    baum = Baum(name, seed, hoehe=10.0)
+def eiche_schirm(seed=1, name="Eiche", laub="#86B83C"):
+    baum = Baum(name, seed, hoehe=9.0)
     r = baum.rng
-    rinde = baum.rinde("#EDE8DC")
-    farbe_laub = farbe(laub)
-    hoehe = r.uniform(7.5, 9.0)
-    stamm = baum.pfad(Vector((0, 0, 0)), OBEN, hoehe, 16, 0.05, 0.0, 0.04)
-    radien = [0.2 * (1.15 - 0.75 * i / 16) for i in range(17)]
-    baum.rohr(stamm, radien, 9, rinde)
-    _wurzeln(baum, 0.2, 4, rinde, 0.7)
-    for i in range(8, 17, 2):
-        p = stamm[i]
-        seite = _drehen(OBEN, r.uniform(0.7, 1.1), r.uniform(0, math.tau))
-        laenge = r.uniform(0.6, 1.2) * (1.2 - i / 17)
-        ende = p + seite * laenge
-        baum.rohr([p, p.lerp(ende, 0.5), ende], [radien[i] * 0.5, radien[i] * 0.35, radien[i] * 0.2], 5, rinde)
-        baum.krone(ende + Vector((0, 0, 0.2)), r.uniform(1.25, 1.5) * (1.2 - 0.45 * i / 17), farbe_laub * r.uniform(0.9, 1.1), platt=1.2, kern=0.55)
-    baum.krone(stamm[-1] + Vector((0, 0, 0.1)), 1.0, farbe_laub * 1.05, platt=1.3, kern=0.55)
-    schwarz = farbe("#2E2A26")
+    rinde = baum.rinde("#7A5E48")
+    rille = baum.rinde("#5A4434")
+    gruen = farbe(laub)
+    stamm_r = r.uniform(0.55, 0.65)
+    stamm = baum.pfad(Vector((0, 0, 0)), OBEN, r.uniform(2.8, 3.3), 6, 0.1, 0.0, 0.03)
+    radien = [stamm_r * (1.35 - 0.5 * i / 6) for i in range(7)]
+    baum.rohr(stamm, radien, 12, rinde, spitze=True, streifen=rille)
+    # Mächtige Brettwurzeln: setzen hoch am Stamm an und laufen breit in den Boden
+    wurzeln = r.randint(5, 6)
+    for k in range(wurzeln):
+        w = math.tau * k / wurzeln + r.uniform(-0.25, 0.25)
+        aussen = Vector((math.cos(w), math.sin(w), 0))
+        oben = aussen * stamm_r * 0.45 + Vector((0, 0, r.uniform(1.1, 1.6)))
+        mitte = aussen * stamm_r * 1.3 + Vector((0, 0, 0.45))
+        unten = aussen * stamm_r * r.uniform(2.2, 2.8) + Vector((0, 0, -0.1))
+        baum.rohr([oben, mitte, unten], [stamm_r * 0.5, stamm_r * 0.4, stamm_r * 0.24], 7, rinde, streifen=rille)
 
-    def muster(rng, f, grund):
-        # schwarze Querstriche der Birkenrinde, unten am Fuß dunkel
-        if f.calc_center_median().z < 0.4 or rng.random() < 0.12:
-            return schwarz
-        return grund
+    def polster(mitte, breite, c):
+        # flaches Laub-Polster mit ein paar Buckeln obenauf
+        baum.krone(mitte, breite, c, dichte=0.85, platt=0.34, karte=0.52, kern_hell=0.35)
+        for _ in range(r.randint(2, 3)):
+            w = r.uniform(0, math.tau)
+            p = mitte + Vector((math.cos(w), math.sin(w), 0)) * breite * r.uniform(0.2, 0.55) + Vector((0, 0, breite * 0.2))
+            baum.krone(p, breite * r.uniform(0.35, 0.45), c * r.uniform(0.95, 1.1), dichte=0.9, platt=0.65, karte=0.9, kern_stufen=0, kern_hell=0.35)
 
-    return baum.fertig(rinden_muster=muster)
+    def arm(start, richtung, laenge, radius, breite, aufwaerts=0.07):
+        schritte = 7
+        punkte = baum.pfad(start, richtung, laenge, schritte, 0.1, 0.0, aufwaerts)
+        rad = [radius * (1 - 0.6 * i / schritte) for i in range(schritte + 1)]
+        baum.rohr(punkte, rad, 9, rinde, streifen=rille)
+        # zwei kürzere Seitenäste, die das Polster von unten stützen
+        for s in (1, -1):
+            i = int(r.uniform(0.55, 0.8) * schritte)
+            d = (punkte[i + 1] - punkte[i]).normalized()
+            seite = d.cross(OBEN).normalized() * s
+            zweig = baum.pfad(punkte[i], (d * 0.5 + seite * 0.7 + OBEN * 0.35).normalized(), laenge * r.uniform(0.3, 0.42), 3, 0.15, 0.0, 0.1)
+            baum.rohr(zweig, [rad[i] * 0.55, rad[i] * 0.42, rad[i] * 0.3, rad[i] * 0.2], 6, rinde, streifen=rille)
+        polster(punkte[-1] + Vector((0, 0, 0.45)), breite, gruen * r.uniform(0.9, 1.1))
+
+    arme = r.randint(3, 4)
+    for k in range(arme):
+        az = math.tau * k / arme + r.uniform(-0.35, 0.35)
+        start = stamm[-3].lerp(stamm[-1], r.uniform(0.2, 1.0))
+        # Abwechselnd tiefe, fast waagerechte und höhere, steilere Äste: ergibt die Stufen
+        tief = k % 2 == 0
+        winkel = r.uniform(1.2, 1.35) if tief else r.uniform(0.6, 0.78)
+        laenge = r.uniform(4.6, 5.4) if tief else r.uniform(4.2, 4.8)
+        breite = r.uniform(2.2, 2.6) if tief else r.uniform(1.9, 2.3)
+        arm(start, _drehen(OBEN, winkel, az), laenge, radien[-1] * 0.62, breite, 0.04 if tief else 0.07)
+    # Mittelstamm nach oben: oberstes, größtes Polster
+    arm(stamm[-1], _drehen(OBEN, r.uniform(0.1, 0.25), r.uniform(0, math.tau)), r.uniform(4.6, 5.2), radien[-1] * 0.6, r.uniform(2.5, 2.9))
+    return baum.fertig(moos=farbe("#5E6A3A"))
+
+
+# ---------------------------------------------------------------------------
+# Birke: ein bis drei schlanke, sanft geschwungene weiße Stämme mit feinen schwarzen
+# Querstrichen und dunklem, rissigem Fuß; ovale Krone aus vielen Laub-Lappen an dünnen Ästen
+# ---------------------------------------------------------------------------
+def birke(seed=1, name="Birke", laub="#EBC23A", staemme=2):
+    baum = Baum(name, seed, hoehe=10.5)
+    r = baum.rng
+    weiss = baum.rinde("#F2EFE8")
+    grau = baum.rinde("#D2CCC2")
+    strich = baum.rinde("#2A2622")
+    fuss = baum.rinde("#4E4842")
+    gelb = farbe(laub)
+    orange = farbe("#E0862A")
+    ecken = 9 if staemme < 3 else 7
+    dichte = 1.3 if staemme < 3 else 1.0
+
+    for s in range(staemme):
+        az = math.tau * s / staemme + r.uniform(-0.5, 0.5)
+        aussen = Vector((math.cos(az), math.sin(az), 0))
+        quer = Vector((-aussen.y, aussen.x, 0)) * r.uniform(-1, 1)
+        neigung = r.uniform(0.03, 0.07) if staemme > 1 else r.uniform(0.0, 0.03)
+        hoehe = r.uniform(8.8, 10.2) * (1.0 - 0.12 * s)
+        radius = r.uniform(0.16, 0.19) * (1.0 - 0.1 * s)
+        start = aussen * (0.16 if staemme > 1 else 0.0)
+        schwung = r.uniform(0.1, 0.25)
+
+        def punkt(t, start=start, aussen=aussen, quer=quer, neigung=neigung, hoehe=hoehe, schwung=schwung):
+            # sanfter Bogen nach außen und ein leichtes S – keine zittrigen Knicke
+            return (start + OBEN * hoehe * t + aussen * (neigung * hoehe * t + schwung * 0.6 * math.sin(math.pi * t))
+                    + quer * schwung * 0.4 * math.sin(math.tau * t))
+
+        # Ringe etwa alle 30 cm, dazu schmale Bänder (5 cm): nur dort sitzen die Querstriche,
+        # damit sie fein und waagerecht wirken statt als grobe Kästchen
+        # Am Fuß enge Ringe (für den ausgefransten dunklen Rand), weiter oben etwa alle 30 cm;
+        # dazu schmale Bänder (3–6 cm): nur dort sitzen die Querstriche, damit sie fein und
+        # waagerecht wirken statt als grobe Kästchen
+        ts, baender = [0.0], set()
+        t = 0.0
+        while t < 0.999:
+            t = min(1.0, t + (0.09 if t * hoehe < 0.9 else r.uniform(0.28, 0.4)) / hoehe)
+            if 1.0 < t * hoehe and t < 0.95 and r.random() < 0.6:
+                baender.add(len(ts))
+                ts.append(t)
+                t += r.uniform(0.03, 0.06) / hoehe
+            ts.append(t)
+        punkte = [punkt(t) for t in ts]
+        radien = [radius * (1 - 0.72 * t) + radius * 0.45 * max(0.0, 1 - t * hoehe / 0.7) ** 2 for t in ts]
+        striche = set()
+        for j in baender:
+            for _ in range(r.randint(1, 3)):
+                k0, n = r.randrange(ecken), r.randint(1, 3)
+                striche.update((j, (k0 + d) % ecken) for d in range(n))
+        # Dunkler Fuß: jede Längsbahn endet in anderer Höhe, dazu vereinzelte dunkle Zungen
+        fuss_hoehe = [r.uniform(0.2, 0.6) for _ in range(ecken)]
+        zungen = {k: r.uniform(0.6, 0.95) for k in range(ecken) if r.random() < 0.3}
+
+        def muster(i, k, ts=ts, hoehe=hoehe, striche=striche, fuss_hoehe=fuss_hoehe, zungen=zungen):
+            z = ts[i] * hoehe
+            if z < fuss_hoehe[k] or z < zungen.get(k, 0.0):
+                return fuss
+            if z < fuss_hoehe[k] + 0.2:
+                return grau
+            return strich if (i, k) in striche else weiss
+
+        baum.rohr(punkte, radien, ecken, weiss, spitze=True, muster=muster, rauh=0.15)
+
+        # Krone: ein paar große, hohe Laubmassen am oberen Stamm …
+        for t in ((0.66, 0.81, 0.95) if staemme < 3 else (0.7, 0.92)):
+            c = gelb.lerp(orange, r.random() ** 2 * 0.5) * r.uniform(0.95, 1.08)
+            groesse = r.uniform(1.3, 1.55) * (0.85 if t < 0.7 else 1.0 if t < 0.9 else 0.85)
+            baum.krone(punkt(t) + aussen * 0.2, groesse, c, dichte=1.0 * dichte, platt=1.25, karte=0.9, kern=0.55, kern_hell=0.3)
+        # … und dünne Äste, deren kleinere Lappen aus dem Umriss herausragen
+        aeste = 4 if staemme < 3 else 3
+        lappen = dict(platt=1.0, kern=0.5, kern_stufen=0, kern_hell=0.3, karte=0.9, dichte=dichte)
+        for j in range(aeste):
+            t = 0.55 + 0.4 * (j + r.uniform(0.1, 0.9)) / aeste
+            p = punkt(t)
+            w = az + j * 2.4 + r.uniform(-0.4, 0.4)
+            d = Vector((math.cos(w), math.sin(w), 0))
+            if staemme > 1:
+                d = (d + aussen * 0.8).normalized()
+            huelle = math.sin(math.pi * min(1.0, (t - 0.3) / 0.75))
+            ast = baum.pfad(p, (d * 0.75 + OBEN * r.uniform(0.7, 1.0)).normalized(), 1.2 + 1.2 * huelle * r.uniform(0.8, 1.1), 3, 0.12, 0.05, 0.08)
+            ar = radius * (1 - 0.72 * t) * 0.55
+            baum.rohr(ast, [ar, ar * 0.7, ar * 0.5, ar * 0.3], 5, weiss, rauh=0.3)
+            c = gelb.lerp(orange, r.random() ** 2 * 0.6) * r.uniform(0.92, 1.08)
+            baum.krone(ast[-1] + Vector((0, 0, 0.15)), r.uniform(0.75, 0.95) * (0.75 + 0.35 * huelle), c, **lappen)
+    return baum.fertig()
 
 
 # ---------------------------------------------------------------------------
