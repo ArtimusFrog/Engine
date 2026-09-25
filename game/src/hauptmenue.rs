@@ -37,8 +37,8 @@ impl TitleScreen {
     /// Die Kamera kreist langsam hoch über der ganzen Insel.
     pub fn camera(&self, ctx: &mut Context) {
         let t = ctx.time.elapsed * 0.03 + 0.8;
-        let r = crate::island::ISLAND_RADIUS * 1.3;
-        ctx.camera.position = vec3(t.sin() * r, 130.0, t.cos() * r);
+        let r = crate::island::ISLAND_RADIUS * 1.25;
+        ctx.camera.position = vec3(t.sin() * r, crate::island::ISLAND_RADIUS * 0.38, t.cos() * r);
         ctx.camera.look_at(vec3(0.0, 6.0, 0.0));
     }
 

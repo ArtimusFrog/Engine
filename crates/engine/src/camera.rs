@@ -18,7 +18,7 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Camera { position: Vec3::new(0.0, 2.0, 8.0), yaw: 0.0, pitch: 0.0, fov_y: 70f32.to_radians(), near: 0.1, far: 1000.0 }
+        Camera { position: Vec3::new(0.0, 2.0, 8.0), yaw: 0.0, pitch: 0.0, fov_y: 70f32.to_radians(), near: 0.1, far: 2200.0 }
     }
 }
 

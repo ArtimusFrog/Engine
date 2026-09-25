@@ -475,7 +475,13 @@ impl App {
         if let Some(shot) = &self.auto_screenshot {
             if self.ctx.time.frame + 1 >= shot.after_frames {
                 match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &shot.path) {
-                    Ok(()) => println!("Screenshot gespeichert: {}", shot.path.display()),
+                    Ok(()) => println!(
+                        "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls)",
+                        shot.path.display(),
+                        self.ctx.stats.fps,
+                        self.ctx.stats.render.instances,
+                        self.ctx.stats.render.draw_calls
+                    ),
                     Err(e) => eprintln!("Screenshot fehlgeschlagen: {e}"),
                 }
                 event_loop.exit();

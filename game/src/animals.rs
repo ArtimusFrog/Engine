@@ -639,17 +639,17 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
     // Füchse im Wald, Rehe überall im Grünen, Bären im Wald, Schafe in Herden auf Wiesen,
     // Wölfe als Rudel im Wald und am Berg.
     let groups: [(AnimalKind, usize, usize, usize, &dyn Fn(Vec2, f32) -> bool); 6] = [
-        (AnimalKind::Hare, 40, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
-        (AnimalKind::Fox, 16, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
-        (AnimalKind::Deer, 20, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
-        (AnimalKind::Bear, 9, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
-        (AnimalKind::Sheep, 32, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
-        (AnimalKind::Wolf, 12, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
+        (AnimalKind::Hare, 80, 2, 1, &|p, h| h < 14.0 && moisture(p) < 0.52),
+        (AnimalKind::Fox, 30, 2, 1, &|p, h| h < 16.0 && moisture(p) >= 0.48),
+        (AnimalKind::Deer, 40, 2, 2, &|_, h| (4.0..20.0).contains(&h)),
+        (AnimalKind::Bear, 16, 1, 1, &|p, h| (3.0..18.0).contains(&h) && moisture(p) >= 0.5),
+        (AnimalKind::Sheep, 60, 4, 4, &|p, h| (3.0..12.0).contains(&h) && moisture(p) < 0.5),
+        (AnimalKind::Wolf, 24, 0, 3, &|p, h| (6.0..24.0).contains(&h) && moisture(p) >= 0.45),
     ];
     for (kind, count, near, herd, fits) in groups {
         let mut placed = 0;
         let mut tries = 0;
-        while placed < count && tries < 4000 {
+        while placed < count && tries < 9000 {
             tries += 1;
             // Ein paar Tiere in Sichtweite des Startpunkts, der Rest verteilt.
             let near_spawn = placed < near;
@@ -753,7 +753,7 @@ mod tests {
         let mut ctx = Context::headless();
         let world = crate::world::World::new(&mut ctx);
         let bears: Vec<_> = world.animals.iter().filter(|a| a.kind == AnimalKind::Bear).collect();
-        assert_eq!(bears.len(), 9, "Bären fehlen");
+        assert_eq!(bears.len(), 16, "Bären fehlen");
         let spawn = world.spawn;
         for bear in &bears {
             let offset = bear.position - spawn;

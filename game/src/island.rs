@@ -12,15 +12,17 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 5;
+pub const WORLD_ID: u32 = SEED + 6;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
-pub const ISLAND_RADIUS: f32 = 330.0;
-const TERRAIN_SIZE: f32 = 880.0;
+pub const ISLAND_RADIUS: f32 = 520.0;
+/// Maßstab gegenüber der ersten, kleineren Insel (330 m): Bach und See wachsen mit.
+const SCALE: f32 = ISLAND_RADIUS / 330.0;
+const TERRAIN_SIZE: f32 = 1400.0;
 /// 2,5 m je Zelle
-const TERRAIN_CELLS: usize = 352;
+const TERRAIN_CELLS: usize = 560;
 /// Bergsee im Westen: Mitte, Radius der Wasserfläche und Höhe des Wasserspiegels.
 const LAKE_CENTER: Vec2 = vec2(-0.42 * ISLAND_RADIUS, 0.12 * ISLAND_RADIUS);
-const LAKE_RADIUS: f32 = 38.0;
+const LAKE_RADIUS: f32 = 55.0;
 const LAKE_LEVEL: f32 = 6.0;
 /// Um den Startpunkt bleibt eine Lichtung frei.
 const SPAWN_CLEARING: f32 = 12.0;
@@ -78,7 +80,7 @@ pub struct Island {
 
 /// Die Übersichtskarte zeigt ±`MAP_EXTENT` Meter um die Inselmitte (Norden = -z oben).
 pub const MAP_EXTENT: f32 = ISLAND_RADIUS * 1.08;
-const MAP_SIZE: usize = 1536;
+const MAP_SIZE: usize = 2048;
 
 /// Orte, die auf der Karte beschriftet werden.
 pub fn landmarks() -> [(&'static str, Vec2); 3] {
@@ -186,13 +188,13 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// Der Silberbach: von der Quelle im Nebelgebirge durch ein Hochtal, über eine Felsstufe
 /// (Wasserfall zwischen Punkt 2 und 3) und durch die Ebene in den Bergsee.
 const STREAM: [Vec2; 7] = [
-    vec2(-120.0, -145.0),
-    vec2(-128.0, -118.0),
-    vec2(-134.0, -92.0),
-    vec2(-138.0, -70.0),
-    vec2(-140.0, -45.0),
-    vec2(-141.0, -18.0),
-    vec2(-139.0, 8.0),
+    vec2(-120.0 * SCALE, -145.0 * SCALE),
+    vec2(-128.0 * SCALE, -118.0 * SCALE),
+    vec2(-134.0 * SCALE, -92.0 * SCALE),
+    vec2(-138.0 * SCALE, -70.0 * SCALE),
+    vec2(-140.0 * SCALE, -45.0 * SCALE),
+    vec2(-141.0 * SCALE, -18.0 * SCALE),
+    vec2(-139.0 * SCALE, 8.0 * SCALE),
 ];
 /// Abschnitt mit dem Wasserfall (von STREAM[i] nach STREAM[i+1]) und wo darin die Kante liegt.
 const WATERFALL_SEGMENT: usize = 2;
@@ -446,10 +448,10 @@ fn plant_shores(ctx: &mut Context, terrain: &Terrain, lib: &Library, places: &cr
 /// Richtung aufs Land (x, z).
 fn find_surf(terrain: &Terrain) -> Vec<(Vec3, Vec2)> {
     let mut surf = Vec::new();
-    for k in 0..360 {
-        let dir = Vec2::from_angle(k as f32 / 360.0 * std::f32::consts::TAU);
+    for k in 0..560 {
+        let dir = Vec2::from_angle(k as f32 / 560.0 * std::f32::consts::TAU);
         // Von außen nach innen zur ersten Stelle, an der das Land aus dem Wasser steigt
-        let Some(r) = (0..300).map(|i| ISLAND_RADIUS * 1.35 - i as f32 * 1.0).find(|&r| {
+        let Some(r) = (0..(ISLAND_RADIUS * 0.9) as i32).map(|i| ISLAND_RADIUS * 1.35 - i as f32 * 1.0).find(|&r| {
             let p = dir * r;
             terrain.height_at(p.x, p.y) > -0.05
         }) else {
@@ -548,8 +550,8 @@ fn birch_grove(p: Vec2) -> f32 {
     fbm(p * 0.02 + vec2(13.0, 57.0), 2, SEED + 13) * 0.5 + 0.5
 }
 
-/// Auflösung der Bodentextur (über die ganze Landschaft, ≈ 0,43 m je Pixel).
-const GROUND_TEXTURE: usize = 2048;
+/// Auflösung der Bodentextur (über die ganze Landschaft, ≈ 0,46 m je Pixel).
+const GROUND_TEXTURE: usize = 3072;
 /// Rasterweite der Wege-Maske in Metern.
 const PATH_CELL: f32 = 1.0;
 
@@ -806,9 +808,9 @@ pub fn wildlife_spots(terrain: &Terrain) -> (Vec<Vec2>, Vec<Vec2>) {
             }
         }
     }
-    for k in 0..12 {
-        let dir = Vec2::from_angle(k as f32 / 12.0 * std::f32::consts::TAU);
-        if let Some(rr) = (0..300).map(|i| r * 1.3 - i as f32).find(|&rr| terrain.height_at((dir * rr).x, (dir * rr).y) > 0.2) {
+    for k in 0..18 {
+        let dir = Vec2::from_angle(k as f32 / 18.0 * std::f32::consts::TAU);
+        if let Some(rr) = (0..(r * 0.9) as i32).map(|i| r * 1.3 - i as f32).find(|&rr| terrain.height_at((dir * rr).x, (dir * rr).y) > 0.2) {
             let p = dir * rr;
             if terrain.height_at(p.x, p.y) < 2.5 && beaches.iter().all(|&b: &Vec2| b.distance(p) > 150.0) {
                 beaches.push(p);
@@ -1116,10 +1118,10 @@ pub fn build(ctx: &mut Context) -> Island {
     let (vertices, triangles) = terrain.collision_mesh();
     ctx.physics.add_static_mesh(Some(ground), vertices, triangles);
 
-    let water = ctx.assets.named_mesh("wasser", || MeshData::grid(96));
+    let water = ctx.assets.named_mesh("wasser", || MeshData::grid(128));
     ctx.scene.spawn(
         Entity::new("Meer", water)
-            .with_transform(Transform::default().with_scale(vec3(1600.0, 1.0, 1600.0)))
+            .with_transform(Transform::default().with_scale(vec3(2800.0, 1.0, 2800.0)))
             .with_material(Material::Water),
     );
     // Bergsee im Westen: eigene Wasserfläche auf Höhe des Seespiegels
