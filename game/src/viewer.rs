@@ -31,7 +31,7 @@ const POLL_INTERVAL: f32 = 0.5;
 const REFERENCE_GAP: f32 = 0.8;
 /// Kamera-Abstand: so nah und so weit geht es.
 const ZOOM_MIN: f32 = 0.3;
-const ZOOM_MAX: f32 = 120.0;
+const ZOOM_MAX: f32 = 320.0;
 
 /// Was gerade geladen ist.
 struct Shown {
@@ -101,6 +101,7 @@ fn group_name(folder: &str) -> String {
         "tiere" => "Tiere".into(),
         "figuren" => "Figuren".into(),
         "gebaeude" => "Gebäude".into(),
+        "bauwerke" => "Bauwerke".into(),
         "gegenstaende" => "Gegenstände".into(),
         "" => "Sonstiges".into(),
         other => other.to_string(),
@@ -292,7 +293,7 @@ impl Viewer {
         self.error = None;
         if first {
             let size = (max - min).max_element().max(0.3);
-            self.distance = (size * 2.2).clamp(1.0, 60.0);
+            self.distance = (size * 2.2).clamp(1.0, 260.0);
             self.reloaded_at = Some(-100.0);
         } else {
             self.reloaded_at = Some(ctx.time.elapsed);
@@ -629,6 +630,9 @@ impl Game for Viewer {
         }
         if let Some(winkel) = value("--drehen") {
             ctx.camera.yaw = winkel.to_radians();
+        }
+        if let Some(winkel) = value("--neigung") {
+            ctx.camera.pitch = (-winkel).to_radians().clamp(-1.45, 0.6);
         }
         self.fixed_zoom = value("--zoom");
         self.freeze_at = value("--standbild");

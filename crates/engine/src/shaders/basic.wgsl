@@ -464,10 +464,121 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     return mix(color, sky_base(to_point / max(dist, 0.001)), fog);
 }
 
+// ---------- Oberflächenmuster für Bauwerke ----------
+// Blender legt Musterkoordinaten in Metern in die UVs (art/lib/burg.py): u = Art·1000 + 500 + x,
+// v = y (der glTF-Export dreht v um). Art 1 = Mauerwerk, 2 = Dachschindeln, 3 = Bodenplatten,
+// 4 = Buntglas. Aus der Ferne blendet das Muster zur Grundfarbe über (kein Flimmern).
+
+// Wie deutlich ein Muster der Größe `size` (Meter) bei `w` Metern je Pixel noch zu sehen ist.
+fn pattern_fade(w: f32, size: f32) -> f32 {
+    return 1.0 - smoothstep(size * 0.12, size * 0.45, w);
+}
+
+// Gemauerte Steinquader im Läuferverband: Fugen, jeder Stein etwas anders, oben heller.
+fn masonry(albedo: vec3<f32>, p: vec2<f32>, w: f32, size: vec2<f32>, joint: f32, jitter: f32) -> vec3<f32> {
+    let row = floor(p.y / size.y);
+    let q = vec2<f32>(p.x / size.x + row * 0.5, p.y / size.y);
+    let cell = floor(q);
+    let f = fract(q);
+    let d = min(f, 1.0 - f) * size;
+    let mortar = 1.0 - smoothstep(joint, joint + max(w, 0.003), min(d.x, d.y));
+    let h = hash21(cell + vec2<f32>(17.0, 5.0));
+    let h2 = hash21(cell * 1.7 + vec2<f32>(3.0, 11.0));
+    var stone = albedo * (1.0 - jitter + h * jitter * 2.0);
+    // warme, rosige und kühle Steine; ab und zu ein deutlich dunklerer
+    stone *= mix(vec3<f32>(1.08, 0.97, 0.88), vec3<f32>(0.92, 0.97, 1.06), h2);
+    if (h2 > 0.9) {
+        stone *= vec3<f32>(1.02, 0.9, 0.86);
+    }
+    if (h > 0.94) {
+        stone *= 0.78;
+    }
+    // Kante oben fängt Licht, unten liegt sie im Schatten des Steins darüber
+    stone *= 1.0 + (smoothstep(0.0, 0.25, 1.0 - f.y) - 0.5) * -0.1;
+    stone *= 1.0 - (1.0 - smoothstep(0.0, 0.05, d.y)) * 0.12;
+    let fine = mix(stone, albedo * 0.6, mortar * pattern_fade(w, joint * 6.0));
+    return mix(albedo, fine, pattern_fade(w, size.y * 1.4));
+}
+
+// Fischschuppen-Schindeln: Reihen mit halbem Versatz, runde Unterkante, jede Schindel wirft
+// einen kleinen Schatten auf die darunter.
+fn shingles(albedo: vec3<f32>, p: vec2<f32>, w: f32) -> vec3<f32> {
+    let size = vec2<f32>(0.46, 0.3);
+    let row = floor(p.y / size.y);
+    let qx = p.x / size.x + row * 0.5;
+    var cell = vec2<f32>(floor(qx), row);
+    var f = vec2<f32>(fract(qx), fract(p.y / size.y));
+    let dx = f.x - 0.5;
+    // Unterkante der Schindel (in Reihenhöhen, 0 = Zellboden)
+    let arc = 0.55 - sqrt(max(0.25 - dx * dx, 0.0)) * 1.1;
+    var above = f.y - arc;
+    var shade = 1.0;
+    if (above < 0.0) {
+        // Ecke unter der Rundung: dort liegt die Schindel der Reihe darunter
+        cell = vec2<f32>(floor(qx - 0.5), row - 1.0);
+        let shadow = smoothstep(0.0, 0.35, -above);
+        shade = mix(0.62, 1.0, shadow);
+        above = f.y + 1.0 - 0.3;
+    }
+    let h = hash21(cell + vec2<f32>(5.0, 23.0));
+    var tile = albedo * (0.86 + h * 0.28);
+    // Zur Spitze hin heller (sie steht etwas ab), oben unter der nächsten Reihe dunkler
+    tile *= mix(1.1, 0.8, clamp(above / 1.2, 0.0, 1.0)) * shade;
+    let edge = 1.0 - smoothstep(0.012, 0.012 + max(w, 0.003), abs(f.y - arc) * size.y);
+    let fine = mix(tile, albedo * 0.45, edge * pattern_fade(w, 0.08));
+    return mix(albedo, fine, pattern_fade(w, size.y * 1.4));
+}
+
+// Bleiverglasung: Rauten in kräftigen Farben, dunkle Bleiruten, alle 0,9 m ein Eisenquersteg.
+fn stained_glass(albedo: vec3<f32>, p: vec2<f32>, w: f32) -> vec3<f32> {
+    let size = 0.3;
+    let r = vec2<f32>(p.x + p.y, p.y - p.x) * (0.70710678 / size);
+    let cell = floor(r);
+    let f = fract(r);
+    let e = min(f, 1.0 - f) * size * 1.4142;
+    let d = min(e.x, e.y);
+    let h = hash21(cell + vec2<f32>(41.0, 7.0));
+    var tint = vec3<f32>(0.62, 0.06, 0.05);
+    if (h > 0.78) {
+        tint = vec3<f32>(0.06, 0.16, 0.62);
+    } else if (h > 0.56) {
+        tint = vec3<f32>(0.85, 0.52, 0.06);
+    } else if (h > 0.4) {
+        tint = vec3<f32>(0.08, 0.38, 0.16);
+    } else if (h > 0.28) {
+        tint = vec3<f32>(0.34, 0.1, 0.48);
+    } else if (h > 0.18) {
+        tint = vec3<f32>(0.8, 0.62, 0.3);
+    }
+    let lead = 1.0 - smoothstep(0.018, 0.018 + max(w, 0.003), d);
+    let bar = 1.0 - smoothstep(0.03, 0.03 + max(w, 0.003), abs(fract(p.y / 0.9 + 0.5) - 0.5) * 0.9);
+    let glass = albedo * tint * (0.85 + hash21(cell * 3.1) * 0.3);
+    let average = albedo * vec3<f32>(0.5, 0.3, 0.22);
+    let fine = mix(glass, vec3<f32>(0.03), max(lead, bar) * pattern_fade(w, 0.12));
+    return mix(average, fine, pattern_fade(w, size * 1.5));
+}
+
+fn surface_pattern(albedo: vec3<f32>, uv: vec2<f32>, w: f32) -> vec3<f32> {
+    let kind = floor(uv.x / 1000.0);
+    let p = vec2<f32>(uv.x - kind * 1000.0 - 500.0, 1.0 - uv.y);
+    if (kind == 1.0) {
+        return masonry(albedo, p, w, vec2<f32>(0.78, 0.34), 0.026, 0.2);
+    } else if (kind == 2.0) {
+        return shingles(albedo, p, w);
+    } else if (kind == 3.0) {
+        return masonry(albedo, p + vec2<f32>(0.0, 0.0), w, vec2<f32>(1.1, 0.8), 0.04, 0.2);
+    } else if (kind == 4.0) {
+        return stained_glass(albedo, p, w);
+    }
+    return albedo;
+}
+
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Textur vor allen Verzweigungen lesen (WGSL verlangt einheitlichen Kontrollfluss).
     let texel = textureSample(albedo_texture, albedo_sampler, in.uv);
+    // Pixelgröße in Musterkoordinaten (Meter) – Ableitungen nur im einheitlichen Kontrollfluss
+    let pattern_w = max(fwidth(in.uv.x), fwidth(in.uv.y));
     // Tatsächliche Ausrichtung der Fläche (die Normale in `in.normal` ist bei Laub „weich“ geschönt).
     let face = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     // Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
@@ -476,6 +587,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         discard;
     }
     var albedo = in.color * texel.rgb;
+    if (in.uv.x >= 1000.0) {
+        albedo = surface_pattern(albedo, in.uv, pattern_w);
+    }
     if (kind == MAT_GROUND) {
         // Alpha 1 = kein Weg, 0,5 = Wegmitte (siehe game/src/island.rs, `ground_texture`)
         albedo = ground_detail(albedo, in.world_pos, normalize(in.normal), (1.0 - texel.a) * 2.0);
