@@ -1,4 +1,4 @@
-//! Alle Geräusche des Spiels und die Klangkulisse (Wind, Wellen, Vögel, Grillen, Musik).
+//! Alle Geräusche des Spiels und die Klangkulisse (Wind, Wellen, Vögel, Musik).
 //!
 //! Jeder Klang kann durch eine Aufnahme ersetzt werden: `game/assets/sounds/<name>.ogg`
 //! (oder .wav/.flac). Solange es keine gibt, erzeugt das Spiel ihn selbst (Synthese).
@@ -39,7 +39,6 @@ pub struct Sounds {
     wind: LoopId,
     waves: LoopId,
     birds: LoopId,
-    crickets: LoopId,
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
@@ -69,7 +68,6 @@ impl Sounds {
         let wind = sound(a, "wind", wind);
         let waves = sound(a, "wellen", waves);
         let birds = sound(a, "voegel", birds);
-        let crickets = sound(a, "grillen", crickets);
         let music = sound(a, "musik", music);
         Sounds {
             chop: sound(a, "hacken", chop),
@@ -108,7 +106,6 @@ impl Sounds {
             wind: a.start_loop(wind, Bus::Ambient),
             waves: a.start_loop(waves, Bus::Ambient),
             birds: a.start_loop(birds, Bus::Ambient),
-            crickets: a.start_loop(crickets, Bus::Ambient),
             music: a.start_loop(music, Bus::Music),
             rng: Rng::new(99),
             last_items: None,
@@ -171,7 +168,7 @@ impl Sounds {
         self.ambience(ctx, world);
     }
 
-    /// Wind je nach Höhe, Wellen nahe am Wasser, Vögel am Tag, Grillen in der Nacht.
+    /// Wind je nach Höhe, Wellen nahe am Wasser, Vögel am Tag, Wasserfall, Möwen, Wölfe, Musik.
     fn ambience(&mut self, ctx: &mut Context, world: &World) {
         let camera = ctx.camera.position;
         let terrain = &world.terrain;
@@ -203,11 +200,10 @@ impl Sounds {
         ctx.audio.set_loop(self.wind, wind, None, 1.0);
         ctx.audio.set_loop(self.waves, shore.clamp(0.0, 1.0) * 0.8, shore_at, 120.0);
         let inland = 1.0 - shore.clamp(0.0, 1.0) * 0.7;
-        // Bei Regen schweigen Vögel und Grillen, dafür rauscht es
+        // Bei Regen schweigen die Vögel, dafür rauscht es
         let rain = world.weather.state().rain;
         ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
         ctx.audio.set_loop(self.birds, daylight * inland * 0.45 * (1.0 - rain), None, 1.0);
-        ctx.audio.set_loop(self.crickets, (1.0 - daylight) * inland * 0.35 * (1.0 - rain), None, 1.0);
         // Wasserfall: lautes Rauschen am Fuß, weit zu hören
         match world.places.waterfall {
             Some((_, foot)) => ctx.audio.set_loop(self.waterfall, 0.85, Some(foot), 60.0),
@@ -255,7 +251,7 @@ impl Sounds {
     /// Im Menü: nur Musik und etwas Wind.
     pub fn menu(&mut self, ctx: &mut Context) {
         ctx.audio.set_loop(self.wind, 0.2, None, 1.0);
-        for quiet in [self.waves, self.birds, self.crickets, self.rain, self.waterfall, self.music_night, self.music_magic] {
+        for quiet in [self.waves, self.birds, self.rain, self.waterfall, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
         ctx.audio.set_loop(self.music, 0.5, None, 1.0);
@@ -554,18 +550,6 @@ fn birds() -> SoundBuffer {
     buffer
 }
 
-/// Grillen: schnelles Zirpen in Gruppen.
-fn crickets() -> SoundBuffer {
-    let mut buffer = render(8.0, |t| {
-        let group = ((t * 1.3).fract() < 0.45) as i32 as f32;
-        let pulse = ((t * 32.0).fract() < 0.5) as i32 as f32;
-        let tone = sine(t, 4700.0) + sine(t, 4750.0) * 0.5;
-        tone * group * pulse * 0.09 + sine(t, 5300.0) * ((t * 27.0 + 0.3).fract() < 0.4) as i32 as f32 * (((t + 0.4) * 0.9).fract() < 0.35) as i32 as f32 * 0.04
-    });
-    make_loopable(&mut buffer, 0.3);
-    buffer
-}
-
 /// Ruhige Musik: weiche Akkorde (Flächen) und eine gezupfte Pentatonik-Melodie.
 fn music() -> SoundBuffer {
     // Akkordfolge in D-Dur: D – Hm – G – A, je 6 Sekunden.
@@ -671,7 +655,7 @@ mod tests {
 
     #[test]
     fn klaenge_sind_hoerbar_und_uebersteuern_nicht() {
-        let all: [(&str, SoundBuffer); 9] = [
+        let all: [(&str, SoundBuffer); 8] = [
             ("hacken", chop()),
             ("stein", stone()),
             ("baum_faellt", tree_falls()),
@@ -679,7 +663,6 @@ mod tests {
             ("wind", wind()),
             ("wellen", waves()),
             ("voegel", birds()),
-            ("grillen", crickets()),
             ("musik", music()),
         ];
         for (name, mut buffer) in all {
