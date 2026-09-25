@@ -70,6 +70,103 @@ pub struct Island {
     pub spawn: Vec3,
     /// Magische Kristallvorkommen (Mitte am Boden) – für Licht und Funken in der Nähe.
     pub crystals: Vec<Vec3>,
+    /// Gezeichnete Übersichtskarte (nur mit Fenster).
+    pub map: Option<Image>,
+}
+
+/// Die Übersichtskarte zeigt ±`MAP_EXTENT` Meter um die Inselmitte (Norden = -z oben).
+pub const MAP_EXTENT: f32 = ISLAND_RADIUS * 1.08;
+const MAP_SIZE: usize = 1536;
+
+/// Orte, die auf der Karte beschriftet werden.
+pub fn landmarks() -> [(&'static str, Vec2); 3] {
+    [
+        ("Bergsee", LAKE_CENTER),
+        ("Tafelberg", vec2(0.45 * ISLAND_RADIUS, 0.15 * ISLAND_RADIUS)),
+        ("Nebelgebirge", vec2(0.05 * ISLAND_RADIUS, -0.62 * ISLAND_RADIUS)),
+    ]
+}
+
+/// Zeichnet die Übersichtskarte im Pergament-Stil: Gelände mit Schattierung und Höhenlinien,
+/// Wasser nach Tiefe, Küstenlinie, Trampelpfade und Bäume als Punkte.
+fn map_image(terrain: &Terrain, paths: &Paths, trees: &[Vec2]) -> Image {
+    let size = MAP_SIZE;
+    let texel = MAP_EXTENT * 2.0 / size as f32;
+    let mut rgba = vec![0u8; size * size * 4];
+    let light = vec3(-0.5, 0.8, -0.35).normalize();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+    let rows_per_thread = size.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (chunk_index, chunk) in rgba.chunks_mut(rows_per_thread * size * 4).enumerate() {
+            scope.spawn(move || {
+                for (i, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let (x, z) = (i % size, chunk_index * rows_per_thread + i / size);
+                    let p = Vec2::splat(-MAP_EXTENT) + (vec2(x as f32, z as f32) + 0.5) * texel;
+                    let h = terrain.height_at(p.x, p.y);
+                    let n = terrain.normal_at(p.x, p.y);
+                    let linear = if in_lake(p) && h < LAKE_LEVEL {
+                        vec3(0.08, 0.3, 0.42)
+                    } else if h < 0.0 {
+                        vec3(0.2, 0.5, 0.58).lerp(vec3(0.05, 0.19, 0.32), smoothstep(0.0, 9.0, -h))
+                    } else {
+                        // Gelände: Farbe wie im Spiel, von Nordwesten beleuchtet, mit Höhenlinien
+                        let shade = (n.dot(light) / light.y).clamp(0.55, 1.3);
+                        let contour = if h > 1.5 && (h / 4.0).fract() < 0.07 { 0.78 } else { 1.0 };
+                        let mut c = ground_color(vec3(p.x, h, p.y), n) * shade * contour;
+                        let path = paths.at(p) * smoothstep(2.3, 3.0, h);
+                        c = c.lerp(vec3(0.3, 0.18, 0.08), smoothstep(0.3, 0.6, path));
+                        c
+                    };
+                    let mut srgb = linear.to_array().map(linear_to_srgb);
+                    // Küstenlinie
+                    if h.abs() < 0.35 {
+                        srgb = [0.3, 0.24, 0.17];
+                    }
+                    for (k, channel) in srgb.into_iter().enumerate() {
+                        pixel[k] = (channel * 255.0).round() as u8;
+                    }
+                    pixel[3] = 255;
+                }
+            });
+        }
+    });
+    // Bäume als kleine dunkelgrüne Punkte mit hellem Glanz oben links
+    let mut dot = |p: Vec2, radius: f32, color: [u8; 3]| {
+        let center = (p + Vec2::splat(MAP_EXTENT)) / texel;
+        let r = radius.ceil() as i32 + 1;
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let (x, z) = (center.x as i32 + dx, center.y as i32 + dz);
+                if x < 0 || z < 0 || x >= size as i32 || z >= size as i32 {
+                    continue;
+                }
+                let d = vec2(x as f32 + 0.5, z as f32 + 0.5).distance(center);
+                let cover = (radius + 0.5 - d).clamp(0.0, 1.0);
+                let i = (z as usize * size + x as usize) * 4;
+                for k in 0..3 {
+                    rgba[i + k] = (rgba[i + k] as f32 + (color[k] as f32 - rgba[i + k] as f32) * cover) as u8;
+                }
+            }
+        }
+    };
+    for &tree in trees {
+        dot(tree, 1.7, [28, 64, 26]);
+        dot(tree - Vec2::splat(0.45 * texel), 0.7, [70, 120, 50]);
+    }
+    // Pergament: alles leicht gelblich, zum Rand hin dunkler
+    for z in 0..size {
+        for x in 0..size {
+            let i = (z * size + x) * 4;
+            let r = vec2(x as f32 / size as f32 - 0.5, z as f32 / size as f32 - 0.5).length() * 2.0;
+            let edge = smoothstep(0.78, 1.15, r);
+            for (k, (paper, sepia)) in [(232.0, 140.0), (214.0, 107.0), (174.0, 71.0)].into_iter().enumerate() {
+                let c = rgba[i + k] as f32;
+                let c = c + (paper - c) * 0.2;
+                rgba[i + k] = (c + (sepia - c) * edge * 0.55) as u8;
+            }
+        }
+    }
+    Image { width: size as u32, height: size as u32, rgba }
 }
 
 /// Wie weit Wind Laub bewegt.
@@ -725,7 +822,18 @@ pub fn build(ctx: &mut Context) -> Island {
 
     log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
     log::info!("{} Kristallvorkommen", crystals.len());
-    Island { terrain, resources, spawn, crystals }
+    let map = (!ctx.is_headless()).then(|| {
+        let started = std::time::Instant::now();
+        let trees: Vec<Vec2> = resources
+            .iter()
+            .filter(|(_, r)| r.kind == ResourceKind::Wood)
+            .map(|(_, r)| vec2(r.transform.position.x, r.transform.position.z))
+            .collect();
+        let image = map_image(&terrain, &paths, &trees);
+        log::info!("Übersichtskarte in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
+        image
+    });
+    Island { terrain, resources, spawn, crystals, map }
 }
 
 /// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich

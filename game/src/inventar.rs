@@ -22,14 +22,14 @@ const TABS: f32 = 30.0;
 const FOOTER: f32 = 46.0;
 
 // Farben: dunkles Leder, Bronze und Gold
-const GOLD: Color32 = Color32::from_rgb(214, 172, 92);
-const GOLD_LIGHT: Color32 = Color32::from_rgb(244, 214, 142);
-const GOLD_DARK: Color32 = Color32::from_rgb(104, 78, 38);
-const BRONZE: Color32 = Color32::from_rgb(74, 57, 36);
-const LEATHER_TOP: Color32 = Color32::from_rgb(38, 29, 22);
-const LEATHER_BOTTOM: Color32 = Color32::from_rgb(17, 13, 10);
-const PARCHMENT: Color32 = Color32::from_rgb(222, 206, 172);
-const MUTED: Color32 = Color32::from_rgb(150, 136, 112);
+pub(crate) const GOLD: Color32 = Color32::from_rgb(214, 172, 92);
+pub(crate) const GOLD_LIGHT: Color32 = Color32::from_rgb(244, 214, 142);
+pub(crate) const GOLD_DARK: Color32 = Color32::from_rgb(104, 78, 38);
+pub(crate) const BRONZE: Color32 = Color32::from_rgb(74, 57, 36);
+pub(crate) const LEATHER_TOP: Color32 = Color32::from_rgb(38, 29, 22);
+pub(crate) const LEATHER_BOTTOM: Color32 = Color32::from_rgb(17, 13, 10);
+pub(crate) const PARCHMENT: Color32 = Color32::from_rgb(222, 206, 172);
+pub(crate) const MUTED: Color32 = Color32::from_rgb(150, 136, 112);
 
 /// Welche Gegenstände das Fenster zeigt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,7 +327,7 @@ impl InventoryUi {
 // ---------------------------------------------------------------------------
 
 /// Senkrechter (oder waagerechter) Farbverlauf in einem Rechteck.
-fn gradient(painter: &egui::Painter, rect: Rect, from: Color32, to: Color32, horizontal: bool) {
+pub(crate) fn gradient(painter: &egui::Painter, rect: Rect, from: Color32, to: Color32, horizontal: bool) {
     let mut mesh = egui::Mesh::default();
     let (a, b, c, d) = if horizontal { (from, to, to, from) } else { (from, from, to, to) };
     mesh.colored_vertex(rect.left_top(), a);
@@ -340,7 +340,7 @@ fn gradient(painter: &egui::Painter, rect: Rect, from: Color32, to: Color32, hor
 }
 
 /// Rahmen des Fensters: Schatten, Lederfläche, doppelte Goldkante, Eckbeschläge.
-fn frame(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn frame(painter: &egui::Painter, rect: Rect) {
     let shadow = egui::Shadow { offset: [0, 10], blur: 30, spread: 2, color: Color32::from_black_alpha(150) };
     painter.add(shadow.as_shape(rect, 10));
     painter.rect_filled(rect, 10.0, Color32::from_rgb(10, 8, 6));
@@ -371,7 +371,7 @@ fn frame(painter: &egui::Painter, rect: Rect) {
 }
 
 /// Raute mit Rand (Eckbeschläge, Trennlinien).
-fn diamond(painter: &egui::Painter, center: Pos2, size: f32, fill: Color32, edge: Color32) {
+pub(crate) fn diamond(painter: &egui::Painter, center: Pos2, size: f32, fill: Color32, edge: Color32) {
     let points = vec![
         center + egui::vec2(0.0, -size),
         center + egui::vec2(size, 0.0),
@@ -382,7 +382,7 @@ fn diamond(painter: &egui::Painter, center: Pos2, size: f32, fill: Color32, edge
 }
 
 /// Goldene Trennlinie, die zu den Enden ausläuft, mit Raute in der Mitte.
-fn divider(painter: &egui::Painter, left: f32, right: f32, y: f32) {
+pub(crate) fn divider(painter: &egui::Painter, left: f32, right: f32, y: f32) {
     let middle = (left + right) / 2.0;
     let line = |a: f32, b: f32, from: Color32, to: Color32| gradient(painter, Rect::from_min_max(egui::pos2(a, y - 0.75), egui::pos2(b, y + 0.75)), from, to, true);
     line(left, middle - 8.0, Color32::TRANSPARENT, GOLD);
@@ -391,7 +391,7 @@ fn divider(painter: &egui::Painter, left: f32, right: f32, y: f32) {
 }
 
 /// Text mit etwas Buchstabenabstand (für Überschriften).
-fn spaced_text(painter: &egui::Painter, center: Pos2, text: &str, size: f32, color: Color32) {
+pub(crate) fn spaced_text(painter: &egui::Painter, center: Pos2, text: &str, size: f32, color: Color32) {
     let mut job = egui::text::LayoutJob::default();
     job.append(text, 0.0, egui::TextFormat { font_id: FontId::proportional(size), color, extra_letter_spacing: 3.0, ..Default::default() });
     let galley = painter.layout_job(job);
@@ -399,7 +399,7 @@ fn spaced_text(painter: &egui::Painter, center: Pos2, text: &str, size: f32, col
     painter.galley(position, galley, color);
 }
 
-fn close_button(painter: &egui::Painter, center: Pos2, hovered: bool) {
+pub(crate) fn close_button(painter: &egui::Painter, center: Pos2, hovered: bool) {
     let fill = if hovered { Color32::from_rgb(140, 40, 30) } else { Color32::from_rgb(70, 24, 18) };
     painter.circle_filled(center, 11.0, fill);
     painter.circle_stroke(center, 11.0, Stroke::new(1.5, if hovered { GOLD_LIGHT } else { GOLD }));
@@ -454,7 +454,7 @@ fn count_label(painter: &egui::Painter, corner: Pos2, count: u32, size: f32) {
 }
 
 /// Tastenkappe mit Beschriftung, rechtsbündig.
-fn key_hint(painter: &egui::Painter, right_center: Pos2, key: &str, label: &str) {
+pub(crate) fn key_hint(painter: &egui::Painter, right_center: Pos2, key: &str, label: &str) {
     let mut x = right_center.x;
     if !label.is_empty() {
         let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(13.0), MUTED);

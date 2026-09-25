@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000D;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_000E;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -131,12 +131,16 @@ pub enum ServerMessage {
     SpellCast { by: PlayerId, origin: Vec3, target: Vec3, hit: bool },
     /// Ein Tier wurde getroffen und hat noch `health` Leben (0 = erlegt).
     AnimalHit { id: u16, health: u8, by: PlayerId },
+    /// Chatnachricht eines Spielers (vom Server geprüft).
+    Chat { from: PlayerId, name: String, text: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Die letzten paar Eingaben (älteste zuerst). Mehrfach senden gleicht Paketverlust aus.
     Inputs(Vec<PlayerInput>),
+    /// Chatnachricht an alle.
+    Chat(String),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -154,6 +158,14 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
 }
 
 pub const MAX_NAME_CHARS: usize = 16;
+pub const MAX_CHAT_CHARS: usize = 160;
+
+/// Macht aus einer Eingabe eine gültige Chatnachricht (gekürzt, ohne Steuerzeichen), leer = keine.
+pub fn clean_chat(text: &str) -> Option<String> {
+    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_CHAT_CHARS).collect();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
 
 /// Macht aus einer Eingabe einen gültigen Spielernamen (gekürzt, ohne Steuerzeichen).
 pub fn clean_name(name: &str) -> String {

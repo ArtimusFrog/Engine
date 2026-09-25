@@ -106,6 +106,16 @@ impl Session {
         }
     }
 
+    /// Schickt eine Chatnachricht (beim Host/Einzelspieler direkt, sonst über den Server).
+    pub fn send_chat(&mut self, ctx: &Context, text: &str) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_chat(text);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            authority.chat(ctx, &mut self.world, local, text);
+        }
+    }
+
     /// Stellt die Uhr vor (nur wer die Welt berechnet: Einzelspieler, Host, Server).
     pub fn skip_time(&mut self, hours: f32) -> bool {
         if self.authority.is_none() {
@@ -425,6 +435,32 @@ mod tests {
 
     fn resource_health(pair: &Pair, id: u32) -> u8 {
         pair.server.session.world().resources[&id].spec.max_health
+    }
+
+    #[test]
+    fn chat_kommt_bei_allen_an_und_wird_gebremst() {
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let ctx = Context::headless();
+        pair.client.session.send_chat(&ctx, "  Hallo Insel!  ");
+        pair.run(20);
+        let beim_server: Vec<_> = pair.server.session.world_mut().chat_events.drain(..).filter(|l| l.from.is_some()).collect();
+        let beim_client: Vec<_> = pair.client.session.world_mut().chat_events.drain(..).filter(|l| l.from.is_some()).collect();
+        assert_eq!(beim_server.len(), 1, "Server hat die Nachricht nicht");
+        assert_eq!(beim_server[0].text, "Hallo Insel!");
+        assert_eq!(beim_server[0].name, "Testerin");
+        assert_eq!(beim_client.len(), 1, "Nachricht kommt beim Client nicht zurück");
+        // Flut: höchstens fünf Nachrichten in fünf Sekunden
+        for i in 0..10 {
+            pair.client.session.send_chat(&ctx, &format!("Nachricht {i}"));
+        }
+        pair.run(20);
+        let angekommen = pair.client.session.world_mut().chat_events.drain(..).filter(|l| l.from.is_some()).count();
+        assert_eq!(angekommen, 4, "Tempobremse greift nicht");
+        // Leere Nachrichten werden verworfen
+        pair.client.session.send_chat(&ctx, "   ");
+        pair.run(10);
+        assert_eq!(pair.client.session.world_mut().chat_events.drain(..).filter(|l| l.from.is_some()).count(), 0);
     }
 
     #[test]

@@ -103,8 +103,26 @@ struct Bolt {
     hit: bool,
 }
 
+/// Eine Zeile im Chat: von einem Spieler oder ein Hinweis (`from` = None, z. B. „… ist beigetreten“).
+#[derive(Clone, Debug)]
+pub struct ChatLine {
+    pub from: Option<PlayerId>,
+    pub name: String,
+    pub text: String,
+}
+
+impl ChatLine {
+    pub fn notice(text: String) -> ChatLine {
+        ChatLine { from: None, name: String::new(), text }
+    }
+}
+
 pub struct World {
     pub players: HashMap<PlayerId, Avatar>,
+    /// Neue Chatzeilen seit dem letzten Bild (die Oberfläche holt sie ab).
+    pub chat_events: Vec<ChatLine>,
+    /// Gezeichnete Übersichtskarte (nur mit Fenster), siehe `island::map_image`.
+    pub map: Option<Image>,
     /// Geworfene Bälle, die übers Netzwerk abgeglichen werden.
     pub objects: BTreeMap<NetId, NetObject>,
     pub resources: BTreeMap<u32, Resource>,
@@ -148,6 +166,8 @@ impl World {
             inventories: HashMap::new(),
             puppets: HashMap::new(),
             crystals: island.crystals,
+            chat_events: Vec::new(),
+            map: island.map,
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
             animals,
@@ -840,7 +860,7 @@ fn hit_particles(ctx: &mut Context, spec: &ResourceSpec, finished: bool) {
 }
 
 /// Jeder Spieler bekommt eine eigene, gut unterscheidbare Farbe.
-fn player_color(id: PlayerId) -> Vec3 {
+pub fn player_color(id: PlayerId) -> Vec3 {
     if id == HOST_PLAYER {
         return vec3(0.1, 0.3, 0.9);
     }

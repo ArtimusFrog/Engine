@@ -51,6 +51,8 @@ pub struct Authority {
     inventories: BTreeMap<String, Inventory>,
     /// Aktueller Server-Takt (für das Speichern beim Beenden).
     tick: u64,
+    /// Wann jeder Spieler zuletzt geschrieben hat (Takte), gegen Überfluten des Chats.
+    chat_times: HashMap<PlayerId, Vec<u64>>,
 }
 
 impl Authority {
@@ -63,6 +65,7 @@ impl Authority {
             save_path,
             inventories: BTreeMap::new(),
             tick: 0,
+            chat_times: HashMap::new(),
         }
     }
 
@@ -237,6 +240,23 @@ impl Authority {
         }
     }
 
+    /// Eine Chatnachricht: prüfen, an alle verteilen und selbst anzeigen. Höchstens fünf
+    /// Nachrichten in fünf Sekunden je Spieler.
+    pub fn chat(&mut self, ctx: &Context, world: &mut World, from: PlayerId, text: &str) {
+        let Some(text) = clean_chat(text) else { return };
+        let Some(name) = world.players.get(&from).map(|a| a.name.clone()) else { return };
+        let now = ctx.time.tick;
+        let times = self.chat_times.entry(from).or_default();
+        times.retain(|&t| now.saturating_sub(t) < 60 * 5);
+        if times.len() >= 5 {
+            return;
+        }
+        times.push(now);
+        log::info!("Chat {name}: {text}");
+        world.chat_events.push(crate::world::ChatLine { from: Some(from), name: name.clone(), text: text.clone() });
+        self.broadcast(ServerMessage::Chat { from, name, text });
+    }
+
     fn receive(&mut self, ctx: &mut Context, world: &mut World) {
         let Some(net) = &mut self.net else { return };
         let dt = Duration::from_secs_f32(Physics::FIXED_DT);
@@ -251,6 +271,7 @@ impl Authority {
                     let hello = Hello::parse(&net.hello(id));
                     let (name, class) = (hello.name, hello.class);
                     world.spawn_player(ctx, id, &name, class, spawn);
+                    world.chat_events.push(crate::world::ChatLine::notice(format!("{name} ist beigetreten")));
                     let returning = self.inventories.contains_key(&player_key(&name));
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
                     let mut intro = vec![ServerMessage::Welcome { player_id: id, tick: ctx.time.tick as u32 }];
@@ -291,6 +312,10 @@ impl Authority {
                     if let (Some(avatar), Some(inventory)) = (world.players.get(&id), world.inventories.get(&id)) {
                         self.inventories.insert(player_key(&avatar.name), *inventory);
                     }
+                    if let Some(avatar) = world.players.get(&id) {
+                        world.chat_events.push(crate::world::ChatLine::notice(format!("{} hat das Spiel verlassen", avatar.name)));
+                    }
+                    self.chat_times.remove(&id);
                     world.remove_player(ctx, id);
                     left = true;
                     net.broadcast(Channel::Reliable, encode(&ServerMessage::PlayerLeft { player_id: id }));
@@ -298,7 +323,13 @@ impl Authority {
             }
         }
 
+        let mut chats = Vec::new();
         for (&id, client) in &mut self.clients {
+            while let Some(bytes) = net.message(id, Channel::Reliable) {
+                if let Some(ClientMessage::Chat(text)) = decode(&bytes) {
+                    chats.push((id, text));
+                }
+            }
             while let Some(bytes) = net.message(id, Channel::Unreliable) {
                 let Some(ClientMessage::Inputs(inputs)) = decode(&bytes) else { continue };
                 for input in inputs {
@@ -315,6 +346,9 @@ impl Authority {
 
         for id in deferred_welcome {
             self.welcome_back(world, id);
+        }
+        for (id, text) in chats {
+            self.chat(ctx, world, id, &text);
         }
         if left {
             self.save(world);

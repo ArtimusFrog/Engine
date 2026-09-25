@@ -61,6 +61,12 @@ pub struct Playground {
     inventory_ui: crate::inventar::InventoryUi,
     /// Gewählter Platz der Auswahlleiste (Werkzeug in der Hand).
     hotbar_slot: usize,
+    /// Chat (Enter) und Übersichtskarte (M)
+    chat: crate::chat::ChatUi,
+    map_open: bool,
+    map_ui: crate::karte::MapUi,
+    /// Nur für Screenshots: Karte auf den Startplatz zoomen, sobald die Welt da ist.
+    demo_map_near: bool,
     /// Nur zum Testen: Figur steht an einem Vorkommen und baut es ab
     /// (`Some(erz?)` = noch hinstellen, sobald die Figur da ist).
     demo_mine: Option<u32>,
@@ -108,6 +114,10 @@ impl Playground {
             inventory_open: false,
             inventory_ui: Default::default(),
             hotbar_slot: 0,
+            chat: Default::default(),
+            map_open: false,
+            map_ui: Default::default(),
+            demo_map_near: false,
             demo_mine: None,
             demo_mine_request: None,
             demo_crystal: None,
@@ -140,7 +150,7 @@ impl Playground {
                 self.inventory_open = false;
                 self.orbit.distance = 6.0;
                 ctx.camera.pitch = -0.35;
-                ctx.cursor_locked = self.screen == Screen::Playing && !ctx.is_headless();
+                self.refresh_cursor(ctx);
             }
             Err(message) => {
                 log::error!("{message}");
@@ -174,7 +184,7 @@ impl Playground {
     }
 
     fn build_input(&mut self, ctx: &Context) -> PlayerInput {
-        let playing = self.screen == Screen::Playing && !self.free_camera;
+        let playing = self.screen == Screen::Playing && !self.free_camera && !self.chat.open;
         let yaw = ctx.camera.yaw;
         let (forward, right) = (vec2(yaw.sin(), -yaw.cos()), vec2(yaw.cos(), yaw.sin()));
         let mut wish = Vec2::ZERO;
@@ -243,16 +253,47 @@ impl Playground {
 
     fn toggle_inventory(&mut self, ctx: &mut Context) {
         self.inventory_open = !self.inventory_open;
-        ctx.cursor_locked = !self.inventory_open;
+        self.map_open = false;
+        self.refresh_cursor(ctx);
+    }
+
+    fn toggle_map(&mut self, ctx: &mut Context) {
+        self.map_open = !self.map_open;
+        self.inventory_open = false;
+        self.refresh_cursor(ctx);
+    }
+
+    /// Mauszeiger festhalten, solange man spielt und kein Fenster (Inventar, Karte, Chat) offen ist.
+    fn refresh_cursor(&self, ctx: &mut Context) {
+        ctx.cursor_locked =
+            self.screen == Screen::Playing && !self.free_camera && !self.inventory_open && !self.map_open && !self.chat.open && !ctx.is_headless();
     }
 
     fn handle_game_keys(&mut self, ctx: &mut Context) {
         let escape = ctx.input.key_pressed(KeyCode::Escape);
         match self.screen {
             Screen::Playing => {
+                // Beim Schreiben gehören alle Tasten dem Chat (Enter/Esc erledigt das Eingabefeld).
+                if self.chat.open {
+                    return;
+                }
                 if escape && self.inventory_open {
                     self.toggle_inventory(ctx);
                     return;
+                }
+                if escape && self.map_open {
+                    self.toggle_map(ctx);
+                    return;
+                }
+                if (ctx.input.key_pressed(KeyCode::Enter) || ctx.input.key_pressed(KeyCode::NumpadEnter)) && !self.free_camera {
+                    self.inventory_open = false;
+                    self.map_open = false;
+                    self.chat.start_typing();
+                    self.refresh_cursor(ctx);
+                    return;
+                }
+                if ctx.input.key_pressed(KeyCode::KeyM) && !self.free_camera {
+                    self.toggle_map(ctx);
                 }
                 if escape {
                     self.screen = Screen::Paused;
@@ -276,7 +317,7 @@ impl Playground {
                 }
                 // Linksklick: Werkzeug benutzen – mit dem Stab zaubern, mit der Spitzhacke abbauen (gedrückt halten).
                 let cast_cooldown = crate::world::CAST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT + 0.05;
-                if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open {
+                if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open && !self.map_open {
                     ctx.cursor_locked = true;
                 } else if ctx.cursor_locked && matches!(self.tool(), Tool::Pickaxe | Tool::Axe) && ctx.input.mouse(MouseButton::Left) {
                     self.harvest_aimed(ctx);
@@ -311,7 +352,7 @@ impl Playground {
             }
             Screen::Paused if escape => {
                 self.screen = Screen::Playing;
-                ctx.cursor_locked = !self.inventory_open;
+                self.refresh_cursor(ctx);
             }
             Screen::Settings if escape => self.close_settings(ctx),
             Screen::Join if escape => self.screen = Screen::MainMenu,
@@ -672,11 +713,16 @@ impl Playground {
                 continue;
             }
             if let Some(entity) = ctx.scene.try_get(avatar.entity) {
-                ui::name_tag(ctx, egui_ctx, entity.transform.position + Vec3::Y * 1.25, &avatar.name);
+                let head = entity.transform.position + Vec3::Y * 1.25;
+                ui::name_tag(ctx, egui_ctx, head, &avatar.name);
+                if let Some(text) = self.chat.bubble(id, ctx.time.elapsed) {
+                    crate::chat::speech_bubble(ctx, egui_ctx, head + Vec3::Y * 0.45, text);
+                }
             }
         }
 
-        if self.screen != Screen::Playing {
+        // Bei offener Karte nur die Karte (keine Leisten darüber)
+        if self.screen != Screen::Playing || self.map_open {
             return;
         }
         ui::time_bar(egui_ctx, session.day());
@@ -718,8 +764,8 @@ impl Playground {
         }
 
         let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · I Inventar · Tab Spieler · Esc Menü"
-        } else if self.inventory_open {
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · I Inventar · M Karte · Enter Chat · Esc Menü"
+        } else if self.inventory_open || self.map_open || self.chat.open {
             ""
         } else {
             "Klicken zum Spielen"
@@ -802,6 +848,23 @@ impl Game for Playground {
             self.hotbar_slot = Tool::Staff.slot();
         }
         // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
+        // Nur für Screenshots: Karte offen bzw. ein paar Chatzeilen
+        if let Some(position) = args.iter().position(|a| a == "--demo-karte") {
+            self.demo_map_near = args.get(position + 1).is_some_and(|a| a == "nah");
+            self.map_open = true;
+            self.refresh_cursor(ctx);
+        }
+        if args.iter().any(|a| a == "--demo-chat") {
+            use crate::world::ChatLine;
+            let now = ctx.time.elapsed;
+            self.chat.push(ChatLine::notice("Mira ist beigetreten".into()), now);
+            self.chat.push(ChatLine { from: Some(7), name: "Mira".into(), text: "Hallo! Wo habt ihr das Erz gefunden?".into() }, now);
+            self.chat.push(ChatLine { from: Some(0), name: self.settings.name.clone(), text: "Im Gebirge im Norden, schau auf die Karte (M)".into() }, now);
+            self.chat.push(ChatLine { from: Some(7), name: "Mira".into(), text: "Danke, bin unterwegs!".into() }, now);
+            self.chat.start_typing();
+            self.chat.prefill("Treffen wir uns am Bergsee?");
+            self.refresh_cursor(ctx);
+        }
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
@@ -972,6 +1035,11 @@ impl Game for Playground {
                 }
             }
             session.world_mut().update_visuals(ctx);
+            self.chat.collect(session.world_mut(), ctx.time.elapsed);
+            if std::mem::take(&mut self.demo_map_near) {
+                let spawn = session.world().spawn;
+                self.map_ui.focus(vec2(spawn.x, spawn.z), 3.5);
+            }
         } else if let Some(world) = &mut self.menu_world {
             world.update_visuals(ctx);
         }
@@ -1014,7 +1082,26 @@ impl Game for Playground {
             Screen::Connecting => self.connecting_screen(ctx, egui_ctx),
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
+            Screen::Playing if self.map_open => {
+                if let Some(session) = &self.session {
+                    if self.map_ui.show(ctx, egui_ctx, session.world(), session.local_player()) {
+                        self.toggle_map(ctx);
+                    }
+                }
+            }
             Screen::Playing => {}
+        }
+        if self.screen == Screen::Playing && !self.map_open {
+            match self.chat.show(egui_ctx, ctx.time.elapsed) {
+                crate::chat::ChatAction::Send(text) => {
+                    if let Some(session) = &mut self.session {
+                        session.send_chat(ctx, &text);
+                    }
+                    self.refresh_cursor(ctx);
+                }
+                crate::chat::ChatAction::Close => self.refresh_cursor(ctx),
+                crate::chat::ChatAction::None => {}
+            }
         }
     }
 }

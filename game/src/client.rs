@@ -44,6 +44,9 @@ pub struct Replica {
     class: CharacterClass,
     /// Rohstoffe, deren Treffer schon vorab gezeigt wurden (Takt der Vorschau).
     previewed: HashMap<u32, u64>,
+    /// Takt der Begrüßung: Mitspieler, die direkt danach gemeldet werden, waren schon da
+    /// (kein „… ist beigetreten“ für jeden).
+    welcomed_at: Option<u64>,
 }
 
 impl Replica {
@@ -53,6 +56,7 @@ impl Replica {
             name: hello.name.clone(),
             class: hello.class,
             previewed: HashMap::new(),
+            welcomed_at: None,
             local_id: None,
             next_seq: 1,
             pending: VecDeque::new(),
@@ -73,6 +77,13 @@ impl Replica {
 
     pub fn ping_ms(&self) -> f64 {
         self.net.ping() * 1000.0
+    }
+
+    /// Schickt eine Chatnachricht an den Server (der verteilt sie an alle, auch zurück an uns).
+    pub fn send_chat(&mut self, text: &str) {
+        if let Some(text) = clean_chat(text) {
+            self.net.send(Channel::Reliable, encode(&ClientMessage::Chat(text)));
+        }
     }
 
     /// Merkt sich, dass ein Treffer schon vorab gezeigt wurde.
@@ -118,14 +129,24 @@ impl Replica {
                 log::info!("Mit dem Server verbunden, meine Spieler-ID: {player_id}");
                 self.local_id = Some(player_id);
                 self.server_tick = Some(tick as f64);
+                self.welcomed_at = Some(ctx.time.tick);
                 let spawn = world.spawn;
                 world.spawn_player(ctx, player_id, &self.name, self.class, spawn);
             }
             ServerMessage::PlayerJoined { player_id, name, class } => {
+                if self.welcomed_at.is_some_and(|t| ctx.time.tick > t + 30) {
+                    world.chat_events.push(crate::world::ChatLine::notice(format!("{name} ist beigetreten")));
+                }
                 let spawn = world.spawn;
                 world.spawn_player(ctx, player_id, &name, class, spawn);
             }
-            ServerMessage::PlayerLeft { player_id } => world.remove_player(ctx, player_id),
+            ServerMessage::PlayerLeft { player_id } => {
+                if let Some(avatar) = world.players.get(&player_id) {
+                    world.chat_events.push(crate::world::ChatLine::notice(format!("{} hat das Spiel verlassen", avatar.name)));
+                }
+                world.remove_player(ctx, player_id);
+            }
+            ServerMessage::Chat { from, name, text } => world.chat_events.push(crate::world::ChatLine { from: Some(from), name, text }),
             ServerMessage::Spawn { id, kind, position, velocity, by: _ } => {
                 if !world.objects.contains_key(&id) {
                     world.spawn_object(ctx, id, kind, position, velocity);
