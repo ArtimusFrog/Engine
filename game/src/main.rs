@@ -6,6 +6,7 @@ mod asset_files;
 mod blender;
 mod characters;
 mod client;
+mod inventar;
 mod island;
 mod markierungen;
 mod models;

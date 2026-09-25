@@ -12,9 +12,6 @@ use crate::world::World;
 
 /// Nach so vielen Sekunden ohne Antwort gibt der Verbindungsaufbau auf.
 const CONNECT_TIMEOUT: f32 = 10.0;
-/// Plätze im Inventar-Fenster (Spalten × Reihen).
-const INVENTORY_COLUMNS: usize = 6;
-const INVENTORY_ROWS: usize = 4;
 /// Bis zu dieser Entfernung (Meter) haben Tiere einen Lebensbalken, verletzte auch weiter.
 const HEALTH_BAR_DISTANCE: f32 = 24.0;
 const HEALTH_BAR_DISTANCE_HURT: f32 = 45.0;
@@ -60,6 +57,8 @@ pub struct Playground {
     last_cast: f32,
     /// Inventar-Fenster offen (Taste I)?
     inventory_open: bool,
+    /// Symbole und Zustand des Inventar-Fensters.
+    inventory_ui: crate::inventar::InventoryUi,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
     themed: bool,
@@ -99,6 +98,7 @@ impl Playground {
             last_harvest: 0.0,
             last_cast: -10.0,
             inventory_open: false,
+            inventory_ui: Default::default(),
             autopilot,
             themed: false,
             local_ip: None,
@@ -313,89 +313,12 @@ impl Playground {
         }
     }
 
-    /// Kleine Übersicht unten rechts: was man dabei hat (ohne das Fenster zu öffnen).
-    fn inventory_hud(&self, egui_ctx: &egui::Context) {
-        let Some(session) = &self.session else { return };
-        let inventory = session.local_inventory();
-        egui::Area::new(egui::Id::new("inventar"))
-            .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
-            .interactable(false)
-            .show(egui_ctx, |ui| {
-                egui::Frame::new().fill(Color32::from_black_alpha(160)).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // Holz und Stein immer, Beute erst, wenn man welche hat.
-                        let shown = Item::ALL.into_iter().filter(|&item| matches!(item, Item::Wood | Item::Stone) || inventory.count(item) > 0);
-                        for item in shown {
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                            ui::item_icon(ui.painter(), rect, item);
-                            ui.label(RichText::new(format!("{}", inventory.count(item))).size(22.0).strong().color(Color32::WHITE));
-                            ui.add_space(8.0);
-                        }
-                        ui.label(RichText::new("[I]").size(14.0).strong().color(ui::ACCENT));
-                    });
-                });
-            });
-    }
-
-    /// Das Inventar-Fenster (Taste I): alle Gegenstände in Plätzen mit Anzahl.
+    /// Das Inventar-Fenster (Taste I) am rechten Bildschirmrand, siehe `inventar.rs`.
     fn inventory_window(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         let Some(session) = &self.session else { return };
         let inventory = session.local_inventory();
         let name = session.local_player().and_then(|id| session.world().players.get(&id)).map(|a| a.name.clone()).unwrap_or_default();
-        let items: Vec<(Item, u32)> = inventory.items().collect();
-        let mut close = false;
-        ui::dim_background(egui_ctx, 70);
-        ui::center_panel(egui_ctx, "inventar_fenster", INVENTORY_COLUMNS as f32 * 74.0, |ui| {
-            ui.horizontal(|ui| {
-                ui::heading(ui, "Inventar");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(RichText::new("Schließen").size(15.0)).on_hover_text("Taste I oder Esc").clicked() {
-                        close = true;
-                    }
-                    ui.label(RichText::new(&name).size(16.0).color(ui::MUTED));
-                });
-            });
-            ui.add_space(4.0);
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            egui::Grid::new("inventar_plaetze").spacing([8.0, 8.0]).show(ui, |ui| {
-                for slot in 0..INVENTORY_COLUMNS * INVENTORY_ROWS {
-                    let (rect, response) = ui.allocate_exact_size(egui::vec2(66.0, 66.0), egui::Sense::hover());
-                    let painter = ui.painter();
-                    let filled = items.get(slot);
-                    let hovered = response.hovered() && filled.is_some();
-                    painter.rect_filled(rect, 8.0, if hovered { Color32::from_rgb(52, 58, 72) } else { Color32::from_rgb(30, 34, 44) });
-                    painter.rect_stroke(
-                        rect,
-                        8.0,
-                        egui::Stroke::new(1.0, if hovered { ui::ACCENT } else { Color32::from_white_alpha(30) }),
-                        egui::StrokeKind::Inside,
-                    );
-                    if let Some(&(item, count)) = filled {
-                        ui::item_icon(painter, rect.shrink(12.0).translate(egui::vec2(0.0, -3.0)), item);
-                        let text = format!("{count}");
-                        let corner = rect.right_bottom() - egui::vec2(6.0, 3.0);
-                        let font = egui::FontId::proportional(17.0);
-                        painter.text(corner + egui::vec2(1.0, 1.0), Align2::RIGHT_BOTTOM, &text, font.clone(), Color32::BLACK);
-                        painter.text(corner, Align2::RIGHT_BOTTOM, &text, font, Color32::WHITE);
-                        response.on_hover_ui(|ui| {
-                            ui.label(RichText::new(item.label()).size(18.0).strong().color(Color32::WHITE));
-                            ui.label(RichText::new(item.description()).size(14.0).color(ui::MUTED));
-                        });
-                    }
-                    if slot % INVENTORY_COLUMNS == INVENTORY_COLUMNS - 1 {
-                        ui.end_row();
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            let hint = if items.is_empty() {
-                "Noch leer. Rechtsklick baut Holz und Stein ab, Linksklick zaubert – erlegte Tiere geben Fleisch, Fell und Wolle."
-            } else {
-                "Rechtsklick: Holz und Stein abbauen · Linksklick: Zauber auf Tiere"
-            };
-            ui.label(RichText::new(hint).size(14.0).color(ui::MUTED));
-        });
-        if close {
+        if self.inventory_ui.window(egui_ctx, &inventory, &name) {
             self.toggle_inventory(ctx);
         }
     }
@@ -706,7 +629,9 @@ impl Playground {
             ui::crosshair(egui_ctx);
         }
         self.aim_hud(egui_ctx);
-        self.inventory_hud(egui_ctx);
+        if !self.inventory_open {
+            self.inventory_ui.hud(egui_ctx, &session.local_inventory());
+        }
 
         // Status oben rechts
         egui::Area::new(egui::Id::new("status"))
@@ -817,8 +742,9 @@ impl Game for Playground {
             ctx.camera.pitch = -0.12;
             self.orbit.distance = 3.0;
         }
-        // Nur für Screenshots: Inventar mit etwas Beute geöffnet zeigen.
-        if args.iter().any(|a| a == "--demo-inventar") {
+        // Nur für Screenshots: etwas Beute ins Inventar legen (und es mit `--demo-inventar` öffnen).
+        let open_inventory = args.iter().any(|a| a == "--demo-inventar");
+        if open_inventory || args.iter().any(|a| a == "--demo-beute") {
             if let Some(session) = &mut self.session {
                 if let Some(local) = session.local_player() {
                     let inventory = session.world_mut().inventories.entry(local).or_default();
@@ -827,8 +753,8 @@ impl Game for Playground {
                     }
                 }
             }
-            self.inventory_open = true;
-            ctx.cursor_locked = false;
+            self.inventory_open = open_inventory;
+            ctx.cursor_locked = !open_inventory;
         }
         if args.iter().any(|a| a == "--kamera-vorne") {
             ctx.camera.yaw = std::f32::consts::PI;

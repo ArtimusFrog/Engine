@@ -17,6 +17,12 @@ pub struct Image {
 }
 
 impl Image {
+    /// Liest eine PNG-Datei (z. B. Symbole für die Benutzeroberfläche).
+    pub fn load_png(path: &std::path::Path) -> Result<Image, String> {
+        let image = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?.to_rgba8();
+        Ok(Image { width: image.width(), height: image.height(), rgba: image.into_raw() })
+    }
+
     /// Alle Mipmap-Stufen (Stufe 0 = das Bild selbst), für ruhige Texturen in der Ferne.
     ///
     /// Für Ausschnitt-Texturen (Blätter, Gras) zweierlei Besonderheiten:

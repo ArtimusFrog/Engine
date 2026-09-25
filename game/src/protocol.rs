@@ -135,7 +135,7 @@ pub struct Inventory {
 }
 
 /// Alles, was im Inventar liegen kann.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Item {
     Wood,
     Stone,
@@ -154,6 +154,31 @@ impl Item {
             Item::Meat => "Fleisch",
             Item::Pelt => "Fell",
             Item::Wool => "Wolle",
+        }
+    }
+
+    /// Dateiname des Symbols in `game/assets/icons/` (gerendert von `art/icons/gegenstaende.py`).
+    pub fn icon_file(self) -> &'static str {
+        match self {
+            Item::Wood => "holz",
+            Item::Stone => "stein",
+            Item::Meat => "fleisch",
+            Item::Pelt => "fell",
+            Item::Wool => "wolle",
+        }
+    }
+
+    /// Rohstoffe aus der Natur oder Beute von Tieren.
+    pub fn is_loot(self) -> bool {
+        matches!(self, Item::Meat | Item::Pelt | Item::Wool)
+    }
+
+    /// Art des Gegenstands (Zeile unter dem Namen im Tooltip).
+    pub fn kind_line(self) -> &'static str {
+        match self {
+            Item::Wood | Item::Stone => "Rohstoff · Baumaterial",
+            Item::Meat => "Tierbeute · Nahrung",
+            Item::Pelt | Item::Wool => "Tierbeute · Handwerksmaterial",
         }
     }
 
