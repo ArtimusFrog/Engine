@@ -16,8 +16,6 @@ pub struct Sounds {
     ore: SoundId,
     tree_falls: SoundId,
     rock_breaks: SoundId,
-    step_grass: SoundId,
-    step_sand: SoundId,
     crackle: SoundId,
     thunder: SoundId,
     rain: LoopId,
@@ -43,7 +41,6 @@ pub struct Sounds {
     pickup: SoundId,
     wind: LoopId,
     waves: LoopId,
-    birds: LoopId,
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
@@ -82,7 +79,6 @@ impl Sounds {
         let a = &mut ctx.audio;
         let wind = sound(a, "wind", wind);
         let waves = sound(a, "wellen", waves);
-        let birds = sound(a, "voegel", birds);
         let music = sound(a, "musik", music);
         Sounds {
             chop: sound(a, "hacken", chop),
@@ -90,8 +86,6 @@ impl Sounds {
             ore: sound(a, "erz", ore),
             tree_falls: sound(a, "baum_faellt", tree_falls),
             rock_breaks: sound(a, "fels_bricht", rock_breaks),
-            step_grass: sound(a, "schritt_gras", || step(0.18, 3)),
-            step_sand: sound(a, "schritt_sand", || step(0.45, 5)),
             crackle: sound(a, "knistern", crackle),
             thunder: sound(a, "donner", thunder),
             waterfall: {
@@ -123,7 +117,6 @@ impl Sounds {
             pickup: sound(a, "einsammeln", pickup),
             wind: a.start_loop(wind, Bus::Ambient),
             waves: a.start_loop(waves, Bus::Ambient),
-            birds: a.start_loop(birds, Bus::Ambient),
             music: a.start_loop(music, Bus::Music),
             rng: Rng::new(99),
             last_items: None,
@@ -197,11 +190,6 @@ impl Sounds {
                     };
                     ctx.audio.play(self.impact, Play { at: Some(at), volume, pitch, range: 40.0, ..Default::default() });
                 }
-                SoundEvent::Step { at, sand, running } => {
-                    let sound = if sand { self.step_sand } else { self.step_grass };
-                    let volume = if running { 0.55 } else { 0.35 };
-                    ctx.audio.play(sound, Play { at: Some(at), volume, pitch: self.rng.range(0.8, 1.2), range: 25.0, ..Default::default() });
-                }
             }
         }
 
@@ -217,15 +205,15 @@ impl Sounds {
         self.ambience(ctx, world);
     }
 
-    /// Wind je nach Höhe, Wellen nahe am Wasser, Vögel am Tag, Wasserfall, Möwen, Wölfe, Musik.
+    /// Wind je nach Höhe, Wellen nur direkt am Wasser, Wasserfall aus der Nähe, Möwen, Wölfe, Musik.
     fn ambience(&mut self, ctx: &mut Context, world: &World) {
         let camera = ctx.camera.position;
         let terrain = &world.terrain;
         let daylight = (world.day.sun_direction().y * 3.0 + 0.3).clamp(0.0, 1.0);
 
-        // Nächstes Wasser in der Umgebung suchen (grob, 16 Richtungen).
+        // Nächstes Meer in der Nähe suchen (grob, 16 Richtungen) – Wellen hört man nur direkt am Ufer.
         let mut water: Option<(f32, Vec3)> = None;
-        for ring in [10.0, 25.0, 45.0, 70.0] {
+        for ring in [4.0, 9.0, 15.0, 22.0] {
             for i in 0..16 {
                 let dir = Vec2::from_angle(i as f32 / 16.0 * std::f32::consts::TAU);
                 let p = vec2(camera.x, camera.z) + dir * ring;
@@ -240,22 +228,19 @@ impl Sounds {
         let over_water = terrain.height_at(camera.x, camera.z) < 0.0;
         let (shore, shore_at) = match water {
             _ if over_water => (1.0, None),
-            Some((distance, at)) => (1.0 - distance / 90.0, Some(at)),
+            Some((distance, at)) => (1.0 - distance / 28.0, Some(at)),
             None => (0.0, None),
         };
 
         let height = (camera.y - terrain.height_at(camera.x, camera.z).max(0.0)).max(0.0) + camera.y.max(0.0) * 0.5;
         let wind = 0.25 + (height / 40.0).clamp(0.0, 0.6);
         ctx.audio.set_loop(self.wind, wind, None, 1.0);
-        ctx.audio.set_loop(self.waves, shore.clamp(0.0, 1.0) * 0.8, shore_at, 120.0);
-        let inland = 1.0 - shore.clamp(0.0, 1.0) * 0.7;
-        // Bei Regen schweigen die Vögel, dafür rauscht es
+        ctx.audio.set_loop(self.waves, shore.clamp(0.0, 1.0) * 0.8, shore_at, 30.0);
         let rain = world.weather.state().rain;
         ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
-        ctx.audio.set_loop(self.birds, daylight * inland * 0.45 * (1.0 - rain), None, 1.0);
-        // Wasserfall: lautes Rauschen am Fuß, weit zu hören
+        // Wasserfall: Rauschen am Fuß, nur aus der Nähe zu hören
         match world.places.waterfall {
-            Some((_, foot)) => ctx.audio.set_loop(self.waterfall, 0.85, Some(foot), 60.0),
+            Some((_, foot)) => ctx.audio.set_loop(self.waterfall, 0.85, Some(foot), 25.0),
             None => ctx.audio.set_loop(self.waterfall, 0.0, None, 1.0),
         }
 
@@ -301,7 +286,7 @@ impl Sounds {
     pub fn menu(&mut self, ctx: &mut Context) {
         self.menu_music(ctx, 0.75);
         ctx.audio.set_loop(self.wind, 0.15, None, 1.0);
-        for quiet in [self.waves, self.birds, self.rain, self.waterfall, self.music_night, self.music_magic] {
+        for quiet in [self.waves, self.rain, self.waterfall, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
         ctx.audio.set_loop(self.music, if self.has_menu_music() { 0.0 } else { 0.5 }, None, 1.0);
@@ -374,13 +359,6 @@ fn rock_breaks() -> SoundBuffer {
         let grit = if pebbles.next() > 0.93 { pebbles.next() * envelope(t, 0.05, 0.4) * 0.6 } else { 0.0 };
         rumble + grit + sine(t, 60.0) * envelope(t, 0.005, 0.15) * 0.6
     })
-}
-
-/// Schritt: kurzes gefiltertes Rauschen (`brightness` 0..1, heller = Sand).
-fn step(brightness: f32, seed: u64) -> SoundBuffer {
-    let mut noise = Noise::new(seed);
-    let mut lp = LowPass::default();
-    render(0.12, |t| lp.next(noise.next(), brightness) * envelope(t, 0.004, 0.03) * 1.3)
 }
 
 /// Wasserfall: breites, kräftiges Rauschen, tief und hell gemischt (Schleife).
@@ -578,28 +556,6 @@ fn waves() -> SoundBuffer {
     buffer
 }
 
-/// Vögel: vereinzeltes Zwitschern mit Pausen.
-fn birds() -> SoundBuffer {
-    let mut rng = Rng::new(9);
-    // (Beginn, Grundton, Anzahl Silben) für ein paar Rufe über 16 Sekunden verteilt.
-    let calls: Vec<(f32, f32, u32)> = (0..9).map(|i| (i as f32 * 1.7 + rng.range(0.0, 1.0), rng.range(2400.0, 4200.0), 2 + rng.next_u32() % 4)).collect();
-    let mut buffer = render(16.0, |t| {
-        let mut s = 0.0;
-        for &(start, pitch, syllables) in &calls {
-            let local = t - start;
-            if local < 0.0 || local > syllables as f32 * 0.11 {
-                continue;
-            }
-            let syllable = local % 0.11;
-            let chirp = pitch * (1.0 + syllable * 5.0);
-            s += (local * chirp * std::f32::consts::TAU).sin() * envelope(syllable, 0.008, 0.025) * 0.25;
-        }
-        s
-    });
-    make_loopable(&mut buffer, 0.5);
-    buffer
-}
-
 /// Ruhige Musik: weiche Akkorde (Flächen) und eine gezupfte Pentatonik-Melodie.
 fn music() -> SoundBuffer {
     // Akkordfolge in D-Dur: D – Hm – G – A, je 6 Sekunden.
@@ -640,7 +596,7 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 22] = [
+    let all: [(&str, fn() -> SoundBuffer); 19] = [
         ("hacken", chop),
         ("stein", stone),
         ("erz", ore),
@@ -654,14 +610,11 @@ pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathB
         ("musik_zauberwald", music_magic),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
-        ("schritt_gras", || step(0.18, 3)),
-        ("schritt_sand", || step(0.45, 5)),
         ("zauber", cast),
         ("treffer", impact),
         ("einsammeln", pickup),
         ("wind", wind),
         ("wellen", waves),
-        ("voegel", birds),
         ("musik", music),
     ];
     std::fs::create_dir_all(dir)?;
@@ -705,14 +658,13 @@ mod tests {
 
     #[test]
     fn klaenge_sind_hoerbar_und_uebersteuern_nicht() {
-        let all: [(&str, SoundBuffer); 8] = [
+        let all: [(&str, SoundBuffer); 7] = [
             ("hacken", chop()),
             ("stein", stone()),
             ("baum_faellt", tree_falls()),
             ("fels_bricht", rock_breaks()),
             ("wind", wind()),
             ("wellen", waves()),
-            ("voegel", birds()),
             ("musik", music()),
         ];
         for (name, mut buffer) in all {

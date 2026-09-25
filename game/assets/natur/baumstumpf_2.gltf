@@ -20,9 +20,13 @@
 	],
 	"materials":[
 		{
+			"alphaMode":"MASK",
 			"doubleSided":true,
-			"name":"Vorkommen",
+			"name":"Baum",
 			"pbrMetallicRoughness":{
+				"baseColorTexture":{
+					"index":0
+				},
 				"metallicFactor":0,
 				"roughnessFactor":0.8500000238418579
 			}
@@ -36,79 +40,111 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"COLOR_0":2
+						"TEXCOORD_0":2,
+						"COLOR_0":3
 					},
-					"indices":3,
+					"indices":4,
 					"material":0
 				}
 			]
+		}
+	],
+	"textures":[
+		{
+			"sampler":0,
+			"source":0
+		}
+	],
+	"images":[
+		{
+			"mimeType":"image/png",
+			"name":"Laub_Textur",
+			"uri":"Laub_Textur.png"
 		}
 	],
 	"accessors":[
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":952,
+			"count":1453,
 			"max":[
-				0.5740686655044556,
-				0.5736784338951111,
-				0.4745047986507416
+				0.7144874930381775,
+				1.548189640045166,
+				0.6175427436828613
 			],
 			"min":[
-				-0.5740686655044556,
+				-0.7393242716789246,
 				0,
-				-0.4745047986507416
+				-0.7054469585418701
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":952,
+			"count":1453,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":952,
-			"type":"VEC3"
+			"count":1453,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
+			"componentType":5126,
+			"count":1453,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":4,
 			"componentType":5123,
-			"count":1512,
+			"count":2229,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":11424,
+			"byteLength":17436,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":11424,
-			"byteOffset":11424,
+			"byteLength":17436,
+			"byteOffset":17436,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":11424,
-			"byteOffset":22848,
+			"byteLength":11624,
+			"byteOffset":34872,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3024,
-			"byteOffset":34272,
+			"byteLength":17436,
+			"byteOffset":46496,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":4458,
+			"byteOffset":63932,
 			"target":34963
+		}
+	],
+	"samplers":[
+		{
+			"magFilter":9729,
+			"minFilter":9987
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":37296,
+			"byteLength":68392,
 			"uri":"baumstumpf_2.bin"
 		}
 	]

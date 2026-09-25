@@ -1,5 +1,5 @@
-"""Baumstumpf (siehe art/lib/lager.py)."""
+"""Baumstumpf im Mid-Poly-Stil der Bäume (siehe art/lib/totholz.py)."""
 
-from lager import baumstumpf
+from totholz import baumstumpf
 
-baumstumpf(seed=14)
+baumstumpf(seed=14, gebrochen=True)

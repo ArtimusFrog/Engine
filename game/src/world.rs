@@ -90,7 +90,6 @@ pub enum SoundEvent {
     Cast { player: PlayerId },
     /// Ein Zauber schlägt ein; `animal` = in ein Tier (sonst Boden, Baum oder Luft).
     Impact { at: Vec3, animal: bool, killed: bool },
-    Step { at: Vec3, sand: bool, running: bool },
     /// Holz knistert im Lagerfeuer.
     Crackle { at: Vec3 },
     /// Donner nach einem Blitz (überall zu hören).
@@ -152,7 +151,6 @@ pub struct World {
     /// Geräusche seit dem letzten Bild (siehe `SoundEvent`).
     pub sound_events: Vec<SoundEvent>,
     /// Zurückgelegte Strecke seit dem letzten Schritt je Spieler.
-    stride: HashMap<PlayerId, (Vec3, f32)>,
     /// Fliegende Zaubergeschosse (nur mit Fenster).
     bolts: Vec<Bolt>,
     /// Vögel, Möwen, Schmetterlinge, Fische (nur mit Fenster).
@@ -190,7 +188,6 @@ impl World {
             firefly_timer: 0.0,
             capsule,
             sound_events: Vec::new(),
-            stride: HashMap::new(),
             bolts: Vec::new(),
             wildlife: None,
             weather: Default::default(),
@@ -936,19 +933,6 @@ impl World {
             if let Some(puppet) = self.puppets.get_mut(id) {
                 let ground = self.terrain.height_at(position.x, position.z);
                 puppet.update(ctx, position, ground);
-                // Schritte: je nach Tempo alle gut ein bis zwei Meter, nur mit Bodenkontakt.
-                let (last, walked) = self.stride.entry(*id).or_insert((position, 0.0));
-                let moved = vec2(position.x - last.x, position.z - last.z).length();
-                *last = position;
-                let on_ground = position.y - 0.9 - ground < 0.3;
-                if on_ground && moved < 1.0 {
-                    *walked += moved;
-                }
-                let running = moved / dt.max(1e-4) > 6.5;
-                if *walked > if running { 1.7 } else { 1.05 } {
-                    *walked = 0.0;
-                    self.sound_events.push(SoundEvent::Step { at: vec3(position.x, ground, position.z), sand: ground < 2.4, running });
-                }
             }
         }
         for (id, avatar) in &self.players {

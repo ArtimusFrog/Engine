@@ -1,5 +1,5 @@
-"""Umgestürzter Baumstamm (siehe art/lib/lager.py)."""
+"""Umgestürzter Baumstamm im Mid-Poly-Stil der Bäume (siehe art/lib/totholz.py)."""
 
-from lager import baumstamm
+from totholz import baumstamm
 
 baumstamm(seed=12)
