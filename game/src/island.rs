@@ -594,7 +594,7 @@ pub fn build(ctx: &mut Context) -> Island {
                     (&lib.stone_nodes, "Steinvorkommen", ResourceKind::Stone, 5)
                 };
                 let (mesh, glow_part) = pick(list, rng);
-                let scale = rng.range(0.85, 1.2);
+                let scale = rng.range(1.15, 1.5);
                 ResourceSpec {
                     kind,
                     name,

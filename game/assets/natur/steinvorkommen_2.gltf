@@ -20,42 +20,11 @@
 	],
 	"materials":[
 		{
-			"name":"stein",
+			"doubleSided":true,
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.2541520893573761,
-					0.2345505803823471,
-					0.2015562504529953,
-					1
-				],
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"stein_hell",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.3967552185058594,
-					0.37123769521713257,
-					0.32314321398735046,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
-			}
-		},
-		{
-			"name":"stein_dunkel",
-			"pbrMetallicRoughness":{
-				"baseColorFactor":[
-					0.13286831974983215,
-					0.12213877588510513,
-					0.10702310502529144,
-					1
-				],
-				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -66,26 +35,11 @@
 				{
 					"attributes":{
 						"POSITION":0,
-						"NORMAL":1
+						"NORMAL":1,
+						"COLOR_0":2
 					},
-					"indices":2,
+					"indices":3,
 					"material":0
-				},
-				{
-					"attributes":{
-						"POSITION":3,
-						"NORMAL":4
-					},
-					"indices":5,
-					"material":1
-				},
-				{
-					"attributes":{
-						"POSITION":6,
-						"NORMAL":7
-					},
-					"indices":8,
-					"material":2
 				}
 			]
 		}
@@ -94,147 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":501,
+			"count":9096,
 			"max":[
-				0.5331225395202637,
-				0.8161174654960632,
-				0.7262120246887207
+				1.0571227073669434,
+				0.8891348838806152,
+				0.9379658699035645
 			],
 			"min":[
-				-0.8182973861694336,
+				-1.0571227073669434,
 				0,
-				-0.7329789400100708
+				-0.9379658699035645
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":501,
+			"count":9096,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
-			"componentType":5123,
-			"count":561,
-			"type":"SCALAR"
+			"componentType":5126,
+			"count":9096,
+			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
-			"componentType":5126,
-			"count":159,
-			"max":[
-				0.4570969045162201,
-				0.9671840667724609,
-				0.6694134473800659
-			],
-			"min":[
-				-0.8122683763504028,
-				0.09781967848539352,
-				-0.72670578956604
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":4,
-			"componentType":5126,
-			"count":159,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":5,
 			"componentType":5123,
-			"count":159,
-			"type":"SCALAR"
-		},
-		{
-			"bufferView":6,
-			"componentType":5126,
-			"count":420,
-			"max":[
-				0.998111367225647,
-				0.11927489191293716,
-				1.0432472229003906
-			],
-			"min":[
-				-0.998111367225647,
-				0,
-				-1.0432472229003906
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":7,
-			"componentType":5126,
-			"count":420,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":8,
-			"componentType":5123,
-			"count":420,
+			"count":9096,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":6012,
+			"byteLength":109152,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6012,
-			"byteOffset":6012,
+			"byteLength":109152,
+			"byteOffset":109152,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1122,
-			"byteOffset":12024,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":1908,
-			"byteOffset":13148,
+			"byteLength":109152,
+			"byteOffset":218304,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1908,
-			"byteOffset":15056,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":318,
-			"byteOffset":16964,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":5040,
-			"byteOffset":17284,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":5040,
-			"byteOffset":22324,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":840,
-			"byteOffset":27364,
+			"byteLength":18192,
+			"byteOffset":327456,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":28204,
+			"byteLength":345648,
 			"uri":"steinvorkommen_2.bin"
 		}
 	]
