@@ -12,7 +12,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 4;
+pub const WORLD_ID: u32 = SEED + 5;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 330.0;
 const TERRAIN_SIZE: f32 = 880.0;
@@ -72,6 +72,8 @@ pub struct Island {
     pub crystals: Vec<Vec3>,
     /// Gezeichnete Übersichtskarte (nur mit Fenster).
     pub map: Option<Image>,
+    /// Besondere Orte (Lager, Sehenswürdigkeiten): Feuer und Wegweiser.
+    pub places: crate::orte::Places,
 }
 
 /// Die Übersichtskarte zeigt ±`MAP_EXTENT` Meter um die Inselmitte (Norden = -z oben).
@@ -642,6 +644,9 @@ pub fn build(ctx: &mut Context) -> Island {
     let lib = Library::load(ctx);
     let mut resources = Vec::new();
     let mut crystals = Vec::new();
+    let mut places = crate::orte::Places::default();
+    crate::orte::build_camp(ctx, &terrain, spawn, &mut places, &landmarks());
+    let camp = crate::orte::camp_center(spawn);
 
 
     let spacing = 3.2;
@@ -665,7 +670,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let slope = 1.0 - normal.y;
             let base = vec3(p.x, h, p.y);
             // Auf Wegen und um den Startpunkt wächst nichts Großes.
-            let clearing = base.distance(spawn) < SPAWN_CLEARING || paths.at(p) > 0.15;
+            let clearing = base.distance(spawn) < SPAWN_CLEARING || p.distance(camp) < crate::orte::CAMP_RADIUS || paths.at(p) > 0.15;
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
@@ -807,7 +812,7 @@ pub fn build(ctx: &mut Context) -> Island {
                         continue;
                     }
                     let q = vec2(x + rng.range(-1.6, 1.6), z + rng.range(-1.6, 1.6));
-                    if paths.at(q) > 0.3 || (node_here && q.distance(p) < 1.8) {
+                    if paths.at(q) > 0.3 || (node_here && q.distance(p) < 1.8) || q.distance(camp) < crate::orte::CAMP_RADIUS - 1.0 {
                         continue;
                     }
                     let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
@@ -833,7 +838,7 @@ pub fn build(ctx: &mut Context) -> Island {
         log::info!("Übersichtskarte in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
         image
     });
-    Island { terrain, resources, spawn, crystals, map }
+    Island { terrain, resources, spawn, crystals, map, places }
 }
 
 /// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich

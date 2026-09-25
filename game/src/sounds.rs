@@ -18,6 +18,7 @@ pub struct Sounds {
     rock_breaks: SoundId,
     step_grass: SoundId,
     step_sand: SoundId,
+    crackle: SoundId,
     cast: SoundId,
     impact: SoundId,
     pickup: SoundId,
@@ -64,6 +65,7 @@ impl Sounds {
             rock_breaks: sound(a, "fels_bricht", rock_breaks),
             step_grass: sound(a, "schritt_gras", || step(0.18, 3)),
             step_sand: sound(a, "schritt_sand", || step(0.45, 5)),
+            crackle: sound(a, "knistern", crackle),
             cast: sound(a, "zauber", cast),
             impact: sound(a, "treffer", impact),
             pickup: sound(a, "einsammeln", pickup),
@@ -93,6 +95,10 @@ impl Sounds {
                     if finished {
                         ctx.audio.play(done, Play { at: Some(at + Vec3::Y), volume: 0.9, range: 70.0, ..Default::default() });
                     }
+                }
+                SoundEvent::Crackle { at } => {
+                    let volume = self.rng.range(0.25, 0.5);
+                    ctx.audio.play(self.crackle, Play { at: Some(at), volume, pitch: self.rng.range(0.8, 1.3), range: 22.0, ..Default::default() });
                 }
                 SoundEvent::Cast { player } => {
                     let at = world.player_position(ctx, player);
@@ -248,6 +254,20 @@ fn step(brightness: f32, seed: u64) -> SoundBuffer {
     render(0.12, |t| lp.next(noise.next(), brightness) * envelope(t, 0.004, 0.03) * 1.3)
 }
 
+/// Lagerfeuer: ein paar kurze, trockene Knackser mit leisem Rauschen dazwischen.
+fn crackle() -> SoundBuffer {
+    let mut noise = Noise::new(21);
+    let mut lp = LowPass::default();
+    let mut pops = Noise::new(22);
+    let knacks: Vec<(f32, f32)> = (0..5).map(|i| (0.04 + i as f32 * 0.09 + pops.next().abs() * 0.05, 0.4 + pops.next().abs() * 0.6)).collect();
+    render(0.55, |t| {
+        let n = noise.next();
+        let rauschen = lp.next(n, 0.08) * 0.12 * envelope(t, 0.05, 0.4);
+        let knack: f32 = knacks.iter().map(|&(at, laut)| if t >= at { (n - lp.next(n, 0.5) * 0.0) * envelope(t - at, 0.0005, 0.008) * laut } else { 0.0 }).sum();
+        rauschen + knack
+    })
+}
+
 /// Zauber: schimmernder, aufsteigender Klang mit einem Luftzug, wenn das Geschoss losfliegt.
 fn cast() -> SoundBuffer {
     let mut noise = Noise::new(6);
@@ -383,10 +403,11 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 14] = [
+    let all: [(&str, fn() -> SoundBuffer); 15] = [
         ("hacken", chop),
         ("stein", stone),
         ("erz", ore),
+        ("knistern", crackle),
         ("baum_faellt", tree_falls),
         ("fels_bricht", rock_breaks),
         ("schritt_gras", || step(0.18, 3)),

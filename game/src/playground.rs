@@ -708,6 +708,12 @@ impl Playground {
         let Some(session) = &self.session else { return };
         let local = session.local_player();
 
+        // Wegweiser: aus der Nähe steht an jedem Brett, wohin es zeigt
+        for &(tip, name) in &session.world().places.signs {
+            if ctx.camera.position.distance(tip) < 12.0 {
+                ui::name_tag(ctx, egui_ctx, tip, name);
+            }
+        }
         for (&id, avatar) in &session.world().players {
             if Some(id) == local {
                 continue;

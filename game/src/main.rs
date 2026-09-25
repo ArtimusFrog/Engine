@@ -12,6 +12,7 @@ mod island;
 mod karte;
 mod markierungen;
 mod models;
+mod orte;
 mod playground;
 mod protocol;
 mod server;

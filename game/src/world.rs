@@ -91,6 +91,8 @@ pub enum SoundEvent {
     /// Ein Zauber schlägt ein; `animal` = in ein Tier (sonst Boden, Baum oder Luft).
     Impact { at: Vec3, animal: bool, killed: bool },
     Step { at: Vec3, sand: bool, running: bool },
+    /// Holz knistert im Lagerfeuer.
+    Crackle { at: Vec3 },
 }
 
 /// Ein fliegendes Zaubergeschoss (nur Optik; ob es trifft, entscheidet der Server).
@@ -123,6 +125,10 @@ pub struct World {
     pub chat_events: Vec<ChatLine>,
     /// Gezeichnete Übersichtskarte (nur mit Fenster), siehe `island::map_image`.
     pub map: Option<Image>,
+    /// Besondere Orte: Lagerfeuer und Wegweiser.
+    pub places: crate::orte::Places,
+    /// Zeit bis zum nächsten Knistern eines Lagerfeuers.
+    crackle_timer: f32,
     /// Geworfene Bälle, die übers Netzwerk abgeglichen werden.
     pub objects: BTreeMap<NetId, NetObject>,
     pub resources: BTreeMap<u32, Resource>,
@@ -168,6 +174,8 @@ impl World {
             crystals: island.crystals,
             chat_events: Vec::new(),
             map: island.map,
+            places: island.places,
+            crackle_timer: 0.0,
             spawn: island.spawn + Vec3::Y * 1.2,
             terrain: island.terrain,
             animals,
@@ -636,6 +644,84 @@ impl World {
         }
     }
 
+    /// Lagerfeuer in der Nähe: Flammen, Funken, Rauch, flackerndes warmes Licht und Knistern.
+    fn campfires(&mut self, ctx: &mut Context) {
+        let camera = ctx.camera.position;
+        let night = ctx.env.sky.stars;
+        let t = ctx.time.elapsed;
+        let dt = ctx.time.delta;
+        self.crackle_timer -= dt;
+        for &fire in &self.places.fires {
+            let distance = fire.distance(camera);
+            if distance > 80.0 {
+                continue;
+            }
+            // Flackern aus mehreren Sinuswellen
+            let flicker = 0.82 + 0.1 * (t * 11.0).sin() + 0.06 * (t * 23.0 + 1.3).sin() + 0.04 * (t * 37.0).sin();
+            ctx.lights.push(PointLight { position: fire + Vec3::Y * 0.7, color: vec3(3.0, 1.35, 0.45) * (0.5 + night * 1.1) * flicker, radius: 11.0 });
+            if distance > 45.0 {
+                continue;
+            }
+            let rng = &mut self.effects_rng;
+            // Flammen: viele kurze, leuchtende Teilchen, die aufsteigen und kleiner werden
+            for _ in 0..2 {
+                let offset = vec3(rng.range(-0.22, 0.22), rng.range(0.08, 0.25), rng.range(-0.22, 0.22));
+                ctx.particles.burst(Burst {
+                    position: fire + offset,
+                    count: 1,
+                    color: vec3(1.0, 0.28, 0.03).lerp(vec3(1.0, 0.55, 0.1), rng.range(0.0, 1.0)),
+                    color_variation: 0.06,
+                    speed: 0.3,
+                    direction: Vec3::Y * 1.2,
+                    size: rng.range(0.11, 0.2),
+                    life: rng.range(0.4, 0.65),
+                    gravity: -2.0,
+                    glow: 1.6,
+                    grow: 0.0,
+                    round: true,
+                });
+            }
+            // Funken
+            if rng.chance(dt * 6.0) {
+                ctx.particles.burst(Burst {
+                    position: fire + Vec3::Y * 0.3,
+                    count: 1,
+                    color: vec3(1.0, 0.7, 0.3),
+                    color_variation: 0.1,
+                    speed: 1.2,
+                    direction: Vec3::Y * 1.5,
+                    size: 0.035,
+                    life: 1.4,
+                    gravity: -0.8,
+                    glow: 7.0,
+                    grow: 0.0,
+                    round: false,
+                });
+            }
+            // Rauch: weich, grau, wächst und zieht langsam nach oben
+            if rng.chance(dt * 2.5) {
+                ctx.particles.burst(Burst {
+                    position: fire + Vec3::Y * 1.1,
+                    count: 1,
+                    color: vec3(0.14, 0.135, 0.13),
+                    color_variation: 0.04,
+                    speed: 0.2,
+                    direction: vec3(0.15, 1.0, 0.05),
+                    size: 0.16,
+                    life: 3.0,
+                    gravity: -0.4,
+                    glow: 0.0,
+                    grow: 2.0,
+                    round: true,
+                });
+            }
+            if distance < 25.0 && self.crackle_timer <= 0.0 {
+                self.crackle_timer = rng.range(0.25, 0.9);
+                self.sound_events.push(SoundEvent::Crackle { at: fire + Vec3::Y * 0.3 });
+            }
+        }
+    }
+
     /// Mitte der Kristallvorkommen (am Boden).
     pub fn crystals(&self) -> &[Vec3] {
         &self.crystals
@@ -681,6 +767,7 @@ impl World {
         self.day.apply(&mut ctx.env);
         self.fireflies(ctx);
         self.crystal_glow(ctx);
+        self.campfires(ctx);
         self.update_bolts(ctx);
         for animal in &mut self.animals {
             animal.update_visual(ctx);

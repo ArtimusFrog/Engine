@@ -39,7 +39,7 @@ def _objekt(name, bm, farbe_von):
     attr = mesh.color_attributes.new("Farbe", "FLOAT_COLOR", "CORNER")
     fasen = mesh.attributes.get("fase")
     for poly in mesh.polygons:
-        c = farbe_von(poly, bool(fasen and fasen.data[poly.index].value))
+        c = farbe_von(poly, fasen.data[poly.index].value if fasen else 0)
         for li in poly.loop_indices:
             attr.data[li].color = (c.x, c.y, c.z, 1.0)
         poly.use_smooth = False
