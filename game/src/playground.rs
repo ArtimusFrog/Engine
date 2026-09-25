@@ -387,6 +387,16 @@ impl Playground {
             self.fly.update(ctx);
             return;
         }
+        // Nur für Screenshots: feste Kamera `--kamera x,y,z,gier,neigung` (Grad)
+        if let Some(werte) = std::env::args().skip_while(|a| a != "--kamera").nth(1) {
+            let v: Vec<f32> = werte.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            if v.len() == 5 {
+                ctx.camera.position = vec3(v[0], v[1], v[2]);
+                ctx.camera.yaw = v[3].to_radians();
+                ctx.camera.pitch = v[4].to_radians();
+                return;
+            }
+        }
         let Some(avatar) = session.local_player().and_then(|id| session.world().players.get(&id)) else { return };
         let Some(entity) = ctx.scene.try_get(avatar.entity) else { return };
         let target = entity.transform.position + Vec3::Y * 0.6;

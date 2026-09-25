@@ -12,7 +12,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 6;
+pub const WORLD_ID: u32 = SEED + 7;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 520.0;
 /// Maßstab gegenüber der ersten, kleineren Insel (330 m): Bach und See wachsen mit.
@@ -86,7 +86,7 @@ const MAP_SIZE: usize = 2048;
 pub fn landmarks() -> [(&'static str, Vec2); 3] {
     [
         ("Bergsee", LAKE_CENTER),
-        ("Tafelberg", vec2(0.45 * ISLAND_RADIUS, 0.15 * ISLAND_RADIUS)),
+        (BURG_NAME, BURG_ORT),
         ("Nebelgebirge", vec2(0.05 * ISLAND_RADIUS, -0.62 * ISLAND_RADIUS)),
     ]
 }
@@ -121,7 +121,7 @@ fn map_image(terrain: &Terrain, paths: &Paths, trees: &[Vec2]) -> Image {
                         let mut c = ground_color(vec3(p.x, h, p.y), n) * shade * contour;
                         let path = paths.at(p) * smoothstep(2.3, 3.0, h);
                         c = c.lerp(vec3(0.3, 0.18, 0.08), smoothstep(0.3, 0.6, path));
-                        c
+                        burg_karte(p).map_or(c, |burg| burg * shade)
                     };
                     let mut srgb = linear.to_array().map(linear_to_srgb);
                     // Küstenlinie
@@ -485,8 +485,145 @@ pub fn stream_distance(p: Vec2) -> f32 {
     stream_nearest(p).0
 }
 
-/// Höhe der Landschaft an (x, z) – mit eingegrabenem Bach.
+// ---------------------------------------------------------------------------
+// Burg Grünfels auf dem Tafelberg
+// ---------------------------------------------------------------------------
+
+/// Ursprung des Burgmodells (Mitte der Burg) und Höhe des Plateaus, auf dem sie steht.
+pub const BURG_ORT: Vec2 = vec2(0.45 * ISLAND_RADIUS + 25.0, 0.15 * ISLAND_RADIUS);
+pub const BURG_HOEHE: f32 = 23.5;
+pub const BURG_NAME: &str = "Burg Grünfels";
+
+/// Modellkoordinaten der Burganlage (Engine-Achsen x, z; das Tor liegt bei +z) → Welt.
+/// Das Tor zeigt nach Westen, zum Startlager hin.
+pub fn burg_welt(l: Vec2) -> Vec2 {
+    BURG_ORT + vec2(-l.y, l.x)
+}
+
+fn burg_lokal(p: Vec2) -> Vec2 {
+    let d = p - BURG_ORT;
+    vec2(d.y, -d.x)
+}
+
+/// Drehung des Modells: lokales +Z (Tor) zeigt nach Westen (-X).
+pub fn burg_drehung() -> Quat {
+    Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+}
+
+/// Abstand zum Rand des Plateaus (negativ = oben drauf): abgerundetes Rechteck um Ringmauer,
+/// Torhaus mit Vorplatz und Marktplatz.
+pub fn burg_rand(p: Vec2) -> f32 {
+    let l = burg_lokal(p) - vec2(0.0, 25.0);
+    let q = l.abs() - vec2(50.0, 48.0);
+    q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0) - 20.0
+}
+
+/// Die Auffahrt in Modellkoordinaten: ebener Absatz vor dem Tor, dann in einem Bogen am Hang
+/// entlang hinab bis in die Ebene.
+const BURG_WEG: [Vec2; 6] = [vec2(0.0, 86.0), vec2(0.0, 104.0), vec2(12.0, 117.0), vec2(36.0, 127.0), vec2(70.0, 133.0), vec2(118.0, 134.0)];
+/// Halbe Breite der Fahrbahn (daneben Böschungen)
+const BURG_WEG_BREITE: f32 = 4.5;
+
+/// Höhe der Auffahrt an jedem Punkt von BURG_WEG: oben auf dem Plateau, dann gleichmäßig
+/// fallend bis zum Gelände am Fuß.
+fn burg_weg_hoehen() -> &'static [f32; 6] {
+    static HOEHEN: std::sync::OnceLock<[f32; 6]> = std::sync::OnceLock::new();
+    HOEHEN.get_or_init(|| {
+        let mut laenge = [0.0f32; 6];
+        for i in 1..6 {
+            laenge[i] = laenge[i - 1] + BURG_WEG[i].distance(BURG_WEG[i - 1]);
+        }
+        let fuss = height_raw(burg_welt(BURG_WEG[5])).max(1.5) + 0.2;
+        let mut hoehen = [BURG_HOEHE; 6];
+        for i in 2..6 {
+            let t = (laenge[i] - laenge[1]) / (laenge[5] - laenge[1]);
+            hoehen[i] = BURG_HOEHE + (fuss - BURG_HOEHE) * t;
+        }
+        hoehen
+    })
+}
+
+/// Abstand zur Mittellinie der Auffahrt und die Höhe der Fahrbahn an der nächsten Stelle.
+pub fn burg_weg(p: Vec2) -> (f32, f32) {
+    let l = burg_lokal(p);
+    let hoehen = burg_weg_hoehen();
+    let mut best = (f32::MAX, 0.0);
+    for i in 0..BURG_WEG.len() - 1 {
+        let (a, b) = (BURG_WEG[i], BURG_WEG[i + 1]);
+        let ab = b - a;
+        let t = ((l - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+        let d = l.distance(a + ab * t);
+        if d < best.0 {
+            best = (d, hoehen[i] + (hoehen[i + 1] - hoehen[i]) * t);
+        }
+    }
+    best
+}
+
+/// Unterer Endpunkt der Auffahrt (Ziel des Trampelpfads vom Lager).
+pub fn burg_weg_fuss() -> Vec2 {
+    burg_welt(BURG_WEG[BURG_WEG.len() - 1])
+}
+
+/// Auf dem Plateau und der Auffahrt wächst nichts und steht nichts anderes.
+pub fn burg_frei(p: Vec2) -> bool {
+    burg_rand(p) < 12.0 || burg_weg(p).0 < BURG_WEG_BREITE + 7.0
+}
+
+/// Burgberg: oben eben, zu den Seiten steile, zerklüftete Hänge; dazu die Auffahrt mit Böschungen.
+fn burgberg(p: Vec2, h: f32) -> f32 {
+    let d = burg_rand(p);
+    if d > 170.0 {
+        return h;
+    }
+    let mut out = h;
+    if d < 45.0 {
+        let rau = fbm(p * 0.07, 2, SEED + 41) * 2.0 * smoothstep(2.0, 12.0, d);
+        let hang = BURG_HOEHE - d.max(0.0) * 0.85 + rau;
+        let ziel = h.max(hang);
+        out = ziel + (BURG_HOEHE - ziel) * (1.0 - smoothstep(0.0, 8.0, d));
+    }
+    let (abstand, weg) = burg_weg(p);
+    if abstand < BURG_WEG_BREITE + 9.0 {
+        let w = 1.0 - smoothstep(BURG_WEG_BREITE, BURG_WEG_BREITE + 9.0, abstand);
+        out += (weg - out) * w;
+    }
+    out
+}
+
+/// Karte: Mauerring mit Türmen, Burg mit grünem Dach, Markthäuser mit roten Dächern, Pflaster.
+fn burg_karte(p: Vec2) -> Option<Vec3> {
+    if burg_rand(p) > 0.0 {
+        return None;
+    }
+    let l = burg_lokal(p);
+    let turm = [(-60.0, -32.0), (60.0, -32.0), (-60.0, 75.0), (60.0, 75.0), (-7.6, 76.2), (7.6, 76.2)]
+        .iter()
+        .any(|&(x, z)| l.distance(vec2(x, z)) < 5.5);
+    let mauer = ((l.x.abs() - 60.0).abs() < 1.6 && (-33.6..76.6).contains(&l.y))
+        || (((l.y + 32.0).abs() < 1.6 || (l.y - 75.0).abs() < 1.6) && l.x.abs() < 61.6);
+    let burg = (l.x.abs() < 24.5 && l.y.abs() < 12.0) || (l.x.abs() < 4.4 && (0.0..15.5).contains(&l.y));
+    let tuerme = l.distance(vec2(-28.0, 9.5)) < 4.5 || l.distance(vec2(28.3, 6.0)) < 5.0;
+    let haeuser = (-57.0..-49.0).contains(&l.x) && (27.0..62.0).contains(&l.y);
+    Some(if turm || tuerme {
+        vec3(0.2, 0.42, 0.26)
+    } else if mauer {
+        vec3(0.36, 0.3, 0.24)
+    } else if burg {
+        vec3(0.26, 0.52, 0.3)
+    } else if haeuser {
+        vec3(0.55, 0.22, 0.14)
+    } else {
+        vec3(0.5, 0.46, 0.4)
+    })
+}
+
+/// Höhe der Landschaft an (x, z) – mit eingegrabenem Bach und dem Burgberg.
 pub fn height(p: Vec2) -> f32 {
+    burgberg(p, height_mit_bach(p))
+}
+
+fn height_mit_bach(p: Vec2) -> f32 {
     let raw = height_raw(p);
     let (d, i, u) = stream_nearest(p);
     if d > STREAM_BANK + 8.0 {
@@ -575,9 +712,8 @@ impl Paths {
         let mut targets = Vec::new();
         // Seeufer auf der Seite zum Startpunkt
         targets.push(LAKE_CENTER + (start - LAKE_CENTER).normalize() * (LAKE_RADIUS + 9.0));
-        // Fuß des Tafelbergs
-        let east = vec2(0.45 * r, 0.15 * r);
-        targets.push(east + (start - east).normalize() * (0.22 * r + 14.0));
+        // Fuß der Auffahrt zur Burg auf dem Tafelberg
+        targets.push(burg_weg_fuss() + (start - burg_weg_fuss()).normalize_or(Vec2::X) * 3.0);
         // Strand: vom Startpunkt nach außen, bis der Sand beginnt
         let outward = start.normalize_or(Vec2::Y);
         if let Some(beach) = find_along(terrain, start, outward, |h| h < 2.6) {
@@ -592,6 +728,11 @@ impl Paths {
         if trails.len() >= 4 {
             let (from, to) = (*trails[0].last().expect("Weg hat Punkte"), *trails[3].last().expect("Weg hat Punkte"));
             trails.push(trail(terrain, from, to, 9));
+        }
+        // Die Auffahrt selbst: breiter, festgefahrener Weg
+        let weg: Vec<Vec2> = BURG_WEG.iter().map(|&l| burg_welt(l)).collect();
+        for pair in weg.windows(2) {
+            paths.stamp(pair[0], pair[1], 3.4);
         }
         for (index, trail) in trails.iter().enumerate() {
             for (k, pair) in trail.windows(2).enumerate() {
@@ -828,6 +969,10 @@ fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
     for iz in 0..=steps {
         for ix in 0..=steps {
             let p = vec2(-r + ix as f32 * 6.0, -r + iz as f32 * 6.0);
+            // Rund um die Burg und ihre Auffahrt ist kein Platz für andere Orte
+            if burg_rand(p) < 30.0 || burg_weg(p).0 < 15.0 {
+                continue;
+            }
             if let Some(s) = score(p) {
                 if best.is_none_or(|(b, _)| s > b) {
                     best = Some((s, p));
@@ -872,10 +1017,17 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
     let start = vec2(spawn.x, spawn.z);
     let h = |p: Vec2| terrain.height_at(p.x, p.y);
     let near_sea = |p: Vec2, d: f32| DIRECTIONS.iter().any(|&dir| h(p + dir * d) < -0.5);
-    // Wachturm: auf der ebenen Kuppe des Tafelbergs, Tor Richtung Startlager
-    let east = vec2(0.45 * ISLAND_RADIUS, 0.15 * ISLAND_RADIUS);
+    // Wachturm: auf einer ebenen Anhöhe fern vom Lager (der Tafelberg trägt jetzt die Burg),
+    // Tor Richtung Startlager
     let tower = best_spot(|p| {
-        (p.distance(east) < 40.0 && unevenness(terrain, p, 4.0) < 0.9).then(|| h(p) - p.distance(east) * 0.05)
+        let height = h(p);
+        ((9.0..20.0).contains(&height)
+            && p.distance(start) > 140.0
+            && p.distance(camp) > 140.0
+            && !in_lake(p)
+            && magic(p) < 0.58
+            && unevenness(terrain, p, 4.0) < 0.9)
+            .then(|| height - p.distance(vec2(0.0, 0.1 * ISLAND_RADIUS)) * 0.03)
     })
     .map(|p| (p, (camp - p).normalize_or(Vec2::X)));
     // Steinkreis: ebene Lichtung tief im Zauberwald
@@ -1137,11 +1289,12 @@ pub fn build(ctx: &mut Context) -> Island {
     let mut crystals = Vec::new();
     let mut places = crate::orte::Places::default();
     crate::orte::build_camp(ctx, &terrain, spawn, &mut places, &landmarks());
+    crate::orte::build_castle(ctx, &mut places);
     let camp = crate::orte::camp_center(spawn);
     let spots = find_sights(&terrain, spawn, camp);
     let mut blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
     blocked.extend(build_stream(ctx, &terrain, &paths, &mut places));
-    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r);
+    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p);
 
 
     let spacing = 3.2;
@@ -1436,5 +1589,39 @@ mod bach_test {
                 assert!(bank >= water - 0.05, "Abschnitt {i} bei {u:.1}: Wasser {water:.1} über dem Ufer {bank:.1}");
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod burg_test {
+    use super::*;
+
+    #[test]
+    fn burg_steht_auf_dem_plateau_und_die_mauer_ist_fest() {
+        let mut ctx = Context::headless();
+        let world = crate::world::World::new(&mut ctx);
+        // Ein Physiktakt, damit neue Kollisionskörper für Strahlen sichtbar werden
+        struct Leer;
+        impl Game for Leer {
+            fn init(&mut self, _: &mut Context) {}
+            fn update(&mut self, _: &mut Context) {}
+        }
+        ctx.fixed_tick(&mut Leer);
+        // Mitte des Vorhofs (Brunnenplatz) liegt genau auf Plateauhöhe
+        let hof = burg_welt(vec2(0.0, 48.0));
+        assert!((world.terrain.height_at(hof.x, hof.y) - BURG_HOEHE).abs() < 0.3);
+        // Von außen waagerecht gegen die Ringmauer neben dem Tor (Außenseite bei 76,3 m)
+        let vor = burg_welt(vec2(-20.0, 85.0));
+        let innen = burg_welt(vec2(-20.0, 70.0));
+        let from = vec3(vor.x, BURG_HOEHE + 3.0, vor.y);
+        let direction = (vec3(innen.x, BURG_HOEHE + 3.0, innen.y) - from).normalize();
+        let hit = ctx.physics.raycast(from, direction, 30.0, None);
+        assert!(hit.is_some_and(|(_, d)| (d - 8.7).abs() < 1.0), "Mauer nicht getroffen: {hit:?}");
+        // Durch das offene Tor kommt man hinein (das Fallgitter hängt oben)
+        let tor = burg_welt(vec2(0.0, 85.0));
+        let from = vec3(tor.x, BURG_HOEHE + 1.0, tor.y);
+        let hit = ctx.physics.raycast(from, direction, 20.0, None);
+        assert!(hit.is_none_or(|(_, d)| d > 14.0), "Tor versperrt: {hit:?}");
     }
 }

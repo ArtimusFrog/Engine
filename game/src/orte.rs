@@ -109,6 +109,77 @@ pub fn build_camp(ctx: &mut Context, terrain: &Terrain, spawn: Vec3, places: &mu
 }
 
 // ---------------------------------------------------------------------------
+// Burg Grünfels (Modelle aus art/lib/burganlage.py und art/lib/marktplatz.py)
+// ---------------------------------------------------------------------------
+
+/// Lage des Marktplatzes in der Burganlage (Modellkoordinaten, wie MARKT_ORT in marktplatz.py).
+const MARKT_VERSATZ: Vec3 = vec3(-32.25, 0.0, 46.5);
+
+/// Stellt Burganlage und Marktplatz auf das Plateau des Tafelbergs. Die Kollision kommt aus den
+/// Modellen selbst: Mauern, Tor, Treppen, Wehrgang, Stände – alles ist fest und begehbar.
+/// Fackeln und Laternen werfen nachts Licht.
+pub fn build_castle(ctx: &mut Context, places: &mut Places) {
+    use crate::island::{burg_drehung, BURG_HOEHE, BURG_ORT};
+    let rotation = burg_drehung();
+    let origin = vec3(BURG_ORT.x, BURG_HOEHE, BURG_ORT.y);
+    let welt = |p: Vec3| origin + rotation * p;
+    for (name, offset) in [("burganlage", Vec3::ZERO), ("marktplatz", MARKT_VERSATZ)] {
+        let Some(&(mesh, glow)) = asset_files::load_variants(ctx, "bauwerke", name, Vec3::ONE, 0.0).first() else {
+            log::warn!("Bauwerk {name} fehlt");
+            continue;
+        };
+        let transform = Transform::from_position(welt(offset)).with_rotation(rotation);
+        let entity = ctx.scene.spawn(Entity::new(name.to_string(), mesh).with_transform(transform));
+        if let Some(glow) = glow {
+            ctx.scene.spawn(Entity::new(format!("{name} (leuchtet)"), glow).with_transform(transform).with_material(Material::Emissive { glow: 1.2 }));
+        }
+        let (vertices, triangles) = collision_mesh(ctx.assets.mesh(mesh), &transform);
+        ctx.physics.add_static_mesh(Some(entity), vertices, triangles);
+    }
+    // Namen auf der Karte (die Burg selbst steht bei den großen Orten)
+    places.labels.push(("Burgtor", crate::island::burg_welt(vec2(0.0, 75.0))));
+    places.labels.push(("Marktplatz", crate::island::burg_welt(vec2(MARKT_VERSATZ.x, MARKT_VERSATZ.z))));
+    // Licht: Fackeln am Tor, Laternen an der Straße und auf dem Markt (Blender-Koordinaten der
+    // Burganlage: x, y, Höhe → Modell: x, Höhe, -y)
+    let blender = |x: f32, y: f32, z: f32| welt(vec3(x, z, -y));
+    for s in [-1.0, 1.0] {
+        for y in [-79.95, -71.05] {
+            places.lights.push((blender(s * 3.8, y, 4.3), vec3(2.4, 1.3, 0.45), 9.0));
+        }
+        for y in [-87.0, -69.0, -36.0, -24.0] {
+            places.lights.push((blender(s * 4.4, y, 3.4), vec3(2.2, 1.35, 0.55), 8.0));
+        }
+    }
+    for (x, y) in [(-14.0, -20.0), (14.0, -20.5), (22.0, 10.0), (-14.0, 21.5), (22.0, -12.0), (0.0, 4.5)] {
+        places.lights.push((blender(x - 32.25, y - 46.5, 3.4), vec3(2.2, 1.35, 0.55), 8.0));
+    }
+}
+
+/// Dreiecke eines Modells in Weltkoordinaten, gleiche Eckpunkte zusammengefasst (flach
+/// schattierte Modelle haben jede Ecke mehrfach).
+fn collision_mesh(mesh: &MeshData, transform: &Transform) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let matrix = transform.matrix();
+    let mut index = std::collections::HashMap::new();
+    let mut vertices = Vec::new();
+    let mut remap = Vec::with_capacity(mesh.vertices.len());
+    for v in &mesh.vertices {
+        let key = v.position.map(f32::to_bits);
+        let i = *index.entry(key).or_insert_with(|| {
+            vertices.push(matrix.transform_point3(Vec3::from(v.position)));
+            vertices.len() as u32 - 1
+        });
+        remap.push(i);
+    }
+    let triangles = mesh
+        .indices
+        .chunks_exact(3)
+        .map(|t| [remap[t[0] as usize], remap[t[1] as usize], remap[t[2] as usize]])
+        .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
+        .collect();
+    (vertices, triangles)
+}
+
+// ---------------------------------------------------------------------------
 // Sehenswürdigkeiten (Modelle aus art/lib/sehenswert.py)
 // ---------------------------------------------------------------------------
 
