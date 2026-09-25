@@ -724,7 +724,14 @@ NEIGUNG = 58.0
 
 
 def burg(seed=77):
+    """Nur die Burg (ohne Mauer und Hof)."""
     bau = Bau(seed)
+    burg_teile(bau)
+    return bau.fertig("Burg")
+
+
+def burg_teile(bau):
+    """Baut die Burg in `bau`: Terrasse von z = 0 bis 1, Portal nach -Y (Treppe bis y ≈ -22)."""
     z = SOCKEL_H
     hl = LAENGE / 2
     tan = math.tan(math.radians(NEIGUNG))
@@ -858,4 +865,4 @@ def burg(seed=77):
         w = 90 * k + 45
         wasserspeier(bau, M((-hl - 3.5, -HALLE - 2.5, z), w) @ M((0, -5.3, 34.0 - 1.0)), 1.1)
 
-    return bau.fertig("Burg")
+    return bau

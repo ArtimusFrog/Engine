@@ -90,6 +90,8 @@ pub struct Viewer {
     /// Nur für Screenshots (`--zoom`, `--standbild`): fester Abstand und Animation bis zu
     /// diesem Zeitpunkt (Sekunden) abspielen, dann anhalten.
     fixed_zoom: Option<f32>,
+    /// Fester Blickpunkt (`--ziel x,y,z`, Modellkoordinaten), sonst die Mitte des Modells
+    fixed_target: Option<Vec3>,
     freeze_at: Option<f32>,
     played: f32,
 }
@@ -139,6 +141,7 @@ impl Viewer {
             pointer_over_ui: false,
             themed: false,
             fixed_zoom: None,
+            fixed_target: None,
             freeze_at: None,
             played: 0.0,
         }
@@ -419,7 +422,7 @@ impl Viewer {
         if let Some(zoom) = self.fixed_zoom {
             self.distance = zoom;
         }
-        let target = self.center();
+        let target = self.fixed_target.unwrap_or_else(|| self.center());
         ctx.camera.position = target - ctx.camera.forward() * self.distance;
         ctx.camera.near = (self.distance * 0.01).clamp(0.01, 0.1);
 
@@ -635,6 +638,10 @@ impl Game for Viewer {
             ctx.camera.pitch = (-winkel).to_radians().clamp(-1.45, 0.6);
         }
         self.fixed_zoom = value("--zoom");
+        self.fixed_target = args.iter().position(|a| a == "--ziel").and_then(|i| args.get(i + 1)).and_then(|v| {
+            let p: Vec<f32> = v.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| vec3(p[0], p[1], p[2]))
+        });
         self.freeze_at = value("--standbild");
         if args.iter().any(|a| a == "--ohne-vergleich") {
             self.show_reference = false;
