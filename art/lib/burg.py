@@ -703,7 +703,7 @@ def _blatt(groesse):
     return punkte, flaechen
 
 
-def efeu(bau, m, breite, hoehe, seed, dichte=1.0):
+def efeu(bau, m, breite, hoehe, seed, dichte=1.0, farben=None):
     """Efeu an einer Wand (lokal: Wand bei y = 0, außen = -Y, von z = 0 nach oben): mehrere
     Ranken wachsen verzweigt nach oben, dicht mit Blättern in verschiedenen Grüntönen besetzt."""
     zufall = random.Random(seed)
@@ -718,7 +718,7 @@ def efeu(bau, m, breite, hoehe, seed, dichte=1.0):
                 lx = x + zufall.uniform(-0.5, 0.5) * dicke
                 lz = max(zz + zufall.uniform(-0.22, 0.22), 0.3)
                 g = zufall.uniform(0.18, 0.3) * (0.7 + dicke * 0.3)
-                bau.teil(_blatt(g), zufall.choice(EFEU), m=m @ M((lx, -zufall.uniform(0.02, 0.14), lz), 0, 0, zufall.uniform(-40, 40)),
+                bau.teil(_blatt(g), zufall.choice(farben or EFEU), m=m @ M((lx, -zufall.uniform(0.02, 0.14), lz), 0, 0, zufall.uniform(-40, 40)),
                          schwankung=0.08)
             x += zufall.uniform(-0.28, 0.28)
             x = max(-breite / 2, min(breite / 2, x))
