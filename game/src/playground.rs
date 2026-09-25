@@ -771,6 +771,16 @@ impl Playground {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.label(RichText::new(self.status_text()).size(16.0));
+                    // Bildrate: grün ab 50, gelb ab 30, sonst rot
+                    let fps = ctx.stats.fps;
+                    let farbe = if fps >= 50.0 {
+                        Color32::from_rgb(120, 220, 120)
+                    } else if fps >= 30.0 {
+                        Color32::from_rgb(235, 200, 90)
+                    } else {
+                        Color32::from_rgb(235, 100, 90)
+                    };
+                    ui.label(RichText::new(format!("{fps:.0} FPS")).size(14.0).strong().color(farbe));
                     if let (Mode::Host { port }, Some(ip)) = (session.mode(), self.local_ip) {
                         ui.label(RichText::new(format!("Im Heimnetz: {ip}:{port}")).size(14.0).color(ui::TEXT.gamma_multiply(0.8)));
                     }

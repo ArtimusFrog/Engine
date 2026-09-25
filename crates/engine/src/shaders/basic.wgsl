@@ -459,7 +459,8 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     var fog = 1.0 - exp(-dist * g.fog.a * height_falloff);
     // Bodennebel in den Tälern (morgens) und Wolkenkappen um die höchsten Gipfel
     let valley = (1.0 - smoothstep(2.0, 9.0, world_pos.y)) * g.sky_misc.w;
-    let peaks = smoothstep(34.0, 48.0, world_pos.y) * 0.5;
+    // (nur in der Ferne – nahe Mauern und Decken hoher Bauwerke bleiben klar)
+    let peaks = smoothstep(34.0, 48.0, world_pos.y) * 0.5 * smoothstep(60.0, 160.0, dist);
     fog = max(fog, (1.0 - exp(-dist * 0.03)) * max(valley * 0.75, peaks));
     return mix(color, sky_base(to_point / max(dist, 0.001)), fog);
 }

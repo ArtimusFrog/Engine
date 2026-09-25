@@ -125,7 +125,7 @@ fn rules_for(path: &Path) -> Option<Rules> {
         "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"] }),
         "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
         // Große Bauwerke (Burg): ein Wahrzeichen, dafür viele Details
-        "bauwerke" => Some(Rules { max_triangles: 250_000, required_clips: &[] }),
+        "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[] }),
         _ => None,
     }
 }

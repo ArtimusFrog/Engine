@@ -270,7 +270,7 @@ def M(ort=(0, 0, 0), rz=0.0, rx=0.0, ry=0.0, s=1.0):
 # ---------------------------------------------------------------------------
 # Bauteile (lokal: Wandfläche bei y = 0, außen = -Y, Fuß bei z = 0)
 # ---------------------------------------------------------------------------
-def fenster(bau, m, breite, hoehe, spitz=1.25, masswerk=True, tiefe=0.4, rand=0.2, glas=True):
+def fenster(bau, m, breite, hoehe, spitz=1.25, masswerk=True, tiefe=0.4, rand=0.2, glas=True, innenseite=None):
     """Spitzbogenfenster: Gewände mit zweiter Laibung, Buntglas, Mittelpfosten mit Maßwerk
     (zwei Lanzetten und ein Kreis), Fensterbank und Überstab mit Kopfsteinen."""
     hw = breite / 2
@@ -285,6 +285,10 @@ def fenster(bau, m, breite, hoehe, spitz=1.25, masswerk=True, tiefe=0.4, rand=0.
         bau.teil(platte(tief, 0.04, -0.02), GLAS_FARBE, GLAS, m=m, leuchten=True)
     else:
         bau.teil(platte(tief, 0.04, -0.02), "#1C1A1E", m=m)
+    if innenseite is not None:
+        # Innenseite der Wand (`innenseite` Meter hinter der Außenfläche): Glas und schlichtes Gewände
+        bau.teil(platte(tief, 0.04, innenseite + 0.05), GLAS_FARBE if glas else "#1C1A1E", GLAS if glas else 0, m=m, leuchten=glas)
+        bau.teil(rahmen(bogen(hw - rand + 0.12, hs, r - rand + 0.12, rand - 0.12), tief, 0.1, innenseite + 0.1), STEIN_HELL, m=m)
     # Fensterbank und Überstab
     bau.teil(quader(breite + 0.35, tiefe + 0.2, 0.16, 0.03), STEIN_HELL, m=m @ M((0, -(tiefe + 0.2) / 2, -0.12)))
     ueber = bogen(hw + 0.28, hs, r + 0.28, nur_bogen=True)
@@ -489,12 +493,15 @@ def banner(bau, m, breite=1.5, hoehe=4.2):
         bau.teil(platte(kreis(0.13, 8, 0, wz), tiefe, y0), GOLD, m=m)
 
 
-def fensterrose(bau, m, radius):
+def fensterrose(bau, m, radius, innenseite=None):
     """Große Fensterrose: Rahmen, Buntglas, Speichen, innerer Ring, Pässe am Rand, Nabe."""
     n = 32
     bau.teil(rahmen(kreis(radius + 0.45, n), kreis(radius, n), 0.6), STEIN_HELL, m=m)
     bau.teil(rahmen(kreis(radius + 0.7, n), kreis(radius + 0.45, n), 0.3), STEIN, m=m)
     bau.teil(platte(kreis(radius, n), 0.04, -0.03), GLAS_FARBE, GLAS, m=m, leuchten=True)
+    if innenseite is not None:
+        bau.teil(platte(kreis(radius, n), 0.04, innenseite + 0.05), GLAS_FARBE, GLAS, m=m, leuchten=True)
+        bau.teil(rahmen(kreis(radius + 0.35, n), kreis(radius, n), 0.14, innenseite + 0.14), STEIN_HELL, m=m)
     innen = radius * 0.32
     bau.teil(rahmen(kreis(innen + 0.12, 16), kreis(innen, 16), 0.45), STEIN_HELL, m=m)
     speichen = 12
@@ -510,7 +517,7 @@ def fensterrose(bau, m, radius):
     bau.teil(drehkoerper([(0.0, 0.0), (innen * 0.55, 0.02), (innen * 0.5, 0.3), (0.0, 0.45)], 8), GOLD, m=m @ M((0, 0, 0), 0, 90))
 
 
-def portal(bau, m, breite=3.0, hoehe=5.6):
+def portal(bau, m, breite=3.0, hoehe=5.6, offen=False, wand=1.0):
     """Hauptportal: drei zurückspringende Spitzbögen mit Säulchen, zweiflügliges Holztor mit
     Eisenbändern, Wimperg mit Krabben und Rundfenster darüber."""
     stufen = 3
@@ -527,6 +534,22 @@ def portal(bau, m, breite=3.0, hoehe=5.6):
     hw = breite / 2
     r = hw * 2.0
     hs = hoehe - bogen_hoehe(hw, r)
+    if offen:
+        # Zwei Torflügel, nach innen an die Laibung geschwenkt
+        for s in (-1, 1):
+            fluegel = m @ M((s * (hw - 0.08), wand + 0.8, 0))
+            bau.teil(quader(0.14, 1.5, hs + 1.6, 0.02), HOLZ, m=fluegel)
+            for z in (0.8, hs * 0.55, hs + 1.1):
+                bau.teil(quader(0.2, 1.4, 0.12), EISEN, m=fluegel @ M((0, 0, z)))
+            bau.teil(rahmen(kreis(0.16, 8, 0, hs * 0.5), kreis(0.11, 8, 0, hs * 0.5), 0.04), EISEN, m=fluegel @ M((-s * 0.08, 0.3, 0), 90 * s))
+    else:
+        portal_tor(bau, m, breite, hw, r, hs)
+    # Wimperg über dem Portal
+    wimperg_portal(bau, m, breite, hoehe)
+
+
+def portal_tor(bau, m, breite, hw, r, hs):
+    """Geschlossenes Holztor mit Bretterfugen, Eisenbändern und Ringen."""
     bau.teil(platte(bogen(hw, hs, r), 0.1, 0.05), HOLZ, m=m)
     for i in range(1, 6):
         x = -hw + breite * i / 6
@@ -537,7 +560,10 @@ def portal(bau, m, breite=3.0, hoehe=5.6):
     bau.teil(quader(0.06, 0.05, hs + bogen_hoehe(hw, r) - 0.1), "#2A1A10", m=m @ M((0, -0.07, 0.05)))
     for s in (-1, 1):
         bau.teil(rahmen(kreis(0.18, 8, s * 0.3, hs * 0.5), kreis(0.13, 8, s * 0.3, hs * 0.5), 0.04, -0.1), EISEN, m=m)
-    # Wimperg über dem Portal
+
+
+def wimperg_portal(bau, m, breite, hoehe):
+    """Wimperg (Ziergiebel) mit Krabben, Rundfenster und Fialen über dem Portal."""
     aussen_hw = breite / 2 + 1.3
     wz = hoehe + 0.2
     spitze = wz + aussen_hw * 1.9
@@ -718,6 +744,190 @@ def wasserspeier(bau, m, g=1.0):
 
 
 # ---------------------------------------------------------------------------
+# Innenraum des Schlosses
+# ---------------------------------------------------------------------------
+WAND = 1.0          # Dicke der Außenwände
+BODEN_INNEN = "#CFC3B0"
+TEPPICH = "#8E1F24"
+HOLZ_DUNKEL = "#4A3322"
+KERZE = "#F4ECD8"
+FLAMME = "#FFB347"
+
+
+def saeule(bau, m, hoehe, r=0.5):
+    """Runde Säule mit Basis und Kapitell (Fuß bei z = 0)."""
+    profil = [(r + 0.3, 0.0), (r + 0.3, 0.35), (r + 0.1, 0.5), (r, 0.6), (r, hoehe - 0.7), (r + 0.15, hoehe - 0.45),
+              (r + 0.3, hoehe - 0.2), (r + 0.3, hoehe)]
+    bau.teil(drehkoerper(profil, 10), STEIN_HELL, m=m)
+
+
+def arkade(bau, m, laenge, joch, hs, oben, dicke=WAND):
+    """Arkadenwand entlang +X ab 0 (Wand zwischen y = 0 und dicke): Spitzbögen auf Säulen,
+    darüber geschlossene Wand bis `oben`."""
+    felder = int(round(laenge / joch))
+    pfeiler = 1.2
+    hw = (joch - pfeiler) / 2
+    r = hw * 1.3
+    for i in range(felder):
+        mitte = (i + 0.5) * joch
+        feld = bogen(hw, hs, r, nur_bogen=True) + [(-hw, oben), (hw, oben)]
+        bau.teil(platte(feld, dicke, dicke), STEIN, MAUER, m=m @ M((mitte, 0, 0)))
+        # Bogenlaibung und Profil auf beiden Seiten
+        for y, w in ((0.0, 0), (dicke, 180)):
+            bau.teil(rahmen(bogen(hw + 0.25, hs, r + 0.25, nur_bogen=True), bogen(hw, hs, r, nur_bogen=True), 0.15, offen=True), STEIN_HELL,
+                     m=m @ M((mitte, y, 0), w))
+    for k in range(felder + 1):
+        x = k * joch
+        bau.teil(quader(pfeiler, dicke, hs), STEIN, MAUER, m=m @ M((x, dicke / 2, 0)))
+        for y in (-0.35, dicke + 0.35):
+            saeule(bau, m @ M((x, y, 0)), hs, 0.35)
+
+
+def wandfackel(bau, m):
+    """Fackel in einem Eisenhalter (Wand bei y = 0, Raum bei -Y)."""
+    bau.teil(quader(0.16, 0.1, 0.35), EISEN, m=m)
+    bau.teil(quader(0.07, 0.4, 0.07), EISEN, m=m @ M((0, -0.2, 0.12)))
+    bau.teil(zylinder(0.05, 0.65, 6, 0.07), HOLZ, m=m @ M((0, -0.42, -0.05), 0, 15))
+    bau.teil(zylinder(0.1, 0.1, 6), EISEN, m=m @ M((0, -0.5, 0.55)))
+    bau.teil(pyramide(0.12, 0.42, 5), "#FF9A2E", m=m @ M((0, -0.5, 0.64)), leuchten=True)
+    bau.teil(pyramide(0.07, 0.28, 4), "#FFE08A", m=m @ M((0, -0.5, 0.66)), leuchten=True)
+
+
+def kronleuchter(bau, m, r=1.6, kerzen=10):
+    """Radleuchter aus Eisen an drei Ketten mit Kerzen (hängt von `m` aus nach unten)."""
+    bau.teil(zylinder(0.04, 6.0, 5), EISEN, m=m @ M((0, 0, -6.0)))
+    for k in range(3):
+        w = 120 * k
+        bau.teil(zylinder(0.025, 2.2, 4), EISEN, m=m @ M((0, 0, -6.0), w) @ M((r * 0.5, 0, -1.9), 0, 0, -38))
+    ring = m @ M((0, 0, -8.0))
+    bau.teil(rahmen(kreis(r + 0.08, 16), kreis(r - 0.08, 16), 0.12), EISEN, m=ring @ M((0, 0, 0), 0, 90))
+    bau.teil(rahmen(kreis(r * 0.45 + 0.06, 10), kreis(r * 0.45 - 0.06, 10), 0.1), EISEN, m=ring @ M((0, 0, 0.3), 0, 90))
+    for k in range(kerzen):
+        w = math.tau * k / kerzen
+        x, y = math.cos(w) * r, math.sin(w) * r
+        bau.teil(zylinder(0.09, 0.06, 6), GOLD, m=ring @ M((x, y, 0.06)))
+        bau.teil(zylinder(0.05, 0.3, 6), KERZE, m=ring @ M((x, y, 0.12)))
+        bau.teil(pyramide(0.05, 0.16, 4), FLAMME, m=ring @ M((x, y, 0.42)), leuchten=True)
+
+
+def feuerschale(bau, m):
+    bau.teil(drehkoerper([(0.3, 0.0), (0.12, 0.1), (0.1, 0.9), (0.2, 1.0), (0.55, 1.15), (0.6, 1.35)], 8), EISEN, m=m)
+    for k in range(5):
+        w = 72 * k
+        bau.teil(pyramide(0.2, 0.7, 5), "#FF9A2E", m=m @ M((0, 0, 1.25), w) @ M((0.18, 0, 0)), leuchten=True)
+    bau.teil(pyramide(0.25, 0.9, 5), "#FFE08A", m=m @ M((0, 0, 1.25)), leuchten=True)
+
+
+def kamin(bau, m, breite=4.0):
+    """Großer Kamin an einer Wand (Wand bei y = 0, Raum bei -Y): Wangen, Sims, Rauchfang,
+    Holzscheite mit Feuer."""
+    hw = breite / 2
+    for s in (-1, 1):
+        bau.teil(quader(0.6, 1.2, 2.6), STEIN_HELL, MAUER, m=m @ M((s * (hw - 0.3), -0.6, 0)))
+    bau.teil(quader(breite + 0.6, 1.5, 0.35, 0.05), STEIN_HELL, m=m @ M((0, -0.7, 2.6)))
+    bau.teil(prisma([(0.0, 0.0), (-1.3, 0.0), (-0.7, 2.6), (0.0, 2.6)], breite), STEIN, MAUER, m=m @ M((-hw, 0, 2.95)))
+    bau.teil(quader(breite - 1.2, 1.1, 0.25), "#3A3230", m=m @ M((0, -0.6, 0)))
+    bau.teil(platte([(-hw + 0.6, 0.25), (hw - 0.6, 0.25), (hw - 0.6, 2.6), (-hw + 0.6, 2.6)], 0.05, -0.05), "#1A1614", m=m)
+    for i in range(3):
+        bau.teil(zylinder(0.14, 1.6, 7), "#6E4826", m=m @ M((-0.8, -0.55 + i * 0.12, 0.35 + i * 0.12), 20 * (i - 1), 0, 90))
+    for k in range(6):
+        bau.teil(pyramide(0.22, 0.8 + (k % 3) * 0.25, 5), "#FF9A2E" if k % 2 else "#FFD36B", m=m @ M((-0.7 + k * 0.28, -0.55, 0.45)), leuchten=True)
+
+
+def thron(bau, m):
+    """Thron auf einem Podest (Blick nach -Y)."""
+    bau.teil(quader(6.4, 3.4, 0.3, 0.04), STEIN_HELL, PLATTEN, m=m)
+    bau.teil(quader(4.6, 2.4, 0.3, 0.04), STEIN_HELL, PLATTEN, m=m @ M((0, 0.4, 0.3)))
+    bau.teil(quader(4.0, 2.0, 0.03), TEPPICH, m=m @ M((0, 0.4, 0.6)))
+    t = m @ M((0, 0.7, 0.62))
+    bau.teil(quader(1.3, 1.0, 0.55, 0.04), GOLD, m=t)
+    bau.teil(quader(1.1, 0.85, 0.14, 0.05), TEPPICH, m=t @ M((0, -0.05, 0.55)))
+    bau.teil(quader(1.3, 0.2, 2.6, 0.04), GOLD, m=t @ M((0, 0.45, 0.0)))
+    bau.teil(quader(0.95, 0.06, 1.8, 0.03), TEPPICH, m=t @ M((0, 0.33, 0.7)))
+    bau.teil(platte([(-0.65, 2.6), (0.65, 2.6), (0.0, 3.3)], 0.2, 0.55), GOLD, m=t)
+    bau.teil(drehkoerper([(0.0, 0.0), (0.12, 0.05), (0.0, 0.25)], 6), "#B23A3A", m=t @ M((0, 0.45, 3.28)), leuchten=True)
+    for s in (-1, 1):
+        bau.teil(quader(0.16, 0.95, 0.35, 0.03), GOLD, m=t @ M((s * 0.62, -0.02, 0.55)))
+        bau.teil(drehkoerper([(0.0, 0.0), (0.12, 0.05), (0.0, 0.2)], 6), GOLD, m=t @ M((s * 0.62, -0.45, 0.9)))
+        bau.teil(zylinder(0.08, 2.9, 6), GOLD, m=t @ M((s * 0.62, 0.45, 0.0)))
+        bau.teil(drehkoerper([(0.0, 0.0), (0.13, 0.08), (0.0, 0.26)], 6), GOLD, m=t @ M((s * 0.62, 0.45, 2.9)))
+
+
+def tafel(bau, m, laenge, zufall):
+    """Lange Festtafel entlang +X ab 0 mit Bänken, Tellern, Kelchen, Kerzen, Brot und Obst."""
+    bau.teil(quader(laenge, 1.3, 0.1, 0.02), "#8A5A34", m=m @ M((laenge / 2, 0, 0.8)))
+    bau.teil(quader(laenge - 0.2, 1.0, 0.02), "#E8DCC0", m=m @ M((laenge / 2, 0, 0.9)))
+    for x in [0.5 + i * (laenge - 1.0) / max(int(laenge / 3), 1) for i in range(int(laenge / 3) + 1)]:
+        bau.teil(quader(0.14, 1.0, 0.8), HOLZ_DUNKEL, m=m @ M((x, 0, 0)))
+    for s in (-1, 1):
+        bau.teil(quader(laenge, 0.4, 0.07, 0.02), "#8A5A34", m=m @ M((laenge / 2, s * 1.05, 0.45)))
+        for x in [0.4 + i * (laenge - 0.8) / max(int(laenge / 3), 1) for i in range(int(laenge / 3) + 1)]:
+            bau.teil(quader(0.1, 0.34, 0.45), HOLZ_DUNKEL, m=m @ M((x, s * 1.05, 0)))
+        for i in range(int(laenge / 1.2)):
+            x = 0.6 + i * 1.2
+            bau.teil(zylinder(0.18, 0.02, 8), "#D8D0C4", m=m @ M((x, s * 0.35, 0.92)))
+            bau.teil(drehkoerper([(0.06, 0.0), (0.02, 0.03), (0.02, 0.12), (0.06, 0.16), (0.06, 0.22)], 6), GOLD, m=m @ M((x + 0.3, s * 0.2, 0.92)))
+    for i in range(int(laenge / 2.4)):
+        x = 1.2 + i * 2.4
+        if i % 2 == 0:
+            bau.teil(drehkoerper([(0.1, 0.0), (0.05, 0.05), (0.05, 0.06), (0.1, 0.08)], 6), GOLD, m=m @ M((x, 0, 0.92)))
+            bau.teil(zylinder(0.04, 0.3, 6), KERZE, m=m @ M((x, 0, 1.0)))
+            bau.teil(pyramide(0.04, 0.12, 4), FLAMME, m=m @ M((x, 0, 1.3)), leuchten=True)
+        else:
+            bau.teil(drehkoerper([(0.0, 0.0), (0.3, 0.02), (0.34, 0.1)], 8), "#B98A56", m=m @ M((x, 0, 0.92)))
+            for _ in range(5):
+                bau.teil(drehkoerper([(0.0, -0.07), (0.07, 0.0), (0.0, 0.07)], 5), zufall.choice(("#E0524F", "#8FBF3A", "#F2D544")),
+                         m=m @ M((x + zufall.uniform(-0.15, 0.15), zufall.uniform(-0.15, 0.15), 1.02)))
+            bau.teil(drehkoerper([(0.0, 0.0), (0.12, 0.02), (0.11, 0.08), (0.0, 0.12)], 7), "#C98A42", m=m @ M((x + 0.9, 0.1, 0.92), 0, 0, 0, (1.8, 1.0, 1.0)))
+
+
+def innenraum(bau, z, hl, wb, wv):
+    """Einrichtung des großen Saals: Boden, Teppich zum Thron, Festtafeln, Kronleuchter, Kamin,
+    Feuerschalen, Wandfackeln, Banner; Holzbalkendecke über dem Hauptschiff."""
+    zufall = random.Random(91)
+    innen = SCHIFF - WAND
+    bau.teil(quader(LAENGE - 2 * WAND, 2 * innen, 0.05), BODEN_INNEN, PLATTEN, m=M((0, 0, z)))
+    bau.teil(quader(2 * wb - 2 * WAND, wv - SCHIFF + WAND, 0.05), BODEN_INNEN, PLATTEN, m=M((0, -(wv + SCHIFF - WAND) / 2 + WAND / 2 - 0.5, z)))
+    # Holzdecke mit Balken über dem Hauptschiff
+    decke = z + HALLE_H - 0.5
+    bau.teil(quader(LAENGE - 2 * WAND, 2 * HALLE, 0.3), "#6E4826", m=M((0, 0, decke)))
+    for i in range(int(LAENGE / 3.5) + 1):
+        x = -hl + WAND + 0.3 + i * (LAENGE - 2 * WAND - 0.6) / int(LAENGE / 3.5)
+        bau.teil(quader(0.4, 2 * HALLE - 2 * WAND, 0.55), HOLZ_DUNKEL, m=M((x, 0, decke - 0.55)))
+    bau.teil(quader(LAENGE - 2 * WAND, 0.5, 0.45), HOLZ_DUNKEL, m=M((0, 0, decke - 0.45)))
+    # Teppich vom Portal zum Thron
+    von, bis = -wv + WAND, innen - 3.2
+    bau.teil(quader(2.6, bis - von, 0.03), TEPPICH, m=M((0, (von + bis) / 2, z + 0.05)))
+    for s in (-1, 1):
+        bau.teil(quader(0.14, bis - von, 0.035), GOLD, m=M((s * 1.2, (von + bis) / 2, z + 0.05)))
+    thron(bau, M((0, innen - 1.8, z + 0.05)))
+    for s in (-1, 1):
+        feuerschale(bau, M((s * 3.6, innen - 2.2, z + 0.05)))
+        banner(bau, M((s * 2.7, innen, z + 9.0)), 1.4, 5.5)
+    # Festtafeln im Hauptschiff (Mitte bleibt für den Teppich frei)
+    for s in (-1, 1):
+        for x0 in (-hl + 4.0, 3.5):
+            tafel(bau, M((x0, s * 3.4, z + 0.05)), hl - 7.5, zufall)
+    # Kronleuchter über den Tafeln
+    for x in (-hl / 2, 0.0, hl / 2):
+        kronleuchter(bau, M((x, 0, decke - 0.55)))
+    # Kamin an der Westwand, gegenüber ein Wandteppich
+    kamin(bau, M((-hl + WAND, 0, z + 0.05), 90), 4.4)
+    for i in range(5):
+        bau.teil(quader(0.06, 1.0, 4.5), STOFFE_WAND[i % len(STOFFE_WAND)], m=M((hl - WAND - 0.05, -2.0 + i * 1.0, z + 3.0)))
+    bau.teil(quader(0.08, 5.4, 0.2), GOLD, m=M((hl - WAND - 0.06, 0.5 - 0.5, z + 7.5)))
+    # Wandfackeln an den Arkadenpfeilern (zum Hauptschiff hin) und Banner darüber
+    for k in range(1, int(LAENGE / JOCH)):
+        x = -hl + k * JOCH
+        for s in (-1, 1):
+            wandfackel(bau, M((x, s * (HALLE - WAND - 0.35), z + 3.6), 0 if s > 0 else 180) @ M((0, 0, 0)))
+            if k % 2 == 1:
+                banner(bau, M((x, s * (HALLE - WAND), z + 15.0), 0 if s > 0 else 180), 1.3, 4.5)
+
+
+STOFFE_WAND = ("#7A1E24", "#2E6B46", "#7A1E24", "#C9A227", "#2E6B46")
+
+# ---------------------------------------------------------------------------
 # Die Burg
 # ---------------------------------------------------------------------------
 LAENGE = 49.0      # Hauptschiff entlang X (7 Joche)
@@ -751,12 +961,22 @@ def burg_teile(bau):
         tiefe = 1.0 + (3 - i) * 0.6
         bau.teil(quader(8.0, tiefe, SOCKEL_H * (i + 1) / 4, 0.02), SOCKEL, PLATTEN, m=M((0, -(SCHIFF + 7) - tiefe / 2 + 0.3, 0)))
 
-    # Hauptschiff und Seitenschiffe
-    bau.teil(quader(LAENGE, 2 * HALLE, HALLE_H), STEIN, MAUER, m=M((0, 0, z)))
+    # Hauptschiff und Seitenschiffe: hohle Mauern, innen ein großer Saal mit Arkaden
+    def laeufe(s):
+        # Abschnitte entlang der Längsseite: vorne ist die Mitte zum Westwerk hin offen
+        return ((-hl, -wb), (wb, hl)) if s < 0 else ((-hl, hl),)
+
     for s in (-1, 1):
-        bau.teil(quader(LAENGE, SCHIFF - HALLE + 0.1, SEITE_H), STEIN, MAUER, m=M((0, s * (HALLE - 0.1 + SCHIFF) / 2, z)))
-        bau.teil(quader(LAENGE + 0.6, 0.6, 1.3, 0.04), SOCKEL, MAUER, m=M((0, s * (SCHIFF + 0.05), z)))
+        bau.teil(quader(WAND, 2 * SCHIFF, SEITE_H), STEIN, MAUER, m=M((s * (hl - WAND / 2), 0, z)))
+        bau.teil(quader(WAND, 2 * HALLE, HALLE_H - SEITE_H + 0.01), STEIN, MAUER, m=M((s * (hl - WAND / 2), 0, z + SEITE_H)))
+        for a, b in laeufe(s):
+            bau.teil(quader(b - a, WAND, SEITE_H), STEIN, MAUER, m=M(((a + b) / 2, s * (SCHIFF - WAND / 2), z)))
+            bau.teil(quader(b - a + (0.3 if abs(a) == hl else 0.0) + (0.3 if abs(b) == hl else 0.0), 0.6, 1.3, 0.04), SOCKEL, MAUER,
+                     m=M(((a + b) / 2, s * (SCHIFF + 0.05), z)))
+        bau.teil(quader(LAENGE, SCHIFF - HALLE, 0.6), STEIN, m=M((0, s * (HALLE + SCHIFF) / 2, z + SEITE_H - 0.6)))
         bau.teil(quader(LAENGE - 0.2, SCHIFF - HALLE - 0.2, 0.08), SOCKEL, PLATTEN, m=M((0, s * (HALLE + SCHIFF) / 2, z + SEITE_H)))
+        arkade(bau, M((-hl, -HALLE if s < 0 else HALLE - WAND, z)), LAENGE, JOCH, 6.5, SEITE_H)
+        bau.teil(quader(LAENGE, WAND, HALLE_H - SEITE_H), STEIN, MAUER, m=M((0, s * (HALLE - WAND / 2), z + SEITE_H)))
 
     # Joche auf beiden Längsseiten
     joch_x = [-hl + JOCH * (i + 0.5) for i in range(int(LAENGE / JOCH))]
@@ -771,15 +991,20 @@ def burg_teile(bau):
             # Anfang einer Reihe entlang der ganzen Länge (lokales +X läuft über die Seite)
             return M((-hl if s < 0 else hl, y, zz), rz)
 
-        gesims(bau, entlang(s * SCHIFF, z + SEITE_H - 0.45) @ M((-0.3, 0, 0)), LAENGE + 0.6)
+        for a, b in laeufe(s):
+            start = a if s < 0 else b
+            verl_a = 0.3 if abs(a) == hl else 0.0
+            verl_b = 0.3 if abs(b) == hl else 0.0
+            ab = M((start, s * SCHIFF, 0), rz)
+            gesims(bau, ab @ M((-(verl_a if s < 0 else verl_b), 0, z + SEITE_H - 0.45)), b - a + verl_a + verl_b)
+            gesims(bau, ab @ M((0, 0, z + 3.2)), b - a, 0.15, 0.2)
         # Traufgesims knapp unter der Dachkante (sonst stäche es durch die Dachfläche)
         gesims(bau, entlang(s * HALLE, z + HALLE_H - 1.6), LAENGE, 0.45, 0.4)
         bogenfries(bau, entlang(s * HALLE, z + HALLE_H - 1.6), LAENGE)
-        gesims(bau, entlang(s * SCHIFF, z + 3.2), LAENGE, 0.15, 0.2)
         for i, x in enumerate(joch_x):
             eingang = s < 0 and abs(x) < JOCH * 0.6
             if not eingang:
-                fenster(bau, sm(x, s * SCHIFF, z + 2.4), 2.6, 7.4)
+                fenster(bau, sm(x, s * SCHIFF, z + 2.4), 2.6, 7.4, innenseite=WAND)
                 # Ziergiebel über dem Fenster mit grünem Dach
                 g = sm(x, s * SCHIFF, z + SEITE_H - 0.6)
                 gh = 2.6
@@ -797,7 +1022,7 @@ def burg_teile(bau):
             # Obergaden: zwei Lanzetten je Joch
             if not eingang:
                 for d in (-1, 1):
-                    fenster(bau, sm(x + d * 1.05, s * HALLE, z + 14.2), 1.3, 5.2, masswerk=False)
+                    fenster(bau, sm(x + d * 1.05, s * HALLE, z + 14.2), 1.3, 5.2, masswerk=False, innenseite=WAND)
         # Strebepfeiler mit Fialen und Strebebögen zwischen den Jochen
         for k in range(len(joch_x) + 1):
             x = -hl + k * JOCH
@@ -825,17 +1050,27 @@ def burg_teile(bau):
         fiale(bau, giebel @ M((0, -0.2, first - 0.2)), 0.9, 5.0)
 
     # Westwerk mit Portal und Fensterrose (vorne, Mitte)
-    bau.teil(quader(2 * wb, wv - HALLE, wh), STEIN, MAUER, m=M((0, -(wv + HALLE) / 2, z)))
+    # Westwerk: hohe Eingangshalle hinter dem Portal, darüber (über dem Seitenschiff) geschlossen
+    for sx in (-1, 1):
+        bau.teil(quader(WAND, wv - SCHIFF + WAND, wh), STEIN, MAUER, m=M((sx * (wb - WAND / 2), -(wv + SCHIFF - WAND) / 2, z)))
+        bau.teil(quader(WAND, SCHIFF - WAND - HALLE, wh - SEITE_H), STEIN, MAUER, m=M((sx * (wb - WAND / 2), -(SCHIFF - WAND + HALLE) / 2, z + SEITE_H)))
+    bau.teil(quader(2 * wb, WAND, wh - SEITE_H + 0.6), STEIN, MAUER, m=M((0, -(SCHIFF - WAND / 2), z + SEITE_H - 0.6)))
+    bau.teil(quader(2 * wb, wv - HALLE, 0.8), STEIN, m=M((0, -(wv + HALLE) / 2, z + wh - 0.8)))
+    tor_hw, tor_h = 1.6, 6.2
+    tor_hs = tor_h - bogen_hoehe(tor_hw, 2 * tor_hw)
+    for sx in (-1, 1):
+        bau.teil(quader(wb - tor_hw, WAND, wh), STEIN, MAUER, m=M((sx * (wb + tor_hw) / 2, -wv + WAND / 2, z)))
+    bau.teil(platte(bogen(tor_hw, tor_hs, 2 * tor_hw, nur_bogen=True) + [(-tor_hw, wh), (tor_hw, wh)], WAND, -wv + WAND), STEIN, MAUER, m=M((0, 0, z)))
     vorne = M((0, -wv, z))
     gesims(bau, vorne @ M((-wb - 0.3, 0, wh - 0.4)), 2 * wb + 0.6, 0.45, 0.4)
     bogenfries(bau, vorne @ M((-wb, 0, wh - 0.4)), 2 * wb)
     gesims(bau, vorne @ M((-wb - 0.3, 0, 11.4)), 2 * wb + 0.6, 0.35, 0.3)
-    portal(bau, vorne, 3.2, 6.2)
-    fensterrose(bau, vorne @ M((0, 0, 17.6)), 3.2)
+    portal(bau, vorne, 2 * tor_hw, tor_h, offen=True, wand=WAND)
+    fensterrose(bau, vorne @ M((0, 0, 17.6)), 3.2, innenseite=WAND)
     for sx in (-1, 1):
         # Seitenwände des Westwerks: je ein Fenster
         seite = M((sx * wb, -(wv + SCHIFF) / 2, z), 90 * sx)
-        fenster(bau, seite @ M((0, 0, 14.0)), 1.4, 5.0, masswerk=False)
+        fenster(bau, seite @ M((0, 0, 14.0)), 1.4, 5.0, masswerk=False, innenseite=WAND)
     # Eckpfeiler des Westwerks mit hohen Fialen
     for sx in (-1, 1):
         eck = M((sx * (wb + 0.2), -wv - 0.2, z))
@@ -850,6 +1085,8 @@ def burg_teile(bau):
     giebelwand(bau, vorne @ M((0, 0.1, 0)), wb + 0.2, wh, wfirst)
     kreuz(bau, vorne @ M((0, -0.3, wfirst - 0.1)), 2.6)
     fenster(bau, vorne @ M((0, -0.35, wh + 0.8)), 1.4, 4.0, masswerk=False)
+
+    innenraum(bau, z, hl, wb, wv)
 
     # Türme: links ein hoher Eckturm, rechts ein achteckiger Turm, hinten ein Treppenturm
     eckturm(bau, (-hl - 3.5, -HALLE - 2.5, z), 8.0, 34.0, 20.0)

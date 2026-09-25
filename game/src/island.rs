@@ -1623,5 +1623,12 @@ mod burg_test {
         let from = vec3(tor.x, BURG_HOEHE + 1.0, tor.y);
         let hit = ctx.physics.raycast(from, direction, 20.0, None);
         assert!(hit.is_none_or(|(_, d)| d > 14.0), "Tor versperrt: {hit:?}");
+        // Durch das Schlossportal über den Teppich bis zum Thron (Blender y = -20 → Saal)
+        let vor_portal = burg_welt(vec2(0.0, 20.0));
+        let saal = burg_welt(vec2(0.0, 0.0));
+        let from = vec3(vor_portal.x, BURG_HOEHE + 2.5, vor_portal.y);
+        let direction = (vec3(saal.x, BURG_HOEHE + 2.5, saal.y) - from).normalize();
+        let hit = ctx.physics.raycast(from, direction, 40.0, None);
+        assert!(hit.is_none_or(|(_, d)| d > 22.0), "Schlossportal versperrt: {hit:?}");
     }
 }

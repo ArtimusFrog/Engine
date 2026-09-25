@@ -153,6 +153,14 @@ pub fn build_castle(ctx: &mut Context, places: &mut Places) {
     for (x, y) in [(-14.0, -20.0), (14.0, -20.5), (22.0, 10.0), (-14.0, 21.5), (22.0, -12.0), (0.0, 4.5)] {
         places.lights.push((blender(x - 32.25, y - 46.5, 3.4), vec3(2.2, 1.35, 0.55), 8.0));
     }
+    // Im Schloss: drei Kronleuchter, Kamin, Feuerschalen am Thron (siehe innenraum in burg.py)
+    for x in [-12.25, 0.0, 12.25] {
+        places.lights.push((blender(x, 0.0, 14.0), vec3(2.4, 1.7, 0.9), 16.0));
+    }
+    places.lights.push((blender(-22.5, 0.0, 2.2), vec3(3.0, 1.5, 0.5), 12.0));
+    for s in [-1.0, 1.0] {
+        places.lights.push((blender(s * 3.6, 8.8, 2.6), vec3(2.6, 1.4, 0.5), 9.0));
+    }
 }
 
 /// Dreiecke eines Modells in Weltkoordinaten, gleiche Eckpunkte zusammengefasst (flach
