@@ -115,8 +115,11 @@ pub fn kopfgeld(kind: EnemyKind, boss: bool, welle: u32, schwierigkeit: Schwieri
         EnemyKind::Pikeman | EnemyKind::Warlock | EnemyKind::Ghost | EnemyKind::Assassin => 6.0,
         EnemyKind::Knight => 8.0,
         EnemyKind::Golem => 15.0,
+        EnemyKind::Spinnling => 1.0,
+        EnemyKind::Troll | EnemyKind::Lich | EnemyKind::Spinnenkoenigin | EnemyKind::Daemon => 150.0,
+        EnemyKind::Drache => 300.0,
     };
-    let grund = if boss { 60.0 } else { grund };
+    let grund = if boss && !kind.ist_boss_art() { 60.0 } else { grund };
     (grund * (1.0 + 0.05 * welle.saturating_sub(1) as f32) * schwierigkeit.gold()).round() as u32
 }
 
@@ -231,6 +234,20 @@ pub enum Ereignis {
     Giftwolke(Vec3, f32, f32),
     /// Runenfeld oder Frostfeld verlangsamt (Mitte, Radius)
     Frostfeld(Vec3, f32),
+    /// Bergtroll schleudert einen Felsen (von, nach)
+    Felswurf(Vec3, Vec3),
+    /// Lichkönig: Frostnova lähmt Türme (Mitte, Radius)
+    Frostnova(Vec3, f32),
+    /// Spinnenkönigin spinnt Türme ein (Mitte, Radius)
+    Netz(Vec3, f32),
+    /// Spinnenkönigin legt Spinnlinge
+    Brut(Vec3),
+    /// Dämonenfürst ersteht aus den Flammen
+    Wiedergeburt(Vec3),
+    /// Schattendrache speit Feuer (Maul, Richtung)
+    Flammenatem(Vec3, Vec2),
+    /// Schattendrache steigt auf
+    Auffliegen(Vec3),
 }
 
 /// Befehle der Spieler zur Verteidigung.

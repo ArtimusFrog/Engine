@@ -38,10 +38,18 @@ pub enum EnemyKind {
     Assassin,
     /// Bruchstück eines Steingolems
     Felsling,
+    /// Große Bosse (eigene Modelle): Bergtroll, Lichkönig, Spinnenkönigin (mit ihren Spinnlingen),
+    /// Dämonenfürst und der Schattendrache als letzter Gegner in Welle 30
+    Troll,
+    Lich,
+    Spinnenkoenigin,
+    Spinnling,
+    Daemon,
+    Drache,
 }
 
 impl EnemyKind {
-    pub const ALL: [EnemyKind; 11] = [
+    pub const ALL: [EnemyKind; 17] = [
         EnemyKind::Knight,
         EnemyKind::Archer,
         EnemyKind::Pikeman,
@@ -53,7 +61,18 @@ impl EnemyKind {
         EnemyKind::Harpy,
         EnemyKind::Assassin,
         EnemyKind::Felsling,
+        EnemyKind::Troll,
+        EnemyKind::Lich,
+        EnemyKind::Spinnenkoenigin,
+        EnemyKind::Spinnling,
+        EnemyKind::Daemon,
+        EnemyKind::Drache,
     ];
+
+    /// Ein großer Boss mit eigenem Modell (nicht nur ein vergrößerter Anführer)?
+    pub fn ist_boss_art(self) -> bool {
+        matches!(self, EnemyKind::Troll | EnemyKind::Lich | EnemyKind::Spinnenkoenigin | EnemyKind::Daemon | EnemyKind::Drache)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -68,6 +87,12 @@ impl EnemyKind {
             EnemyKind::Harpy => "Harpyie",
             EnemyKind::Assassin => "Schattenmeuchler",
             EnemyKind::Felsling => "Felsling",
+            EnemyKind::Troll => "Bergtroll",
+            EnemyKind::Lich => "Lichkönig",
+            EnemyKind::Spinnenkoenigin => "Spinnenkönigin",
+            EnemyKind::Spinnling => "Spinnling",
+            EnemyKind::Daemon => "Dämonenfürst",
+            EnemyKind::Drache => "Schattendrache",
         }
     }
 
@@ -85,6 +110,12 @@ impl EnemyKind {
             EnemyKind::Harpy => "Harpyie",
             EnemyKind::Assassin => "Meuchler",
             EnemyKind::Felsling => "Felsling",
+            EnemyKind::Troll => "Troll",
+            EnemyKind::Lich => "Lich",
+            EnemyKind::Spinnenkoenigin => "Spinnenkönigin",
+            EnemyKind::Spinnling => "Spinnling",
+            EnemyKind::Daemon => "Dämon",
+            EnemyKind::Drache => "Drache",
         }
     }
 
@@ -98,6 +129,12 @@ impl EnemyKind {
             EnemyKind::Golem => Some("zerfällt beim Tod in drei Felslinge"),
             EnemyKind::Ghost => Some("Rüstung gegen Waffen, anfällig für Heiliges – Runen treffen es nicht"),
             EnemyKind::Skeleton => Some("untot: immun gegen Gift, doppelter Schaden durch Heiliges"),
+            EnemyKind::Troll => Some("heilt sich ständig (nicht solange er brennt), schleudert Felsen auf Soldaten und Barrikaden"),
+            EnemyKind::Lich => Some("Frostnova lähmt Türme, Gefallene in seiner Nähe stehen als Skelette wieder auf – anfällig für Heiliges"),
+            EnemyKind::Spinnenkoenigin => Some("legt Spinnlinge und spinnt Türme ein"),
+            EnemyKind::Spinnling => Some("klein und schnell"),
+            EnemyKind::Daemon => Some("immun gegen Feuer, Glutaura verbrennt Soldaten, ersteht einmal aus den Flammen"),
+            EnemyKind::Drache => Some("speit Feuer auf Soldaten und Barrikaden, steigt zeitweise auf (dann nur Anti-Luft)"),
             _ => None,
         }
     }
@@ -114,12 +151,21 @@ impl EnemyKind {
             EnemyKind::Ghost => "gespenst",
             EnemyKind::Harpy => "harpyie",
             EnemyKind::Assassin => "schattenmeuchler",
+            EnemyKind::Troll => "bergtroll",
+            EnemyKind::Lich => "lichkoenig",
+            EnemyKind::Spinnenkoenigin | EnemyKind::Spinnling => "spinnenkoenigin",
+            EnemyKind::Daemon => "daemonenfuerst",
+            EnemyKind::Drache => "schattendrache",
         }
     }
 
     /// Darstellungsgröße (Felslinge sind kleine Golems)
     fn groesse(self) -> f32 {
-        if self == EnemyKind::Felsling { 0.55 } else { 1.0 }
+        match self {
+            EnemyKind::Felsling => 0.55,
+            EnemyKind::Spinnling => 0.28,
+            _ => 1.0,
+        }
     }
 
     pub fn max_health(self) -> f32 {
@@ -135,6 +181,12 @@ impl EnemyKind {
             EnemyKind::Harpy => 55.0,
             EnemyKind::Assassin => 75.0,
             EnemyKind::Felsling => 110.0,
+            EnemyKind::Troll => 2800.0,
+            EnemyKind::Lich => 2400.0,
+            EnemyKind::Spinnenkoenigin => 2600.0,
+            EnemyKind::Spinnling => 35.0,
+            EnemyKind::Daemon => 3200.0,
+            EnemyKind::Drache => 5200.0,
         }
     }
 
@@ -148,12 +200,17 @@ impl EnemyKind {
             EnemyKind::Felsling => 0.5,
             EnemyKind::Ghost => 0.75,
             EnemyKind::Assassin => 0.15,
-            EnemyKind::Warlock | EnemyKind::Wolf => 0.0,
+            EnemyKind::Warlock | EnemyKind::Wolf | EnemyKind::Spinnling => 0.0,
+            EnemyKind::Troll => 0.3,
+            EnemyKind::Lich => 0.5,
+            EnemyKind::Spinnenkoenigin => 0.35,
+            EnemyKind::Daemon => 0.45,
+            EnemyKind::Drache => 0.55,
         }
     }
 
     pub fn undead(self) -> bool {
-        matches!(self, EnemyKind::Skeleton | EnemyKind::Ghost)
+        matches!(self, EnemyKind::Skeleton | EnemyKind::Ghost | EnemyKind::Lich)
     }
 
     pub fn fliegt(self) -> bool {
@@ -177,6 +234,8 @@ impl EnemyKind {
             DamageKind::Arcane | DamageKind::Lightning if self == EnemyKind::Warlock => 0.6,
             DamageKind::Arcane | DamageKind::Lightning | DamageKind::Frost => 1.0,
             DamageKind::Holy if self.undead() => 2.0,
+            DamageKind::Holy if self == EnemyKind::Daemon => 1.5,
+            DamageKind::Fire if matches!(self, EnemyKind::Daemon | EnemyKind::Drache) => 0.0,
             DamageKind::Holy => 1.0,
             DamageKind::Poison if self == EnemyKind::Skeleton => 0.0,
             DamageKind::Poison => 1.0,
@@ -195,6 +254,10 @@ impl EnemyKind {
             EnemyKind::Ghost => 2.8,
             EnemyKind::Harpy => 3.4,
             EnemyKind::Assassin => 3.2,
+            EnemyKind::Spinnling => 4.2,
+            EnemyKind::Troll | EnemyKind::Daemon => 2.1,
+            EnemyKind::Lich | EnemyKind::Spinnenkoenigin => 2.2,
+            EnemyKind::Drache => 1.9,
             _ => 2.6,
         }
     }
@@ -210,6 +273,12 @@ impl EnemyKind {
             EnemyKind::Harpy => (2.6, 1.8),
             EnemyKind::Assassin => (2.2, 1.2),
             EnemyKind::Felsling => (2.6, 2.2),
+            EnemyKind::Troll => (4.5, 2.6),
+            EnemyKind::Lich => (18.0, 3.0),
+            EnemyKind::Spinnenkoenigin => (4.0, 2.0),
+            EnemyKind::Spinnling => (1.6, 1.2),
+            EnemyKind::Daemon => (4.5, 2.2),
+            EnemyKind::Drache => (6.0, 2.8),
             _ => (2.4, 1.8),
         }
     }
@@ -228,6 +297,12 @@ impl EnemyKind {
             EnemyKind::Harpy => 7.0,
             EnemyKind::Assassin => 16.0,
             EnemyKind::Felsling => 12.0,
+            EnemyKind::Troll => 60.0,
+            EnemyKind::Lich => 40.0,
+            EnemyKind::Spinnenkoenigin => 45.0,
+            EnemyKind::Spinnling => 5.0,
+            EnemyKind::Daemon => 60.0,
+            EnemyKind::Drache => 80.0,
         }
     }
 
@@ -238,13 +313,21 @@ impl EnemyKind {
             EnemyKind::Felsling => (0.85, 0.7),
             EnemyKind::Wolf => (0.7, 0.8),
             EnemyKind::Harpy => (1.0, 0.75),
+            EnemyKind::Troll => (2.3, 1.7),
+            EnemyKind::Lich => (2.0, 1.2),
+            EnemyKind::Spinnenkoenigin => (1.3, 2.0),
+            EnemyKind::Spinnling => (1.3, 1.8),
+            EnemyKind::Daemon => (2.5, 1.7),
+            EnemyKind::Drache => (2.4, 2.8),
             _ => (1.0, 0.6),
         }
     }
 
     /// So viele Leben kostet ein Durchbruch.
     fn durchbruch(self, boss: bool) -> u32 {
-        if boss {
+        if self.ist_boss_art() {
+            8
+        } else if boss {
             5
         } else if self == EnemyKind::Golem {
             3
@@ -491,7 +574,11 @@ pub const WAVE_SECONDS: f32 = 45.0;
 /// Leben der Insel auf „Normal“ (siehe `Schwierigkeit::leben`).
 pub const MAX_LEBEN: u32 = 20;
 /// Anführer der Bosswellen (jede fünfte Welle, reihum)
-const BOSSE: [EnemyKind; 4] = [Golem, Knight, Warlock, Ghost];
+/// Welle 5, 10, … 30: Golem, Bergtroll, Lichkönig, Spinnenkönigin, Dämonenfürst, Schattendrache;
+/// im Endlosmodus danach reihum alle, dazu Ritter, Magier und Gespenst als Anführer.
+const BOSSE: [EnemyKind; 9] = [Golem, Troll, Lich, Spinnenkoenigin, Daemon, Drache, Knight, Warlock, Ghost];
+/// Flughöhe des Schattendrachen, wenn er aufsteigt
+const DRACHEN_FLUG: f32 = 9.0;
 /// Obergrenze gleichzeitiger Einheiten (darüber fällt eine Welle aus)
 const MAX_ENEMIES: usize = 140;
 /// Ab dieser Entfernung zu einem Spieler bleibt eine Gruppe stehen und kämpft.
@@ -544,8 +631,11 @@ struct Member {
     /// Bossfähigkeit bzw. Heilung: Zeit bis zum nächsten Mal
     faehigkeit: f32,
     heilen: f32,
-    /// Aktuelle Flughöhe (Harpyien)
+    /// Aktuelle Flughöhe (Harpyien, aufgestiegener Drache) und wie lange der Drache noch fliegt
     hoehe: f32,
+    flug: f32,
+    /// Zweite Fähigkeit der großen Bosse (Zeit bis zum nächsten Mal)
+    faehigkeit2: f32,
     /// Seit wann besiegt (dann nach kurzer Zeit weg)
     dying: Option<f32>,
     /// Weicht zum Kämpfen von seinem Platz ab
@@ -557,7 +647,12 @@ struct Member {
 
 impl Member {
     fn fliegt_jetzt(&self) -> bool {
-        self.kind.fliegt() && self.geerdet <= 0.0
+        (self.kind.fliegt() || self.flug > 0.0) && self.geerdet <= 0.0
+    }
+
+    /// Darstellungsgröße: Anführer normaler Einheiten werden 1,6-fach groß, große Bosse sind es schon.
+    fn anzeige_groesse(&self) -> f32 {
+        self.kind.groesse() * if self.boss && !self.kind.ist_boss_art() { 1.6 } else { 1.0 }
     }
 
     fn passt(&self, filter: Filter) -> bool {
@@ -568,7 +663,7 @@ impl Member {
     }
 
     fn center(&self) -> Vec3 {
-        self.position + Vec3::Y * self.kind.hit_sphere().0 * self.kind.groesse() * if self.boss { 1.6 } else { 1.0 }
+        self.position + Vec3::Y * self.kind.hit_sphere().0 * self.anzeige_groesse()
     }
 
     fn flags(&self) -> u16 {
@@ -653,8 +748,10 @@ pub struct Heer {
     geplant: Vec<usize>,
     /// Ereignisse zum Anzeigen seit dem letzten Abholen
     pub ereignisse: Vec<Ereignis>,
-    /// Stampfen des Golem-Bosses: Mitte, Radius, Dauer (die Türme dort sind lahm)
+    /// Stampfen des Golem-Bosses und Netze der Spinnenkönigin: Mitte, Radius, Dauer (Türme dort lahm)
     pub stampfer: Vec<(Vec3, f32, f32)>,
+    /// Frostnova des Lichkönigs: Mitte, Radius, Dauer (Türme dort schießen halb so schnell)
+    pub frostnovas: Vec<(Vec3, f32, f32)>,
     /// Schaden und Kills je Turm und je Spieler (seit Welle 1)
     pub turm_stats: HashMap<u32, (f32, u32)>,
     pub beitrag: BTreeMap<String, (f32, u32)>,
@@ -691,6 +788,7 @@ impl Heer {
             geplant: Vec::new(),
             ereignisse: Vec::new(),
             stampfer: Vec::new(),
+            frostnovas: Vec::new(),
             turm_stats: HashMap::new(),
             beitrag: BTreeMap::new(),
             zaehler: BTreeMap::new(),
@@ -765,7 +863,10 @@ impl Heer {
     }
 
     fn boss_fuer(welle: u32) -> Option<EnemyKind> {
-        (welle % 5 == 0 && welle > 0).then(|| BOSSE[((welle / 5 - 1) % BOSSE.len() as u32) as usize])
+        (welle % 5 == 0 && welle > 0).then(|| {
+            let n = (welle / 5 - 1) as usize;
+            if n < 6 { BOSSE[n] } else { BOSSE[(n - 6) % BOSSE.len()] }
+        })
     }
 
     /// Vorlagen für die Welle `welle` auswählen (je Straße eine).
@@ -868,7 +969,7 @@ impl Heer {
     fn neues_mitglied(&mut self, kind: EnemyKind, boss: bool, welle: u32, zaeh: f32, staerke: f32, row: f32, side: f32) -> Member {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
-        let max_health = kind.max_health() * zaeh * if boss { 6.0 } else { 1.0 };
+        let max_health = kind.max_health() * zaeh * if boss && !kind.ist_boss_art() { 6.0 } else { 1.0 };
         Member {
             id,
             kind,
@@ -903,6 +1004,8 @@ impl Heer {
             faehigkeit: if boss { 6.0 } else { self.rng.range(2.0, 4.0) },
             heilen: self.rng.range(2.0, 4.0),
             hoehe: if kind.fliegt() { FLUGHOEHE } else { 0.0 },
+            flug: 0.0,
+            faehigkeit2: 8.0,
             dying: None,
             offset: Vec2::ZERO,
             attacking: 0.0,
@@ -922,7 +1025,7 @@ impl Heer {
             }
         }
         self.schilde();
-        self.faehigkeiten(dt);
+        strikes.extend(self.faehigkeiten(dt, blockers));
         let gefallen = &mut self.gefallen;
         let mut spaltungen = Vec::new();
         for (gi, group) in self.groups.iter_mut().enumerate() {
@@ -1048,7 +1151,8 @@ impl Heer {
                 // Auf der Straße steht jede Einheit auf dem Gelände unter ihren Füßen; im Hof, am Tor
                 // und auf der Rampe gilt die Höhe der Route (dort liegt der Boden nicht im Gelände)
                 let grund = if route.auf_strasse(member.progress) { boden(flat) } else { spot.y };
-                let ziel_hoehe = if fliegt { FLUGHOEHE } else { 0.0 };
+                member.flug = (member.flug - dt).max(0.0);
+                let ziel_hoehe = if !fliegt { 0.0 } else if member.kind.fliegt() { FLUGHOEHE } else { DRACHEN_FLUG };
                 member.hoehe += (ziel_hoehe - member.hoehe).clamp(-dt * 6.0, dt * 4.0);
                 let wippen = if member.kind.fliegt() { (member.progress * 0.9 + member.id as f32).sin() * 0.3 * (member.hoehe / FLUGHOEHE) } else { 0.0 };
                 member.position = vec3(flat.x, grund + member.hoehe + wippen, flat.y);
@@ -1125,11 +1229,55 @@ impl Heer {
     }
 
     /// Heilung der Dunkelmagier und die Fähigkeiten der Bosse.
-    fn faehigkeiten(&mut self, dt: f32) {
+    fn faehigkeiten(&mut self, dt: f32, blockers: &[Blocker]) -> Vec<Strike> {
+        let mut strikes = Vec::new();
         let mut heilungen = Vec::new();
         let mut beschwoerungen = Vec::new();
+        let mut brut = Vec::new();
+        // Lichkönig: frisch Gefallene in seiner Nähe stehen als Skelette wieder auf
+        let liche: Vec<(usize, Vec3, u32, f32, f32, f32)> = self
+            .groups
+            .iter()
+            .enumerate()
+            .flat_map(|(gi, g)| g.members.iter().filter(|m| m.kind == Lich && m.dying.is_none()).map(move |m| (gi, m.position, m.welle, m.zaeh, m.staerke, m.row)))
+            .collect();
+        if !liche.is_empty() {
+            let frisch: Vec<Vec3> = self
+                .groups
+                .iter()
+                .flat_map(|g| &g.members)
+                .filter(|m| m.dying == Some(0.0) && !matches!(m.kind, Skeleton | Spinnling) && !m.kind.ist_boss_art())
+                .map(|m| m.position)
+                .collect();
+            for tot in frisch {
+                if let Some(&(gi, _, welle, zaeh, staerke, row)) = liche.iter().find(|l| l.1.distance(tot) < 14.0) {
+                    if self.rng.chance(0.4) && self.count() < MAX_ENEMIES + 30 {
+                        let seite = self.rng.range(-1.0, 1.0);
+                        let mut neu = self.neues_mitglied(Skeleton, false, welle, zaeh, staerke, row + 0.8, seite);
+                        neu.position = tot;
+                        self.groups[gi].members.push(neu);
+                        self.ereignisse.push(Ereignis::Beschwoerung(tot));
+                    }
+                }
+            }
+        }
+        let soldaten_und_sperren: Vec<Blocker> = blockers.iter().copied().filter(|b| b.ziel != Ziel::Spieler).collect();
         for (gi, group) in self.groups.iter_mut().enumerate() {
             for m in group.members.iter_mut().filter(|m| m.dying.is_none() && m.stun <= 0.0) {
+                // Bergtroll heilt sich ständig, solange er nicht brennt
+                if m.kind == Troll && m.burn.1 <= 0.0 && m.heilsperre <= 0.0 {
+                    m.health = (m.health + m.max_health * 0.015 * dt).min(m.max_health);
+                }
+                // Dämonenfürst: Glutaura verbrennt Soldaten in der Nähe
+                if m.kind == Daemon {
+                    m.heilen -= dt;
+                    if m.heilen <= 0.0 {
+                        m.heilen = 1.0;
+                        for b in soldaten_und_sperren.iter().filter(|b| matches!(b.ziel, Ziel::Soldat(_)) && b.ort.distance(m.position) < 7.0) {
+                            strikes.push(Strike { kind: Daemon, from: m.center(), target: b.ort, ziel: b.ziel, schaden: 15.0 * m.staerke });
+                        }
+                    }
+                }
                 if m.kind == Warlock {
                     m.heilen -= dt;
                     if m.heilen <= 0.0 {
@@ -1163,9 +1311,79 @@ impl Heer {
                         m.attacking = 0.9;
                         beschwoerungen.push((gi, m.row, m.welle, m.zaeh, m.staerke, m.position));
                     }
+                    // Bergtroll: Felswurf auf Soldaten oder eine Barrikade vor ihm
+                    Troll if m.faehigkeit <= 0.0 => {
+                        if let Some(ziel) = soldaten_und_sperren.iter().filter(|b| b.ort.distance(m.position) < 32.0).min_by(|a, b| a.ort.distance(m.position).total_cmp(&b.ort.distance(m.position))) {
+                            m.faehigkeit = 10.0;
+                            m.attacking = 0.9;
+                            strikes.push(Strike { kind: Troll, from: m.center() + Vec3::Y * 2.0, target: ziel.ort, ziel: ziel.ziel, schaden: 350.0 * m.staerke });
+                            self.ereignisse.push(Ereignis::Felswurf(m.center() + Vec3::Y * 2.0, ziel.ort));
+                        }
+                    }
+                    // Lichkönig: Frostnova lähmt Türme (halbe Feuerrate)
+                    Lich if m.faehigkeit <= 0.0 => {
+                        m.faehigkeit = 11.0;
+                        m.attacking = 0.9;
+                        self.frostnovas.push((m.position, 16.0, 5.0));
+                        self.ereignisse.push(Ereignis::Frostnova(m.position, 16.0));
+                    }
+                    // Spinnenkönigin: legt Spinnlinge, spinnt Türme ein
+                    Spinnenkoenigin => {
+                        if m.faehigkeit <= 0.0 {
+                            m.faehigkeit = 7.0;
+                            brut.push((gi, m.row, m.welle, m.zaeh, m.staerke, m.position));
+                        }
+                        m.faehigkeit2 -= dt;
+                        if m.faehigkeit2 <= 0.0 {
+                            m.faehigkeit2 = 13.0;
+                            m.attacking = 0.9;
+                            self.stampfer.push((m.position, 18.0, 3.5));
+                            self.ereignisse.push(Ereignis::Netz(m.position, 18.0));
+                        }
+                    }
+                    // Dämonenfürst: ersteht bei halbem Leben einmal aus den Flammen
+                    Daemon if !m.wut && m.health < m.max_health * 0.5 => {
+                        m.wut = true;
+                        m.unverwundbar = 3.0;
+                        m.health = (m.health + m.max_health * 0.2).min(m.max_health);
+                        self.ereignisse.push(Ereignis::Wiedergeburt(m.center()));
+                        self.meldungen.push("Der Dämonenfürst ersteht aus den Flammen!".into());
+                    }
+                    // Schattendrache: Flammenatem nach vorne, steigt zeitweise auf
+                    Drache => {
+                        if m.faehigkeit <= 0.0 {
+                            m.faehigkeit = 9.0;
+                            m.attacking = 0.9;
+                            let vorne = vec2(m.facing.sin(), m.facing.cos());
+                            for b in soldaten_und_sperren.iter() {
+                                let zu = vec2(b.ort.x - m.position.x, b.ort.z - m.position.z);
+                                let d = zu.length();
+                                if d < 20.0 && d > 0.1 && zu.dot(vorne) / d > 0.75 {
+                                    strikes.push(Strike { kind: Drache, from: m.center(), target: b.ort, ziel: b.ziel, schaden: 400.0 * m.staerke });
+                                }
+                            }
+                            self.ereignisse.push(Ereignis::Flammenatem(m.center() + Vec3::Y * 1.5, vorne));
+                        }
+                        m.faehigkeit2 -= dt;
+                        if m.faehigkeit2 <= 0.0 {
+                            m.faehigkeit2 = 16.0;
+                            m.flug = 6.0;
+                            self.ereignisse.push(Ereignis::Auffliegen(m.center()));
+                        }
+                    }
                     _ => {}
                 }
             }
+        }
+        for (gi, row, welle, zaeh, staerke, ort) in brut {
+            if self.count() > MAX_ENEMIES + 30 {
+                continue;
+            }
+            for i in 0..4 {
+                let neu = self.neues_mitglied(Spinnling, false, welle, zaeh, staerke, row + 0.4, i as f32 * 0.6 - 0.9);
+                self.groups[gi].members.push(neu);
+            }
+            self.ereignisse.push(Ereignis::Brut(ort));
         }
         for (gi, mitte, radius, anteil) in heilungen {
             let mut geheilt = false;
@@ -1191,6 +1409,7 @@ impl Heer {
             }
             self.ereignisse.push(Ereignis::Beschwoerung(ort));
         }
+        strikes
     }
 
     /// Ein Golem zerfällt in drei Felslinge (der Golem-Boss in drei Golems).
@@ -1523,7 +1742,7 @@ impl Heer {
         let mut best = None;
         let mut limit = nearest;
         for member in self.alive() {
-            let radius = member.kind.hit_sphere().1 * member.kind.groesse() * if member.boss { 1.6 } else { 1.0 };
+            let radius = member.kind.hit_sphere().1 * member.anzeige_groesse();
             let center = member.center();
             let along = (center - from).dot(direction);
             if along <= 0.0 || along - radius > limit {
@@ -1612,6 +1831,7 @@ struct Anzeige {
     flags: u16,
     freund: bool,
     paladin: bool,
+    boss: bool,
 }
 
 struct Figur {
@@ -1622,6 +1842,7 @@ struct Figur {
     action: EnemyAction,
     label: &'static str,
     kind: Option<EnemyKind>,
+    boss: bool,
     health: u8,
     lp: u32,
     groesse: f32,
@@ -1693,11 +1914,12 @@ impl HeerAnsicht {
                 action: s.action,
                 health: s.health,
                 lp: s.lp,
-                groesse: s.kind.groesse() * if s.boss { 1.6 } else { 1.0 },
+                groesse: s.kind.groesse() * if s.boss && !s.kind.ist_boss_art() { 1.6 } else { 1.0 },
                 trefferkugel: s.kind.hit_sphere(),
                 flags: s.flags,
                 freund: false,
                 paladin: false,
+                boss: s.boss,
             })
             .chain(soldaten.iter().map(|s| Anzeige {
                 id: SOLDAT_ID + s.id as u32,
@@ -1713,6 +1935,7 @@ impl HeerAnsicht {
                 flags: 0,
                 freund: true,
                 paladin: s.paladin,
+                boss: false,
             }))
             .collect();
         // Weg, was nicht mehr gemeldet wird
@@ -1748,6 +1971,7 @@ impl HeerAnsicht {
                         flash: 0.0,
                         fallen: 0.0,
                         flags: state.flags,
+                        boss: state.boss,
                         offen: 0.0,
                         sammeln: 0.0,
                         funken: 0.0,
@@ -1918,7 +2142,7 @@ impl HeerAnsicht {
             .filter(|f| f.action != EnemyAction::Dying && f.health > 0 && f.flags & zustand::GETARNT == 0)
             .map(|f| {
                 let oben = f.shown + Vec3::Y * ((f.trefferkugel.0 * 2.0 + 0.3) * f.groesse + 0.25);
-                (oben, f.health, f.kind.is_none(), f.kind.is_some() && f.groesse > 1.3)
+                (oben, f.health, f.kind.is_none(), f.boss)
             })
             .collect()
     }
@@ -1928,7 +2152,7 @@ impl HeerAnsicht {
         let mut bosse: Vec<(&'static str, u8)> = self
             .figuren
             .values()
-            .filter(|f| f.groesse > 1.3 && f.kind.is_some() && f.action != EnemyAction::Dying)
+            .filter(|f| f.boss && f.action != EnemyAction::Dying)
             .map(|f| (f.label, f.health))
             .collect();
         bosse.sort();
@@ -2138,16 +2362,41 @@ mod tests {
             heer.tick(0.05, &[], &boden);
         }
         assert!(!heer.stampfer.is_empty(), "der Golem stampft nicht");
-        // Welle 15: Magier-Boss ruft Skelette
-        heer.clear();
-        heer.springe_zu_welle(14);
-        heer.spawn_wave();
+        // Welle 10–30: die großen Bosse mit eigenen Fähigkeiten
+        let boss = |heer: &mut Heer, welle: u32| {
+            heer.clear();
+            heer.stampfer.clear();
+            heer.frostnovas.clear();
+            heer.ereignisse.clear();
+            heer.springe_zu_welle(welle - 1);
+            heer.spawn_wave();
+            assert!(heer.states().iter().filter(|s| s.boss).all(|s| s.kind.ist_boss_art()), "Welle {welle}: kein großer Boss");
+        };
+        boss(&mut heer, 10);
+        assert!(heer.states().iter().any(|s| s.kind == Troll));
+        boss(&mut heer, 15);
+        for _ in 0..300 {
+            heer.tick(0.05, &[], &boden);
+        }
+        assert!(!heer.frostnovas.is_empty(), "der Lichkönig wirkt keine Frostnova");
+        boss(&mut heer, 20);
         let vorher = heer.count();
         for _ in 0..300 {
             heer.tick(0.05, &[], &boden);
         }
-        assert!(heer.count() > vorher, "der Magier ruft keine Skelette");
-        assert!(heer.ereignisse.iter().any(|e| matches!(e, Ereignis::Beschwoerung(_))));
+        assert!(heer.states().iter().any(|s| s.kind == Spinnling) && heer.count() > vorher, "die Spinnenkönigin legt keine Spinnlinge");
+        assert!(!heer.stampfer.is_empty(), "die Spinnenkönigin spinnt keine Türme ein");
+        boss(&mut heer, 30);
+        let drache = heer.states().iter().find(|s| s.kind == Drache).map(|s| s.id).expect("kein Drache in Welle 30");
+        let mut geflogen = false;
+        for _ in 0..500 {
+            heer.tick(0.05, &[], &boden);
+            geflogen |= heer.states().iter().any(|s| s.id == drache && s.flags & zustand::FLIEGT != 0);
+        }
+        assert!(geflogen, "der Schattendrache steigt nie auf");
+        assert!(heer.ereignisse.iter().any(|e| matches!(e, Ereignis::Flammenatem(..))), "kein Flammenatem");
+        // Dämon: immun gegen Feuer
+        assert_eq!(Daemon.factor(DamageKind::Fire, 0.0), 0.0);
     }
 }
 

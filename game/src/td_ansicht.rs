@@ -130,6 +130,59 @@ pub fn ereignis(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, felder: &mut Ve
         }
         Ereignis::Brandfeld(at, radius, dauer) => felder.push((at, radius, dauer, BRAND)),
         Ereignis::Giftwolke(at, radius, dauer) => felder.push((at, radius, dauer, GIFT)),
+        Ereignis::Felswurf(von, nach) => {
+            // Der Felsbrocken fliegt im Bogen und zerschellt
+            let weite = von.distance(nach);
+            for i in 0..=24 {
+                let t = i as f32 / 24.0;
+                let p = von.lerp(nach, t) + Vec3::Y * (t * (1.0 - t) * weite * 0.5);
+                funken(ctx, p, 2, vec3(0.5, 0.46, 0.42), 0.2, 0.28, 0.25 + t * 0.35, 0.0, 0.0);
+            }
+            funken(ctx, nach, 50, vec3(0.55, 0.5, 0.45), 6.0, 0.3, 1.1, 10.0, 0.0);
+            sounds.push(SoundEvent::Impact { at: nach, animal: false, killed: true });
+        }
+        Ereignis::Frostnova(at, radius) => {
+            for r in [radius * 0.3, radius * 0.65, radius] {
+                ring(ctx, at, r, vec3(0.6, 0.85, 1.0), 4.0, 2.0);
+            }
+            funken(ctx, at + Vec3::Y * 2.0, 70, vec3(0.75, 0.92, 1.0), 6.0, 0.14, 1.3, 1.5, 4.0);
+            sounds.push(SoundEvent::Thunder { volume: 0.3 });
+        }
+        Ereignis::Netz(at, radius) => {
+            ring(ctx, at, radius, vec3(0.92, 0.92, 0.88), 1.2, 1.0);
+            ring(ctx, at, radius * 0.5, vec3(0.92, 0.92, 0.88), 1.2, 1.0);
+            funken(ctx, at + Vec3::Y * 3.0, 60, vec3(0.9, 0.9, 0.86), 7.0, 0.1, 1.2, 3.0, 1.0);
+        }
+        Ereignis::Brut(at) => funken(ctx, at + Vec3::Y * 0.5, 40, vec3(0.3, 0.45, 0.2), 3.0, 0.16, 0.9, 6.0, 0.8),
+        Ereignis::Wiedergeburt(at) => {
+            ring(ctx, at, 5.0, vec3(1.0, 0.45, 0.1), 6.0, 4.0);
+            funken(ctx, at, 120, vec3(1.0, 0.5, 0.12), 7.0, 0.25, 1.4, -2.0, 6.0);
+            sounds.push(SoundEvent::Thunder { volume: 0.5 });
+        }
+        Ereignis::Flammenatem(maul, richtung) => {
+            let r = vec3(richtung.x, -0.15, richtung.y).normalize_or(Vec3::Z);
+            for i in 0..6 {
+                ctx.particles.burst(Burst {
+                    position: maul + r * (i as f32 * 1.5),
+                    count: 30,
+                    color: vec3(1.0, 0.45 + i as f32 * 0.05, 0.1),
+                    color_variation: 0.3,
+                    speed: 14.0,
+                    direction: r * 3.0,
+                    size: 0.45 + i as f32 * 0.1,
+                    life: 0.9,
+                    gravity: -1.5,
+                    glow: 5.0,
+                    grow: 1.8,
+                    round: true,
+                });
+            }
+            sounds.push(SoundEvent::Thunder { volume: 0.35 });
+        }
+        Ereignis::Auffliegen(at) => {
+            ring(ctx, at - Vec3::Y * 2.0, 8.0, vec3(0.7, 0.66, 0.6), 0.0, 3.0);
+            funken(ctx, at - Vec3::Y * 2.0, 60, vec3(0.7, 0.65, 0.58), 8.0, 0.5, 1.2, 0.5, 0.0);
+        }
         Ereignis::Frostfeld(at, radius) => {
             ring(ctx, at, radius, vec3(0.6, 0.85, 1.0), 2.5, 0.6);
             felder.push((at, radius, 1.4, FROST));

@@ -20,8 +20,7 @@ Code: `heer.rs` (Truppen), `tuerme.rs` (Türme, Soldaten, Fallen), `td.rs` (gete
   Boss (Golem, Ritter, Magier, Gespenst reihum). Mehr Spieler = +30 % Leben je weiterem Spieler.
 - **Schwierigkeit** (Admin-Panel): Leicht 30 Leben, Truppen ×0,7 · Normal 20 / ×1 · Schwer 15 / ×1,35 ·
   Albtraum 10 / ×1,8 (weniger Gold je höher).
-- Bei 0 Leben fällt die Insel, nach 60 s geht es bei Welle 1 weiter. Nach Welle 30: Sieg, 500 Gold und
-  20 Erz für alle; im Endlosmodus geht es weiter (+10 % Zähigkeit je Welle darüber).
+- Nach Welle 30: Sieg, 500 Gold und 20 Erz für alle; im Endlosmodus geht es weiter (+10 % Zähigkeit je Welle darüber).
 - **Auswertung** nach jeder überstandenen Welle: besiegt, durchgebrochen, bester Turm, Schaden je
   Spieler, Wellenbonus (10 + 3 × Welle Gold für alle).
 - **Straßen aufteilen** (Fenster T): Wer eine Straße verteidigt, steht in der Übersicht und in der Wellenleiste.
@@ -44,10 +43,25 @@ Jeder Spieler bekommt einmal 150 Startgold.
 | Gespenst | 75 % Rüstung, ×2 durch Heiliges, Runen treffen es nicht | Sonne, Arkan, Paladine |
 | Skelett | immun gegen Gift, ×2 durch Heiliges | Sonne, Paladine |
 
-**Bosse** (jede fünfte Welle, 6-faches Leben, 1,6-fach groß, eigene Leiste oben):
-Golem stampft alle 9 s und legt Türme im Umkreis von 14 m für 3 s lahm und zerfällt in drei Golems ·
-Ritter gerät bei halbem Leben in Wut (doppelter Schlag, keine Verlangsamung) · Magier heilt stark und
-ruft alle 12 s drei Skelette · Gespenst wird alle 13 s für 3 s unverwundbar.
+**Bosse** (jede fünfte Welle, einer je Straße, eigene Leiste oben):
+
+| Welle | Boss | Fähigkeiten |
+|---|---|---|
+| 5 | Steingolem (6-faches Leben, 1,6-fach groß) | stampft alle 9 s und legt Türme im Umkreis von 14 m für 3 s lahm, zerfällt in drei Golems |
+| 10 | Bergtroll | heilt sich ständig (nicht solange er brennt – Feuer!), schleudert Felsen auf Soldaten und Barrikaden |
+| 15 | Lichkönig | Frostnova: Türme im Umkreis schießen 5 s halb so schnell; Gefallene in seiner Nähe stehen als Skelette auf; anfällig für Heiliges |
+| 20 | Spinnenkönigin | legt alle 7 s vier Spinnlinge, spinnt Türme im Umkreis von 18 m für 3,5 s ein |
+| 25 | Dämonenfürst | immun gegen Feuer, ×1,5 durch Heiliges, Glutaura verbrennt Soldaten, ersteht bei halbem Leben einmal aus den Flammen |
+| 30 | Schattendrache (Endgegner) | immun gegen Feuer, Flammenatem auf Soldaten und Barrikaden, steigt alle 16 s für 6 s auf (dann nur Anti-Luft, Harpune holt ihn runter) |
+
+Im Endlosmodus kommen danach alle reihum, dazu Ritter, Magier und Gespenst als vergrößerte Anführer.
+Die großen Bosse kosten beim Durchbruch 8 Leben ihrer Straße und bringen 150 (Drache 300) Gold.
+
+## Leben je Straße
+
+Es gibt keinen gemeinsamen Pool: jede Straße hat ihre eigenen Leben. Fällt eine Straße, verschwinden ihre
+Truppen, die Siedlung an ihrem Ende (Dorfhalle und Gebäude des Besitzers im Radius) wird zerstört und die
+Straße fängt mit vollen Leben neu an. Die Wellen laufen für alle weiter.
 
 ## Zielmodi
 

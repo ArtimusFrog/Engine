@@ -576,6 +576,9 @@ pub fn beute(kind: crate::heer::EnemyKind) -> &'static [(Item, u32)] {
         EnemyKind::Knight => &[(Item::Ore, 2)],
         EnemyKind::Felsling => &[(Item::Stone, 2)],
         EnemyKind::Golem => &[(Item::Stone, 4), (Item::Ore, 3)],
+        EnemyKind::Spinnling => &[],
+        EnemyKind::Troll | EnemyKind::Lich | EnemyKind::Spinnenkoenigin | EnemyKind::Daemon => &[(Item::Stone, 10), (Item::Ore, 10)],
+        EnemyKind::Drache => &[(Item::Stone, 20), (Item::Ore, 25)],
     }
 }
 
@@ -632,8 +635,10 @@ pub struct Verteidigung {
     arkan: HashMap<u32, (u16, u32)>,
     /// Frostturm (Einfrieren): Treffer seit dem letzten Einfrieren
     frost: HashMap<u32, u32>,
-    /// Türme, die der Golem-Boss lahmgelegt hat (Restzeit)
+    /// Türme, die der Golem-Boss oder die Spinnenkönigin lahmgelegt hat (Restzeit)
     lahm: HashMap<u32, f32>,
+    /// Türme, die die Frostnova des Lichkönigs verlangsamt (Restzeit)
+    vereist: HashMap<u32, f32>,
     soldaten: Vec<Soldat>,
     next_soldat: u16,
     /// Sammelpunkte der Kasernen auf der Straße (Ort, Richtung)
@@ -703,6 +708,15 @@ impl Verteidigung {
             *rest -= dt;
         }
         self.lahm.retain(|_, r| *r > 0.0);
+        for (mitte, radius, dauer) in std::mem::take(&mut heer.frostnovas) {
+            for b in buildings.iter().filter(|b| b.tower().is_some() && b.position.distance(mitte) < radius) {
+                self.vereist.insert(b.id, dauer);
+            }
+        }
+        for rest in self.vereist.values_mut() {
+            *rest -= dt;
+        }
+        self.vereist.retain(|_, r| *r > 0.0);
         // Treffer der Truppen an Soldaten und Barrikaden
         for strike in strikes {
             match strike.ziel {
@@ -789,6 +803,9 @@ impl Verteidigung {
             werte.schaden *= 1.0 + kraft;
             werte.nachwirkung *= 1.0 + kraft;
             werte.takt /= 1.0 + tempo;
+            if self.vereist.contains_key(&building.id) {
+                werte.takt *= 2.0;
+            }
             let owner = building.owner.as_str();
             let von = Quelle { name: owner, turm: Some(building.id) };
             let mund = building.position + Vec3::Y * (KOPF_Z[(building.level.clamp(1, 3) - 1) as usize] + 1.0);
