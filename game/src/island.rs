@@ -13,7 +13,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 9;
+pub const WORLD_ID: u32 = SEED + 10;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 760.0;
 const TERRAIN_SIZE: f32 = 2040.0;
@@ -71,6 +71,8 @@ pub struct Island {
     pub map: Option<Image>,
     /// Besondere Orte (Lager, Sehenswürdigkeiten): Feuer und Wegweiser.
     pub places: crate::orte::Places,
+    /// Die vier Heerstraßen von den Rampen der Festung (Süd, Ost, Nord, West)
+    pub strassen: Vec<Vec<Vec2>>,
 }
 
 /// Die Übersichtskarte zeigt ±`MAP_EXTENT` Meter um die Inselmitte (Norden = -z oben).
@@ -339,13 +341,22 @@ fn burg_karte(p: Vec2) -> Option<Vec3> {
 
 pub const FESTUNG_NAME: &str = "Schattenfestung";
 
-/// Grundriss der Festung (Mitte = Inselmitte, das Tor zeigt nach Süden, +z): der Felssockel
-/// (Radius 44 m) und die Rampe davor bis z ≈ 72. Abstand zum Rand, negativ = drinnen.
+/// Wo die vier Rampen der Festung am Boden ankommen (Süd, Ost, Nord, West) – hier beginnen die
+/// Wege über die Insel und die Marschrouten der Festungstruppen.
+pub const FESTUNG_RAMPEN: [Vec2; 4] = [vec2(0.0, 76.0), vec2(76.0, 0.0), vec2(0.0, -76.0), vec2(-76.0, 0.0)];
+
+/// Grundriss der Festung (Mitte = Inselmitte, vier Tore nach Süden, Osten, Norden und Westen):
+/// der Felssockel (Radius 44 m) und die vier Rampen bis 72 m hinaus. Abstand zum Rand,
+/// negativ = drinnen.
 pub fn festung_rand(p: Vec2) -> f32 {
     let kreis = p.length() - 44.0;
-    let q = vec2(p.x.abs() - 5.5, (p.y - 36.0).abs() - 36.0);
-    let rampe = q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0);
-    kreis.min(rampe)
+    // Rampe entlang der Achse: `quer` = Abstand zur Mittellinie, `laengs` = Weg nach außen
+    let rampe = |quer: f32, laengs: f32| {
+        let q = vec2(quer.abs() - 5.5, (laengs - 36.0).abs() - 36.0);
+        q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0)
+    };
+    let rampen = rampe(p.x, p.y).min(rampe(p.y, p.x)).min(rampe(p.x, -p.y)).min(rampe(p.y, -p.x));
+    kreis.min(rampen)
 }
 
 /// Höhe, auf der die Festung steht: Mittel des natürlichen Geländes unter dem Grundriss.
@@ -437,6 +448,18 @@ pub fn moisture(p: Vec2) -> f32 {
     fbm(p * 0.008 + vec2(40.0, -13.0), 3, SEED + 5) * 0.5 + 0.5
 }
 
+/// Wie düster das Land hier ist: 1 rund um die Schattenfestung (bis 170 m), bis 240 m auslaufend.
+/// Boden wird aschig, Bäume und Gras dunkel, das Licht fahl (siehe `World::update_visuals`).
+pub fn duester(p: Vec2) -> f32 {
+    let rand = fbm(p * 0.02 + vec2(5.0, -9.0), 2, SEED + 90) * 18.0;
+    1.0 - smoothstep(170.0, 240.0, p.length() + rand)
+}
+
+/// Farbe, mit der Bäume, Gras und Steine im düsteren Land eingefärbt werden.
+pub fn duester_farbe(p: Vec2) -> Vec4 {
+    Vec4::ONE.lerp(vec4(0.15, 0.12, 0.19, 1.0), duester(p))
+}
+
 fn magic(p: Vec2) -> f32 {
     fbm(p * 0.009 + vec2(-71.0, 22.0), 3, SEED + 7) * 0.5 + 0.5
 }
@@ -455,6 +478,8 @@ const PATH_CELL: f32 = 1.0;
 pub struct Paths {
     mask: Vec<f32>,
     res: usize,
+    /// Die vier Straßen von den Rampen der Festung (gleich lang, siehe `festung_strasse`)
+    pub strassen: Vec<Vec<Vec2>>,
 }
 
 impl Paths {
@@ -465,14 +490,14 @@ impl Paths {
     /// Wege vom Startpunkt zur Burg, zur Festung, zum Strand und ins Gebirge.
     fn build(terrain: &Terrain, spawn: Vec3) -> Paths {
         let res = (TERRAIN_SIZE / PATH_CELL) as usize;
-        let mut paths = Paths { mask: vec![0.0; res * res], res };
+        let mut paths = Paths { mask: vec![0.0; res * res], res, strassen: Vec::new() };
         let start = vec2(spawn.x, spawn.z);
         let r = ISLAND_RADIUS;
         let mut targets = Vec::new();
         // Fuß der Auffahrt zur Burg auf dem Tafelberg
         targets.push(burg_weg_fuss() + (start - burg_weg_fuss()).normalize_or(Vec2::X) * 3.0);
-        // Fuß der Rampe zur Schattenfestung in der Inselmitte
-        targets.push(vec2(0.0, 76.0));
+        // Fuß der Südrampe der Schattenfestung in der Inselmitte
+        targets.push(FESTUNG_RAMPEN[0]);
         // Strand: vom Startpunkt nach außen, bis der Sand beginnt
         let outward = start.normalize_or(Vec2::Y);
         if let Some(beach) = find_along(terrain, start, outward, |h| h < 2.6) {
@@ -482,10 +507,14 @@ impl Paths {
         if let Some(foot) = find_along(terrain, start, (vec2(0.0, -0.45 * r) - start).normalize(), |h| h > 17.0) {
             targets.push(foot);
         }
-        let mut trails: Vec<Vec<Vec2>> = targets.iter().enumerate().map(|(i, &to)| trail(terrain, start, to, i as u32)).collect();
-        // Querweg von der Festung ins Gebirge
-        if let Some(gebirge) = trails.last().and_then(|t| t.last()).copied() {
-            trails.push(trail(terrain, vec2(0.0, 76.0), gebirge, 9));
+        let trails: Vec<Vec<Vec2>> = targets.iter().enumerate().map(|(i, &to)| trail(terrain, start, to, i as u32)).collect();
+        // Die vier Heerstraßen der Festung: breit und festgetreten, alle gleich lang
+        for index in 0..4 {
+            let strasse = festung_strasse(terrain, index, &paths.strassen);
+            for pair in strasse.windows(2) {
+                paths.stamp(pair[0], pair[1], 2.2);
+            }
+            paths.strassen.push(strasse);
         }
         // Die Auffahrt selbst: breiter, festgefahrener Weg
         let weg: Vec<Vec2> = BURG_WEG.iter().map(|&l| burg_welt(l)).collect();
@@ -539,6 +568,54 @@ impl Paths {
 }
 
 /// Erster Punkt entlang einer Richtung, an dem die Höhe `wanted` erfüllt (höchstens 400 m weit).
+/// Länge jeder Heerstraße ab dem Fuß ihrer Rampe (alle gleich lang – fair für alle Richtungen).
+pub const STRASSEN_LAENGE: f32 = 380.0;
+
+/// Eine Heerstraße von der Rampe `index` (Süd, Ost, Nord, West) nach außen: in sanften Schwüngen,
+/// um Wasser, steile Hänge, die Burg und die anderen Straßen herum, genau `STRASSEN_LAENGE` lang.
+/// Ohne Winkelfunktionen gerechnet, damit sie auf allen Rechnern bitgenau gleich ausfällt.
+fn festung_strasse(terrain: &Terrain, index: usize, frueher: &[Vec<Vec2>]) -> Vec<Vec2> {
+    // Drehungen um ±10° und ±20° (cos, sin) – feste Zahlen statt sin/cos
+    const DREHUNGEN: [(f32, f32); 5] = [(0.939_692_6, -0.342_020_1), (0.984_807_8, -0.173_648_2), (1.0, 0.0), (0.984_807_8, 0.173_648_2), (0.939_692_6, 0.342_020_1)];
+    let start = FESTUNG_RAMPEN[index];
+    let aussen = start.normalize_or(Vec2::Y);
+    let hoehe = |p: Vec2| terrain.height_at(p.x, p.y);
+    let mut punkte = vec![start];
+    let (mut p, mut richtung, mut laenge) = (start, aussen, 0.0);
+    while laenge < STRASSEN_LAENGE - 1e-3 {
+        let schritt = (STRASSEN_LAENGE - laenge).min(4.0);
+        // Gewünschte Richtung: nach außen, mit weiten Schwüngen aus Rauschen
+        let schwung = fbm(p * 0.004, 2, SEED + 70 + index as u32) * 1.6;
+        let wunsch = (aussen + aussen.perp() * schwung).normalize_or(aussen);
+        let mut beste = (f32::MAX, richtung);
+        for (c, s) in DREHUNGEN {
+            let d = vec2(richtung.x * c - richtung.y * s, richtung.x * s + richtung.y * c);
+            let q = p + d * 10.0;
+            let mut kosten = (hoehe(q) - hoehe(p)).abs() * 1.5 + (1.0 - d.dot(wunsch)) * 4.0;
+            if hoehe(q) < 1.4 {
+                kosten += 60.0; // nicht ins Wasser
+            }
+            if laenge > 10.0 && festung_rand(q) < 3.0 {
+                kosten += 40.0; // nicht zurück an die Festung
+            }
+            if q.distance(BURG_ORT) < 130.0 {
+                kosten += 30.0; // um den Tafelberg der Burg herum
+            }
+            if frueher.iter().any(|alt| alt.iter().step_by(2).any(|a| a.distance(q) < 45.0)) {
+                kosten += 20.0; // Abstand zu den anderen Straßen
+            }
+            if kosten < beste.0 {
+                beste = (kosten, d);
+            }
+        }
+        richtung = beste.1;
+        p += richtung * schritt;
+        laenge += schritt;
+        punkte.push(p);
+    }
+    punkte
+}
+
 fn find_along(terrain: &Terrain, from: Vec2, direction: Vec2, wanted: impl Fn(f32) -> bool) -> Option<Vec2> {
     (1..100).map(|i| from + direction * (i as f32 * 4.0)).find(|p| wanted(terrain.height_at(p.x, p.y))).map(|p| p - direction * 4.0)
 }
@@ -624,7 +701,17 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
     color = wet_sand.lerp(color, smoothstep(-0.8, 0.6, c.y));
     color = color.lerp(rock, smoothstep(0.42, 0.58, slope));
-    color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)))
+    color = color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)));
+    // Rund um die Schattenfestung: aschiger, toter Boden mit glimmenden violetten Adern
+    let d = duester(p);
+    if d > 0.0 {
+        let flecken = fbm(p * 0.05 + vec2(2.0, 7.0), 3, SEED + 91) * 0.5 + 0.5;
+        let asche = vec3(0.05, 0.043, 0.055).lerp(vec3(0.085, 0.07, 0.075), flecken);
+        let ader = (1.0 - (fbm(p * 0.09 + vec2(-4.0, 1.0), 2, SEED + 92) * 6.0).abs()).max(0.0);
+        let boden = asche.lerp(vec3(0.16, 0.035, 0.24), smoothstep(0.82, 0.97, ader) * 0.8);
+        color = color.lerp(boden, d * 0.92);
+    }
+    color
 }
 
 /// Jedes Dreieck leicht anders hell – das macht den facettierten Look lebendig.
@@ -1328,7 +1415,8 @@ pub fn build(ctx: &mut Context) -> Island {
 
             // Um Vorkommen herum kein hohes Gras, sonst verschwinden sie darin.
             let node_here = found.as_ref().is_some_and(|s| s.kind.needs_pickaxe()) || crystals.last() == Some(&base);
-            if let Some(spec) = found {
+            if let Some(mut spec) = found {
+                spec.color *= duester_farbe(vec2(spec.transform.position.x, spec.transform.position.z));
                 resources.push((id, spec));
             }
 
@@ -1371,7 +1459,8 @@ pub fn build(ctx: &mut Context) -> Island {
         log::info!("Übersichtskarte in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
         image
     });
-    Island { terrain, resources, spawn, crystals, map, places }
+    let strassen = paths.strassen.clone();
+    Island { terrain, resources, spawn, crystals, map, places, strassen }
 }
 
 /// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich
@@ -1389,6 +1478,7 @@ fn crystal_node(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: 
 
 fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
     let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size));
+    let color = color * duester_farbe(vec2(base.x, base.z));
     let mut entity = Entity::new("Deko", mesh).with_transform(transform).with_color(color).with_material(material);
     // Gras, Farne und Blumen werfen keinen Schatten (winzig, aber sehr viele Blattkarten)
     entity.casts_shadow = !(material == GRASS || material == FLOWERS);

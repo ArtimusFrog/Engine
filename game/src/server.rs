@@ -36,7 +36,9 @@ struct RemoteClient {
 /// Ein Zauber ist unterwegs und trifft in Takt `due` das Tier `animal`.
 struct PendingHit {
     due: u64,
+    /// Tier oder (bei `enemy`) Einheit der Festung
     animal: u16,
+    enemy: bool,
     by: PlayerId,
     from: Vec3,
 }
@@ -54,6 +56,8 @@ pub struct Authority {
     tick: u64,
     /// Wann jeder Spieler zuletzt geschrieben hat (Takte), gegen Überfluten des Chats.
     chat_times: HashMap<PlayerId, Vec<u64>>,
+    /// Angriffe der Truppen seit dem letzten Schnappschuss
+    strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
 }
 
 impl Authority {
@@ -67,6 +71,7 @@ impl Authority {
             inventories: BTreeMap::new(),
             tick: 0,
             chat_times: HashMap::new(),
+            strikes: Vec::new(),
         }
     }
 
@@ -115,6 +120,15 @@ impl Authority {
         world.advance_buildings(Physics::FIXED_DT);
         self.produce(world);
         world.think_animals(ctx);
+        // Truppen der Festung: marschieren, kämpfen gegen Spieler in der Nähe (nicht gegen Flieger)
+        let players: Vec<Vec3> = world.players.values().filter(|a| !a.noclip).map(|a| ctx.physics.character_position(a.character)).collect();
+        let strikes = world.heer.tick(Physics::FIXED_DT, &players);
+        world.feinde = world.heer.states();
+        for strike in strikes {
+            let entry = (strike.kind, strike.from, strike.target);
+            self.strikes.push(entry);
+            world.strikes.push(entry);
+        }
         self.land_hits(ctx, world);
         if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
             self.save(world);
@@ -134,7 +148,7 @@ impl Authority {
 
         // Wer vom Rand fällt, fängt am Startpunkt neu an; wer durch den Boden rutscht,
         // wird wieder auf die Oberfläche gesetzt.
-        for avatar in world.players.values() {
+        for avatar in world.players.values().filter(|a| !a.noclip) {
             let position = ctx.physics.character_position(avatar.character);
             let ground = world.terrain.height_at(position.x, position.z);
             if position.y < -30.0 {
@@ -144,6 +158,9 @@ impl Authority {
             }
         }
 
+        if self.net.is_none() {
+            self.strikes.clear();
+        }
         if let Some(net) = &mut self.net {
             net.flush();
         }
@@ -199,14 +216,20 @@ impl Authority {
         let Some(origin) = world.cast_origin(ctx, player, target) else { return };
         let direction = (target - origin).normalize_or(Vec3::NEG_Z);
         let range = origin.distance(target).min(CAST_RANGE) + 0.5;
-        let (point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
+        let (mut point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
+        // Einheiten der Festung haben keine Kollision: eigener Strahltest
+        let mut target = animal.map(|a| (a, false));
+        if let Some((enemy, distance)) = world.heer.ray_hit(origin, direction, origin.distance(point)) {
+            point = origin + direction * distance;
+            target = Some((enemy, true));
+        }
 
-        world.cast_spell(ctx, player, origin, point, animal.is_some(), true);
-        self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: animal.is_some() });
-        if let Some(animal) = animal {
+        world.cast_spell(ctx, player, origin, point, target.is_some(), true);
+        self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: target.is_some() });
+        if let Some((animal, enemy)) = target {
             let flight = CAST_DELAY + origin.distance(point) / BOLT_SPEED;
             let due = ctx.time.tick + (flight / Physics::FIXED_DT).round() as u64;
-            self.pending_hits.push(PendingHit { due, animal, by: player, from: origin });
+            self.pending_hits.push(PendingHit { due, animal, enemy, by: player, from: origin });
         }
     }
 
@@ -216,6 +239,10 @@ impl Authority {
         let (landed, waiting): (Vec<_>, Vec<_>) = self.pending_hits.drain(..).partition(|h| h.due <= tick);
         self.pending_hits = waiting;
         for hit in landed {
+            if hit.enemy {
+                world.heer.hit(hit.animal);
+                continue;
+            }
             let Some(animal) = world.animals.get_mut(hit.animal as usize) else { continue };
             if !animal.is_alive() {
                 continue;
@@ -264,6 +291,17 @@ impl Authority {
         self.send_inventory(player, inventory);
         self.save(world);
         Ok(())
+    }
+
+    /// Befehl aus dem Admin-Panel (Wetter, Truppen der Festung).
+    pub fn admin(&mut self, world: &mut World, command: AdminCommand) {
+        log::info!("Admin: {command:?}");
+        match command {
+            AdminCommand::Weather(choice) => world.set_weather(choice.min(WETTER.len() as u8 - 1)),
+            AdminCommand::Waves(on) => world.heer.set_enabled(on),
+            AdminCommand::WaveNow => world.heer.spawn_wave(),
+            AdminCommand::ClearEnemies => world.heer.clear(),
+        }
     }
 
     /// Fertige Gebäude liefern ihrem Erbauer regelmäßig Rohstoffe – auch wenn er gerade nicht da ist.
@@ -384,11 +422,13 @@ impl Authority {
 
         let mut chats = Vec::new();
         let mut builds = Vec::new();
+        let mut admins = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
                     Some(ClientMessage::Chat(text)) => chats.push((id, text)),
                     Some(ClientMessage::Build { kind, at, yaw }) => builds.push((id, kind, at, yaw)),
+                    Some(ClientMessage::Admin(command)) => admins.push(command),
                     _ => {}
                 }
             }
@@ -411,6 +451,9 @@ impl Authority {
         }
         for (id, text) in chats {
             self.chat(ctx, world, id, &text);
+        }
+        for command in admins {
+            self.admin(world, command);
         }
         for (id, kind, at, yaw) in builds {
             if let Err(reason) = self.build(ctx, world, id, kind, at, yaw) {
@@ -517,8 +560,18 @@ impl Authority {
             })
             .collect();
 
-        let snapshot =
-            ServerMessage::Snapshot(Snapshot { tick: ctx.time.tick as u32, players, objects, hour: world.day.hour, day: world.day.day, animals });
+        let snapshot = ServerMessage::Snapshot(Snapshot {
+            tick: ctx.time.tick as u32,
+            players,
+            objects,
+            hour: world.day.hour,
+            day: world.day.day,
+            animals,
+            enemies: world.feinde.clone(),
+            strikes: std::mem::take(&mut self.strikes),
+            weather: world.weather_choice,
+            waves: world.heer.enabled,
+        });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));
         }

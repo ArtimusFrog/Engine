@@ -61,6 +61,11 @@ pub struct Playground {
     inventory_open: bool,
     /// Baumenü offen (Taste B)?
     build_menu_open: bool,
+    /// Admin-Panel offen (Taste X) und frei fliegen (Noclip)
+    admin_open: bool,
+    noclip: bool,
+    /// Einheit der Festung unter dem Fadenkreuz (Art, Lebenspunkte)
+    aim_enemy: Option<(crate::heer::EnemyKind, u8)>,
     /// Gebäude, das gerade platziert wird, und die eigene Drehung dazu (Q/E, Mausrad)
     build_mode: Option<(crate::bauten::BuildingKind, f32)>,
     /// Bauplatz unter dem Fadenkreuz: Mitte, Drehung und ob (bzw. warum nicht) gebaut werden kann
@@ -89,6 +94,8 @@ pub struct Playground {
     /// Fortschritt: Vorschau beim Platzieren) bzw. das Baumenü öffnen (`--demo-baumenue`).
     demo_bau: Option<(String, Option<f32>)>,
     demo_build_menu: bool,
+    /// Nur zum Testen: Truppen der Festung sofort losschicken (`--demo-truppen`)
+    demo_troops: bool,
     demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
@@ -131,6 +138,9 @@ impl Playground {
             last_cast: -10.0,
             inventory_open: false,
             build_menu_open: false,
+            admin_open: false,
+            noclip: false,
+            aim_enemy: None,
             build_mode: None,
             build_site: None,
             build_icons: None,
@@ -146,6 +156,7 @@ impl Playground {
             demo_spot: None,
             demo_bau: None,
             demo_build_menu: false,
+            demo_troops: false,
             demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
@@ -231,10 +242,17 @@ impl Playground {
             seq: 0,
             wish: wish.normalize_or_zero(),
             sprint: playing && ctx.input.key(KeyCode::ShiftLeft),
-            jump: self.jump_requested,
+            jump: self.jump_requested && !self.noclip,
             cast: self.cast_requested.take(),
             harvest: self.harvest_requested.take(),
             tool: self.tool(),
+            noclip: self.noclip,
+            // Noclip: Leertaste hoch, Strg runter
+            rise: if playing && self.noclip {
+                ctx.input.key(KeyCode::Space) as i32 as f32 - ctx.input.key(KeyCode::ControlLeft) as i32 as f32
+            } else {
+                0.0
+            },
         };
         self.jump_requested = false;
         input
@@ -337,6 +355,68 @@ impl Playground {
         self.build_site = Some((at, yaw, check));
     }
 
+    /// Admin-Panel (Taste X): Noclip, Wetter, Truppen der Schattenfestung.
+    fn admin_panel(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        use crate::protocol::{AdminCommand, WETTER};
+        let Some(session) = &mut self.session else { return };
+        let (weather, waves, count) = {
+            let world = session.world();
+            (world.weather_choice, world.heer.enabled, world.feinde.len())
+        };
+        let mut commands = Vec::new();
+        let mut close = false;
+        let mut noclip = self.noclip;
+        ui::center_panel(egui_ctx, "admin", 470.0, |ui| {
+            ui::heading(ui, "Admin");
+            ui.checkbox(&mut noclip, RichText::new("Noclip – frei fliegen, durch Wände (Leertaste hoch, Strg runter)").size(16.0));
+            ui.add_space(10.0);
+            ui.label(RichText::new("Wetter").size(16.0).strong().color(ui::ACCENT));
+            ui.horizontal_wrapped(|ui| {
+                for (i, name) in WETTER.iter().enumerate() {
+                    let mut label = name.to_string();
+                    if let Some(first) = label.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    if ui.selectable_label(weather == i as u8, RichText::new(label).size(15.0)).clicked() {
+                        commands.push(AdminCommand::Weather(i as u8));
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Truppen der Schattenfestung").size(16.0).strong().color(ui::ACCENT));
+            ui.label(RichText::new(format!("{count} Einheiten unterwegs · {}", if waves { "Spawn läuft" } else { "Spawn gestoppt" })).size(14.0));
+            ui.horizontal(|ui| {
+                let text = if waves { "Spawn stoppen" } else { "Spawn starten" };
+                if ui.button(RichText::new(text).size(16.0)).clicked() {
+                    commands.push(AdminCommand::Waves(!waves));
+                }
+                if ui.button(RichText::new("Welle jetzt").size(16.0)).clicked() {
+                    commands.push(AdminCommand::WaveNow);
+                }
+                if ui.button(RichText::new("Alle entfernen").size(16.0)).clicked() {
+                    commands.push(AdminCommand::ClearEnemies);
+                }
+            });
+            ui.label(
+                RichText::new(format!("Alle {:.0} s eine Welle: auf jeder der vier Straßen eine Gruppe, die am Ende der Straße verschwindet.", crate::heer::WAVE_SECONDS))
+                    .size(13.0)
+                    .color(ui::TEXT.gamma_multiply(0.7)),
+            );
+            ui.add_space(10.0);
+            if ui::big_button(ui, "Schließen (X)").clicked() {
+                close = true;
+            }
+        });
+        for command in commands {
+            session.admin(command);
+        }
+        self.noclip = noclip;
+        if close {
+            self.admin_open = false;
+            self.refresh_cursor(ctx);
+        }
+    }
+
     /// Baumenü: die drei Gebäude mit Beschreibung, Kosten und Ertrag.
     fn build_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
@@ -405,6 +485,7 @@ impl Playground {
             && !self.free_camera
             && !self.inventory_open
             && !self.build_menu_open
+            && !self.admin_open
             && !self.map_open
             && !self.chat.open
             && !ctx.is_headless();
@@ -424,6 +505,15 @@ impl Playground {
                 }
                 if escape && self.map_open {
                     self.toggle_map(ctx);
+                    return;
+                }
+                // X: Admin-Panel (Noclip, Wetter, Truppen der Festung)
+                if (escape && self.admin_open) || (ctx.input.key_pressed(KeyCode::KeyX) && !self.free_camera) {
+                    self.admin_open = !self.admin_open;
+                    self.build_menu_open = false;
+                    self.inventory_open = false;
+                    self.build_mode = None;
+                    self.refresh_cursor(ctx);
                     return;
                 }
                 // B: Baumenü (bzw. Platzieren abbrechen)
@@ -582,6 +672,15 @@ impl Playground {
             return;
         }
         self.aim_animal = self.spell_aim(ctx).and_then(|(_, animal)| animal);
+        self.aim_enemy = None;
+        if self.tool() == Tool::Staff {
+            if let Some(session) = &self.session {
+                self.aim_enemy = session
+                    .world()
+                    .aimed_enemy(ctx.camera.position, ctx.camera.forward(), crate::world::CAST_RANGE + 8.0)
+                    .map(|(kind, health, _)| (kind, health));
+            }
+        }
         let Some(session) = &self.session else { return };
         let Some(local) = session.local_player() else { return };
         let Some(avatar) = session.world().players.get(&local) else { return };
@@ -637,6 +736,15 @@ impl Playground {
 
     /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff oder Tier anvisiert ist.
     fn aim_hud(&self, egui_ctx: &egui::Context) {
+        // Einheit der Festung im Visier: Name und Lebensleiste
+        if let (None, Some((kind, health))) = (self.build_mode, self.aim_enemy) {
+            let center = egui_ctx.content_rect().center();
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, kind.label(), egui::FontId::proportional(18.0), Color32::from_rgb(230, 170, 255));
+            painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, "Linksklick: Zauber", egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
+            ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, health as f32 / kind.max_health() as f32, 1.0);
+            return;
+        }
         // Beim Platzieren: was gebaut wird und ob es hier geht
         if let (Some((kind, _)), Some((_, _, check))) = (self.build_mode, self.build_site) {
             let center = egui_ctx.content_rect().center();
@@ -1102,6 +1210,7 @@ impl Game for Playground {
             self.demo_bau = Some((name, args.get(position + 2).and_then(|p| p.parse().ok())));
         }
         self.demo_build_menu = args.iter().any(|a| a == "--demo-baumenue");
+        self.demo_troops = args.iter().any(|a| a == "--demo-truppen");
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
@@ -1309,6 +1418,10 @@ impl Game for Playground {
                 self.demo_yaw_offset = 0.0;
             }
         }
+        if let (true, Some(session)) = (self.demo_troops, &mut self.session) {
+            self.demo_troops = false;
+            session.admin(crate::protocol::AdminCommand::Waves(true));
+        }
         if let (true, Some(session)) = (self.demo_build_menu, &mut self.session) {
             if let Some(local) = session.local_player() {
                 session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 27, stone: 14, ore: 3, ..Default::default() });
@@ -1423,6 +1536,7 @@ impl Game for Playground {
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
             Screen::Playing if self.build_menu_open => self.build_menu(ctx, egui_ctx),
+            Screen::Playing if self.admin_open => self.admin_panel(ctx, egui_ctx),
             Screen::Playing if self.map_open => {
                 if let Some(session) = &self.session {
                     if self.map_ui.show(ctx, egui_ctx, session.world(), session.local_player()) {

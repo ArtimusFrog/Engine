@@ -47,6 +47,8 @@ pub struct Replica {
     /// Takt der Begrüßung: Mitspieler, die direkt danach gemeldet werden, waren schon da
     /// (kein „… ist beigetreten“ für jeden).
     welcomed_at: Option<u64>,
+    /// Takt des zuletzt übernommenen Truppen-Standes
+    last_enemy_tick: u32,
 }
 
 impl Replica {
@@ -64,6 +66,7 @@ impl Replica {
             server_tick: None,
             last_reconciled: 0,
             corrections: 0,
+            last_enemy_tick: 0,
         })
     }
 
@@ -84,6 +87,11 @@ impl Replica {
         if let Some(text) = clean_chat(text) {
             self.net.send(Channel::Reliable, encode(&ClientMessage::Chat(text)));
         }
+    }
+
+    /// Schickt einen Befehl aus dem Admin-Panel an den Server.
+    pub fn send_admin(&mut self, command: AdminCommand) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Admin(command)));
     }
 
     /// Bittet den Server, ein Gebäude zu errichten.
@@ -204,8 +212,16 @@ impl Replica {
         }
     }
 
-    fn receive_snapshot(&mut self, ctx: &mut Context, world: &mut World, snapshot: Snapshot) {
+    fn receive_snapshot(&mut self, ctx: &mut Context, world: &mut World, mut snapshot: Snapshot) {
         world.day.sync(snapshot.hour, snapshot.day);
+        // Truppen, Wetter: der neueste Stand gilt (Angriffe jeweils nur einmal zeigen)
+        if snapshot.tick > self.last_enemy_tick {
+            self.last_enemy_tick = snapshot.tick;
+            world.feinde = std::mem::take(&mut snapshot.enemies);
+            world.set_weather(snapshot.weather);
+            world.heer.enabled = snapshot.waves;
+        }
+        world.strikes.append(&mut snapshot.strikes);
         let tick = snapshot.tick as f64;
         match &mut self.server_tick {
             Some(estimate) if (*estimate - tick).abs() < 30.0 => *estimate += (tick - *estimate) * 0.05,

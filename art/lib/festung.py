@@ -5,10 +5,11 @@ Torhaus mit Runen-Fallgitter und Totenschädel, Bergfried mit Dornenkrone, darü
 magische Kugel mit Ringen, Kristallsplittern und einem Lichtstrahl in den Himmel. Im Hof eine
 düstere Halle, ein leuchtender Runenkreis mit Altar und grüne Geisterfeuer; um die Festung
 schwebende Felsinseln mit Kristallen und Ketten, zerrissene Banner, tote Bäume; im Fels
-violett glühende Risse, eine Rampe auf Bögen hinauf zum Tor.
+violett glühende Risse. Achteckige Ringmauer mit vier Toren (Nord, Ost, Süd, West), vor jedem eine
+Rampe auf Bögen hinab zum Boden – aus diesen Toren marschieren die Truppen der Festung.
 
 Baut auf dem Baukasten von burg.py auf (Mauerwerk und Schiefer zeichnet der Shader).
-Z oben, das Tor zeigt nach -Y, Boden bei z = 0.
+Z oben, das Haupttor zeigt nach -Y (Süden), Boden bei z = 0.
 """
 
 import math
@@ -35,7 +36,8 @@ BANNER = "#3A1E4A"
 KNOCHEN = "#CFC8B8"
 
 SOCKEL_H = 11.0         # Höhe des Felsplateaus
-MAUER_R = 28.0          # Umkreis der sechseckigen Ringmauer
+MAUER_R = 28.0          # Umkreis der achteckigen Ringmauer (Ecken)
+TORE = (0, 90, 180, 270)  # Drehung der Tore um die Hochachse: Süd (-Y), Ost (+X), Nord (+Y), West (-X)
 MAUER_H = 10.0
 MAUER_D = 2.2
 
@@ -292,8 +294,9 @@ def mauer_d(bau, p1, p2, zufall, scharten=True):
         dorn(bau, m @ M((x, -d / 2 - 0.4, MAUER_H * 0.78), 0, -35), 1.2, 0.15)
 
 
-def torhaus_d(bau, y0, zufall):
-    """Torhaus: zwei Türme, Spitzbogen mit Runen-Fallgitter (halb offen), Totenschädel, Feuer."""
+def torhaus_d(bau, y0, zufall, tuerme=True):
+    """Torhaus: Spitzbogen mit Runen-Fallgitter (halb offen), Totenschädel, Feuer; mit `tuerme`
+    zwei eigene Flankentürme."""
     hw, tiefe, h = 5.5, 7.0, 14.0
     vorne, hinten = y0 - 3.5, y0 + 3.5
     oeff = 2.3
@@ -302,7 +305,8 @@ def torhaus_d(bau, y0, zufall):
     scheitel = hs + bogen_hoehe(oeff, r_bogen)
     for s in (-1, 1):
         bau.teil(quader(hw - oeff, tiefe, h), STEIN, MAUER, m=M((s * (oeff + hw) / 2, y0, SOCKEL_H)))
-        turm_d(bau, s * (hw + 2.0), y0 - 1.0, SOCKEL_H, 3.8, 20.0, 13.0, zufall)
+        if tuerme:
+            turm_d(bau, s * (hw + 2.0), y0 - 1.0, SOCKEL_H, 3.8, 20.0, 13.0, zufall)
     feld = bogen(oeff, hs, r_bogen, nur_bogen=True) + [(-oeff, h), (oeff, h)]
     bau.teil(platte(feld, tiefe, 0.0), STEIN, MAUER, m=M((0, hinten, SOCKEL_H)))
     bau.teil(quader(2 * oeff, tiefe, 0.08), BASALT_DUNKEL, PLATTEN, m=M((0, y0, SOCKEL_H)))
@@ -329,7 +333,10 @@ def torhaus_d(bau, y0, zufall):
         for k in range(3):
             dorn(bau, M((s * 1.4, vorne - 0.3, SOCKEL_H + scheitel + 1.7), 0, k * 25 - 25), 1.4, 0.12)
         geisterfeuer(bau, M((s * (oeff + 1.6), vorne - 1.6, SOCKEL_H)), zufall)
-        banner_d(bau, M((s * (hw + 2.0), y0 - 1.0 - 4.0, SOCKEL_H + 16.5)), 1.4, 5.0, zufall)
+        if tuerme:
+            banner_d(bau, M((s * (hw + 2.0), y0 - 1.0 - 4.0, SOCKEL_H + 16.5)), 1.4, 5.0, zufall)
+        else:
+            banner_d(bau, M((s * 3.9, vorne - 0.15, SOCKEL_H + 13.2)), 1.3, 4.6, zufall)
     return vorne
 
 
@@ -472,36 +479,33 @@ def schwebender_fels(bau, m, zufall, groesse=3.0):
 # ---------------------------------------------------------------------------
 # Die Festung
 # ---------------------------------------------------------------------------
-def festung(seed=66):
-    bau = Bau(seed)
-    zufall = random.Random(seed)
-    z = SOCKEL_H
+class _Gedreht:
+    """Gibt Bauteile mit einer zusätzlichen Drehung um die Hochachse an `bau` weiter – so lassen
+    sich Torhaus und Rampe, die für das Südtor geschrieben sind, an jede Seite stellen."""
 
-    # Basaltfelsen: Kern, zerklüfteter Rand aus vielen Brocken, glühende Risse, Plateau oben
-    bau.teil(zylinder(33.0, z, 10, 31.0), BASALT_DUNKEL, m=M((0, 0, 0)))
-    for k in range(34):
-        w = math.tau * k / 34 + zufall.uniform(-0.05, 0.05)
-        rr = zufall.uniform(31.0, 35.0)
-        if math.sin(w) < -0.93:
-            continue    # vor Tor und Rampe keine Felsen
-        fels(bau, M((math.cos(w) * rr, math.sin(w) * rr, 0), zufall.uniform(0, 360)), zufall.uniform(3.5, 6.0), z * zufall.uniform(0.85, 1.25),
-             zufall, BASALT if k % 3 else BASALT_DUNKEL)
-        if k % 4 == 0:
-            riss(bau, M((math.cos(w) * (rr + 3.0), math.sin(w) * (rr + 3.0), 0.5), math.degrees(w) + 90), z * 0.9, zufall)
-    bau.teil(zylinder(32.0, 0.12, 10), "#35313C", PLATTEN, m=M((0, 0, z - 0.02)))
-    for k in range(14):
-        w = math.tau * (k + 0.5) / 14 + zufall.uniform(-0.08, 0.08)
-        rr = zufall.uniform(34.0, 38.0)
-        if math.sin(w) < -0.8:
-            continue    # vor der Rampe frei
-        nadel = M((math.cos(w) * rr, math.sin(w) * rr, 0), zufall.uniform(0, 360))
-        fels(bau, nadel, zufall.uniform(1.8, 2.8), z + zufall.uniform(6.0, 13.0), zufall, BASALT)
-        if k % 2 == 0:
-            ader = M((math.cos(w) * (rr - 1.0), math.sin(w) * (rr - 1.0), zufall.uniform(2.0, z - 2.0)), math.degrees(w) - 90)
-            kristallbuendel(bau, ader @ M((0, 0, 0), 0, 70), zufall, 1.3, KRISTALL if k % 4 else MAGIE)
+    def __init__(self, bau, grad):
+        self._bau = bau
+        self._r = M((0, 0, 0), grad)
 
-    # Rampe vom Boden hinauf zum Tor: Keil aus Mauerwerk, gepflastert, Dornengeländer, Geisterfeuer
-    tor_y = -MAUER_R * math.cos(math.pi / 6)
+    def teil(self, geo, *args, m=None, **kw):
+        return self._bau.teil(geo, *args, m=self._r @ (m if m is not None else M()), **kw)
+
+    def __getattr__(self, name):
+        return getattr(self._bau, name)
+
+
+def _bei_tor(w, breite):
+    """Liegt der Winkel `w` (rad, 0 = +X) näher als `breite` an einer Torrichtung?"""
+    for grad in TORE:
+        tor = math.radians(grad - 90)
+        if abs(math.atan2(math.sin(w - tor), math.cos(w - tor))) < breite:
+            return True
+    return False
+
+
+def _rampe(bau, tor_y, z, zufall):
+    """Rampe vom Boden hinauf zum Tor (für das Südtor gebaut, `bau` ggf. gedreht):
+    Keil aus Mauerwerk, gepflastert, Dornengeländer, Geisterfeuer, Blendbögen, Vorplatz."""
     rampe_von, rampe_bis = tor_y - 8.0, tor_y - 44.0
     laenge = rampe_von - rampe_bis
     bau.teil(prisma([(rampe_bis, 0.0), (rampe_von, 0.0), (rampe_von, z)], 7.0), STEIN, MAUER, m=M((-3.5, 0, 0)))
@@ -512,40 +516,73 @@ def festung(seed=66):
             dorn(bau, M((s * 3.4, rampe_bis + laenge * t, z * t)), 1.8, 0.14)
         for t in (0.3, 0.75):
             geisterfeuer(bau, M((s * 2.7, rampe_bis + laenge * t, z * t)), zufall)
-        # Blendbögen an den Seiten der Rampe
         for i in range(4):
             t = (i + 0.5) / 4
             hoehe = z * t - 1.0
             if hoehe > 1.5:
                 bau.teil(platte(bogen(1.6, hoehe - 1.6, 1.6), 0.06, 0.0), "#15141A", m=M((s * 3.52, rampe_bis + laenge * t, 0), 90 * s))
-    # Vorplatz vor dem Tor
     bau.teil(quader(14.0, 10.0, z), BASALT_DUNKEL, m=M((0, tor_y - 4.0, 0)))
     bau.teil(quader(14.0, 10.0, 0.1), "#3E3B45", PLATTEN, m=M((0, tor_y - 4.0, z - 0.02)))
 
-    # Ringmauer (Sechseck, flache Seite vorne), Torhaus vorne, Türme an den Ecken
-    ecken = [(math.cos(math.radians(-90 + 30 + 60 * k)) * MAUER_R, math.sin(math.radians(-90 + 30 + 60 * k)) * MAUER_R) for k in range(6)]
-    # Ecken gegen den Uhrzeigersinn ab vorne rechts; die Vorderseite liegt zwischen Ecke 5 und 0
-    for i in range(6):
-        a, b = ecken[i], ecken[(i + 1) % 6]
-        if i == 5:
-            continue
-        mauer_d(bau, a, b, zufall)
-    vorne_links, vorne_rechts = ecken[5], ecken[0]
-    mauer_d(bau, vorne_links, (-7.5, tor_y), zufall)
-    mauer_d(bau, (7.5, tor_y), vorne_rechts, zufall)
+
+def festung(seed=66):
+    bau = Bau(seed)
+    zufall = random.Random(seed)
+    z = SOCKEL_H
+
+    # Basaltfelsen: Kern, zerklüfteter Rand aus vielen Brocken, glühende Risse, Plateau oben
+    bau.teil(zylinder(33.0, z, 10, 31.0), BASALT_DUNKEL, m=M((0, 0, 0)))
+    for k in range(34):
+        w = math.tau * k / 34 + zufall.uniform(-0.05, 0.05)
+        rr = zufall.uniform(31.0, 35.0)
+        if _bei_tor(w, 0.4):
+            continue    # vor Toren und Rampen keine Felsen
+        fels(bau, M((math.cos(w) * rr, math.sin(w) * rr, 0), zufall.uniform(0, 360)), zufall.uniform(3.5, 6.0), z * zufall.uniform(0.85, 1.25),
+             zufall, BASALT if k % 3 else BASALT_DUNKEL)
+        if k % 4 == 0:
+            riss(bau, M((math.cos(w) * (rr + 3.0), math.sin(w) * (rr + 3.0), 0.5), math.degrees(w) + 90), z * 0.9, zufall)
+    bau.teil(zylinder(32.0, 0.12, 10), "#35313C", PLATTEN, m=M((0, 0, z - 0.02)))
+    for k in range(14):
+        w = math.tau * (k + 0.5) / 14 + zufall.uniform(-0.08, 0.08)
+        rr = zufall.uniform(34.0, 38.0)
+        if _bei_tor(w, 0.62):
+            continue    # vor den Rampen frei
+        nadel = M((math.cos(w) * rr, math.sin(w) * rr, 0), zufall.uniform(0, 360))
+        fels(bau, nadel, zufall.uniform(1.8, 2.8), z + zufall.uniform(6.0, 13.0), zufall, BASALT)
+        if k % 2 == 0:
+            ader = M((math.cos(w) * (rr - 1.0), math.sin(w) * (rr - 1.0), zufall.uniform(2.0, z - 2.0)), math.degrees(w) - 90)
+            kristallbuendel(bau, ader @ M((0, 0, 0), 0, 70), zufall, 1.3, KRISTALL if k % 4 else MAGIE)
+
+    # Achteckige Ringmauer: Ecken bei 22,5° + k·45°, die geraden Seiten nach Süden, Osten,
+    # Norden und Westen tragen die Tore, die schrägen Seiten sind Mauer.
+    ecken = [(math.cos(math.radians(22.5 + 45 * k)) * MAUER_R, math.sin(math.radians(22.5 + 45 * k)) * MAUER_R) for k in range(8)]
+    tor_y = -MAUER_R * math.cos(math.radians(22.5))
+    halbe_seite = MAUER_R * math.sin(math.radians(22.5))
+    for k in range(8):
+        if k % 2 == 0:
+            mauer_d(bau, ecken[k], ecken[(k + 1) % 8], zufall)
+    for grad in TORE:
+        gedreht = _Gedreht(bau, grad)
+        mauer_d(gedreht, (-halbe_seite, tor_y), (-5.5, tor_y), zufall)
+        mauer_d(gedreht, (5.5, tor_y), (halbe_seite, tor_y), zufall)
+        torhaus_d(gedreht, tor_y, zufall, tuerme=False)
+        _rampe(gedreht, tor_y, z, zufall)
     for i, (x, y) in enumerate(ecken):
         turm_d(bau, x, y, z, 4.2, 18.0 + (i % 2) * 5.0, 14.0 + (i % 3) * 2.0, zufall)
-    torhaus_d(bau, tor_y, zufall)
 
     # Bergfried hinten, Halle links, Runenkreis rechts, Geisterfeuer im Hof
     bergfried(bau, 0.0, 9.0, zufall)
-    halle_d(bau, M((-12.5, -7.0, z), 90), 18.0, 9.0, zufall)
-    runenkreis(bau, M((11.0, -8.0, z)), zufall)
-    for x, y in ((-4.0, -16.0), (4.0, -16.0), (6.0, 0.5), (-6.0, 0.5)):
+    # (Halle und Runenkreis in den schrägen Ecken, damit die vier Wege zu den Toren frei bleiben)
+    halle_d(bau, M((-11.0, -11.0, z), 45), 11.0, 7.0, zufall)
+    runenkreis(bau, M((11.0, -11.0, z)), zufall)
+    for x, y in ((-4.0, -16.0), (4.0, -16.0), (6.5, 6.5), (-6.5, 6.5), (16.0, 4.0), (16.0, -4.0), (-16.0, 4.0), (-16.0, -4.0)):
         geisterfeuer(bau, M((x, y, z)), zufall)
-    for i in range(5):
-        kristallbuendel(bau, M((zufall.uniform(-20, 20), zufall.uniform(-18, -10), z), zufall.uniform(0, 360)), zufall, 0.8,
-                        KRISTALL if i % 2 else MAGIE)
+    for i in range(6):
+        x = zufall.choice((-1, 1)) * zufall.uniform(5.0, 9.0)
+        y = zufall.choice((-1, 1)) * zufall.uniform(15.0, 20.0)
+        if i % 2:
+            x, y = y, x
+        kristallbuendel(bau, M((x, y, z), zufall.uniform(0, 360)), zufall, 0.8, KRISTALL if i % 2 else MAGIE)
 
     # Ketten zwischen Bergfried und den hinteren Türmen
     for k in (1, 2):
@@ -564,8 +601,8 @@ def festung(seed=66):
         w = math.tau * k / 9 + 0.2
         rr = zufall.uniform(38.0, 46.0)
         p = M((math.cos(w) * rr, math.sin(w) * rr, 0), zufall.uniform(0, 360))
-        if abs(math.cos(w)) < 0.35 and math.sin(w) < 0:
-            continue    # vor der Rampe frei lassen
+        if _bei_tor(w, 0.45):
+            continue    # vor den Rampen frei lassen
         if k % 2 == 0:
             toter_baum(bau, p, zufall, zufall.uniform(5.0, 7.5))
         else:
@@ -574,10 +611,10 @@ def festung(seed=66):
 
     # Tote Ranken an der Ringmauer
     for i, (x, y) in enumerate(ecken):
-        nx, ny = ecken[(i + 1) % 6]
+        nx, ny = ecken[(i + 1) % 8]
         mx, my = (x + nx) / 2, (y + ny) / 2
-        if i == 5:
-            continue
+        if i % 2:
+            continue    # Torseiten
         aussen = math.degrees(math.atan2(my, mx)) - 90
         efeu(bau, M((mx * 1.04, my * 1.04, z), aussen), 3.5, 8.0, 500 + i, 0.8, RANKEN)
     return bau.fertig("Schattenfestung", glas_leuchten=1.0, ursprung=(0.0, 0.0))

@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0011;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0012;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -30,6 +30,25 @@ pub struct PlayerInput {
     pub harvest: Option<u32>,
     /// Werkzeug in der Hand (Auswahlleiste).
     pub tool: Tool,
+    /// Admin: frei fliegen, durch Wände (`rise` = hoch/runter, -1..1)
+    pub noclip: bool,
+    pub rise: f32,
+}
+
+/// Wetter, das das Admin-Panel erzwingen kann (0 = automatisch nach Tag und Uhrzeit).
+pub const WETTER: [&str; 8] = ["automatisch", "klar", "wolken", "regen", "gewitter", "regenbogen", "polarlicht", "nebel"];
+
+/// Befehle aus dem Admin-Panel (Taste X).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum AdminCommand {
+    /// Wetter nach `WETTER` (0 = automatisch)
+    Weather(u8),
+    /// Truppen aus der Schattenfestung an/aus
+    Waves(bool),
+    /// Sofort eine Welle
+    WaveNow,
+    /// Alle Truppen entfernen
+    ClearEnemies,
 }
 
 /// Werkzeuge in der Auswahlleiste. Jeder Spieler hat sie von Anfang an.
@@ -107,6 +126,13 @@ pub struct Snapshot {
     pub day: u32,
     /// Tiere, die sich bewegt haben (alle paar Sekunden alle).
     pub animals: Vec<crate::animals::AnimalState>,
+    /// Alle Truppen der Festung, die gerade unterwegs sind
+    pub enemies: Vec<crate::heer::EnemyState>,
+    /// Angriffe der Truppen seit dem letzten Schnappschuss: (Art, von, Ziel)
+    pub strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
+    /// Erzwungenes Wetter (Index in `WETTER`) und ob die Festung Truppen schickt
+    pub weather: u8,
+    pub waves: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,6 +175,8 @@ pub enum ClientMessage {
     Chat(String),
     /// Gebäude errichten: Art, Mitte (x, z) und Drehung.
     Build { kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32 },
+    /// Befehl aus dem Admin-Panel
+    Admin(AdminCommand),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {

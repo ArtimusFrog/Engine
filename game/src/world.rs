@@ -39,6 +39,8 @@ pub struct Avatar {
     pub last_harvest_tick: u64,
     pub name: String,
     pub class: CharacterClass,
+    /// Admin: fliegt frei durch Wände
+    pub noclip: bool,
 }
 
 pub struct NetObject {
@@ -166,6 +168,15 @@ pub struct World {
     pub buildings: Vec<crate::bauten::Building>,
     /// Baustellen, fertige Gebäude und die Bauvorschau (nur mit Fenster)
     bau: crate::bauten::BauVisuals,
+    /// Truppen der Schattenfestung: Simulation (nur beim Server) …
+    pub heer: crate::heer::Heer,
+    /// … und was alle davon sehen (beim Client aus den Schnappschüssen)
+    pub feinde: Vec<crate::heer::EnemyState>,
+    /// Angriffe der Truppen, die noch gezeigt werden sollen
+    pub strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
+    heer_ansicht: crate::heer::HeerAnsicht,
+    /// Erzwungenes Wetter (Index in `protocol::WETTER`, 0 = automatisch)
+    pub weather_choice: u8,
 }
 
 impl World {
@@ -174,6 +185,14 @@ impl World {
         let settings = CharacterSettings::default();
         let capsule = ctx.assets.named_mesh("spielfigur", || MeshData::capsule(settings.radius, settings.height, 24, 8));
         let island = island::build(ctx);
+        // Marschrouten der Truppen: vom Hof durch das Tor über die Rampe und die Straße
+        let achsen = [Vec2::Y, Vec2::X, Vec2::NEG_Y, Vec2::NEG_X];
+        let routes = island
+            .strassen
+            .iter()
+            .zip(achsen)
+            .map(|(strasse, achse)| crate::heer::Route::new(achse, island::festung_hoehe(), strasse, |p| island.terrain.height_at(p.x, p.y)))
+            .collect();
         let animals = animals::populate(&island.terrain, island.spawn, island::SEED, island::moisture);
         let mut world = World {
             players: HashMap::new(),
@@ -201,6 +220,11 @@ impl World {
             weather: Default::default(),
             buildings: Vec::new(),
             bau: Default::default(),
+            heer: crate::heer::Heer::new(routes),
+            feinde: Vec::new(),
+            strikes: Vec::new(),
+            heer_ansicht: Default::default(),
+            weather_choice: 0,
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -249,6 +273,23 @@ impl World {
         }
     }
 
+    /// Wetter erzwingen (Index in `protocol::WETTER`, 0 = wieder automatisch).
+    pub fn set_weather(&mut self, choice: u8) {
+        if choice == self.weather_choice {
+            return;
+        }
+        self.weather_choice = choice;
+        match crate::protocol::WETTER.get(choice as usize) {
+            Some(&name) if choice > 0 => self.weather.force_named(name),
+            _ => self.weather.force = None,
+        }
+    }
+
+    /// Gegner unter dem Fadenkreuz: Art, Lebenspunkte, Mitte.
+    pub fn aimed_enemy(&self, from: Vec3, direction: Vec3, max: f32) -> Option<(crate::heer::EnemyKind, u8, Vec3)> {
+        self.heer_ansicht.aimed(from, direction, max)
+    }
+
     /// Vorschau beim Platzieren (Art, Ort, Drehung, passt?) – `None` blendet sie aus.
     pub fn set_build_preview(&mut self, ctx: &mut Context, preview: Option<(crate::bauten::BuildingKind, Vec3, f32, bool)>) {
         if !ctx.is_headless() {
@@ -284,7 +325,17 @@ impl World {
         let character = ctx.physics.add_character(entity, position, CharacterSettings::default());
         self.players.insert(
             id,
-            Avatar { entity, character, facing: 0.0, tool: Tool::default(), last_cast_tick: 0, last_harvest_tick: 0, name: name.to_string(), class },
+            Avatar {
+                entity,
+                character,
+                facing: 0.0,
+                tool: Tool::default(),
+                last_cast_tick: 0,
+                last_harvest_tick: 0,
+                name: name.to_string(),
+                class,
+                noclip: false,
+            },
         );
         self.inventories.entry(id).or_default();
         log::info!("{name} ({id}) ist da");
@@ -307,9 +358,17 @@ impl World {
         let harvest_target = input.harvest.and_then(|r| self.resources.get(&r)).map(|r| r.spec.transform.position);
         let Some(avatar) = self.players.get_mut(&id) else { return };
         avatar.tool = input.tool;
+        avatar.noclip = input.noclip;
         let wish = vec3(input.wish.x, 0.0, input.wish.y).clamp_length_max(1.0);
         let speed = if input.sprint { SPRINT_SPEED } else { WALK_SPEED };
-        ctx.physics.drive_character(avatar.character, wish * speed, input.jump);
+        if input.noclip {
+            // Frei fliegen, durch alles hindurch (Admin)
+            let fly = (wish * 3.0 + Vec3::Y * input.rise.clamp(-1.0, 1.0) * 1.6) * speed;
+            let position = ctx.physics.character_position(avatar.character) + fly * Physics::FIXED_DT;
+            ctx.physics.teleport_character(avatar.character, position);
+        } else {
+            ctx.physics.drive_character(avatar.character, wish * speed, input.jump);
+        }
         if wish.length_squared() > 0.01 {
             avatar.facing = wish.x.atan2(-wish.z);
         }
@@ -884,6 +943,18 @@ impl World {
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
         self.weather.apply(ctx, self.day.day, self.day.hour);
+        // Im düsteren Land um die Schattenfestung: fahles Licht, violetter Dunst
+        let d = island::duester(vec2(ctx.camera.position.x, ctx.camera.position.z));
+        if d > 0.0 {
+            let env = &mut ctx.env;
+            let dunst = vec3(0.16, 0.12, 0.2);
+            env.sun_color *= 1.0 - 0.45 * d;
+            env.sky_ambient = env.sky_ambient.lerp(env.sky_ambient * vec3(0.7, 0.6, 0.85), d);
+            env.ground_ambient *= 1.0 - 0.35 * d;
+            env.sky_color = env.sky_color.lerp(dunst, 0.55 * d);
+            env.zenith_color = env.zenith_color.lerp(vec3(0.1, 0.07, 0.14), 0.45 * d);
+            env.fog_density += 0.0045 * d;
+        }
         if let Some(volume) = self.weather.take_thunder(ctx.time.delta) {
             self.sound_events.push(SoundEvent::Thunder { volume });
         }
@@ -909,6 +980,14 @@ impl World {
         }
         for kind in self.bau.update(ctx, &self.buildings, &mut self.sound_events) {
             self.chat_events.push(ChatLine::notice(format!("{} ist fertig gebaut und liefert jetzt {}.", kind.label(), kind.produces().label())));
+        }
+        if !ctx.is_headless() {
+            self.heer_ansicht.update(ctx, &self.feinde, &mut self.sound_events);
+            for (kind, from, target) in std::mem::take(&mut self.strikes) {
+                strike_visual(ctx, &mut self.sound_events, kind, from, target);
+            }
+        } else {
+            self.strikes.clear();
         }
         self.update_bolts(ctx);
         messen("tiere", || {
@@ -1103,3 +1182,51 @@ pub fn hue(h: f32) -> Vec3 {
     };
     vec3(k(5.0), k(3.0), k(1.0)).powf(2.2) * 0.9
 }
+
+/// Ein Angriff der Festungstruppen (nur Optik): Pfeil, Zauber oder Hieb.
+fn strike_visual(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, kind: crate::heer::EnemyKind, from: Vec3, target: Vec3) {
+    use crate::heer::EnemyKind;
+    let target = target + Vec3::Y * 0.2;
+    let (color, glow, streak) = match kind {
+        EnemyKind::Archer => (vec3(0.45, 0.32, 0.2), 0.0, true),
+        EnemyKind::Warlock => (vec3(0.8, 0.35, 1.0), 4.0, true),
+        _ => (vec3(0.9, 0.85, 0.8), 1.5, false),
+    };
+    if streak {
+        // Flugbahn als kurze Spur aus Funken
+        let steps = (from.distance(target) / 0.8).clamp(4.0, 30.0) as usize;
+        for i in 0..steps {
+            let t = i as f32 / steps as f32;
+            ctx.particles.burst(Burst {
+                position: from.lerp(target, t) + Vec3::Y * (t * (1.0 - t) * from.distance(target) * 0.08),
+                count: 1,
+                color,
+                color_variation: 0.1,
+                speed: 0.1,
+                direction: Vec3::ZERO,
+                size: if glow > 0.0 { 0.12 } else { 0.06 },
+                life: 0.25 + t * 0.2,
+                gravity: 0.0,
+                glow,
+                grow: 0.0,
+                round: glow > 0.0,
+            });
+        }
+    }
+    ctx.particles.burst(Burst {
+        position: target,
+        count: 10,
+        color,
+        color_variation: 0.2,
+        speed: 2.5,
+        direction: Vec3::Y * 0.5,
+        size: 0.07,
+        life: 0.4,
+        gravity: 6.0,
+        glow,
+        grow: 0.0,
+        round: false,
+    });
+    sounds.push(SoundEvent::Impact { at: target, animal: false, killed: false });
+}
+

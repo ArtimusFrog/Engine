@@ -128,6 +128,15 @@ impl Session {
         }
     }
 
+    /// Befehl aus dem Admin-Panel (beim Host/Einzelspieler direkt, sonst an den Server).
+    pub fn admin(&mut self, command: crate::protocol::AdminCommand) {
+        if let Some(replica) = &mut self.replica {
+            replica.send_admin(command);
+        } else if let Some(authority) = &mut self.authority {
+            authority.admin(&mut self.world, command);
+        }
+    }
+
     /// Stellt die Uhr vor (nur wer die Welt berechnet: Einzelspieler, Host, Server).
     pub fn skip_time(&mut self, hours: f32) -> bool {
         if self.authority.is_none() {

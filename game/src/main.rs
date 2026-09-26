@@ -13,6 +13,7 @@ mod island;
 mod karte;
 mod leben;
 mod bauten;
+mod heer;
 mod markierungen;
 mod messung;
 mod models;

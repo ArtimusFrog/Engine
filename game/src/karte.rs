@@ -124,6 +124,14 @@ impl MapUi {
                 diamond(&clip, at, 4.0 + self.zoom.sqrt(), Color32::from_rgb(170, 60, 40), INK);
                 label(&clip, at + egui::vec2(0.0, -14.0), name, 13.0 + self.zoom.sqrt(), INK);
             }
+            // Heerstraßen der Festung: dunkelrot, mit Punkt am Ende (dort verschwinden die Truppen)
+            for strasse in world.heer.strassen() {
+                let punkte: Vec<egui::Pos2> = strasse.iter().step_by(2).map(|&p| to_screen(p)).collect();
+                clip.add(egui::Shape::line(punkte.clone(), Stroke::new(2.5 + self.zoom.sqrt(), Color32::from_rgb(110, 30, 45))));
+                if let Some(&ende) = punkte.last() {
+                    clip.circle_filled(ende, 4.0 + self.zoom.sqrt(), Color32::from_rgb(110, 30, 45));
+                }
+            }
             // Gebäude der Spieler: kleines Haus (halb durchsichtig, solange gebaut wird)
             for building in &world.buildings {
                 let at = to_screen(vec2(building.position.x, building.position.z));

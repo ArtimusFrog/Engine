@@ -240,16 +240,22 @@ pub fn build_festung(ctx: &mut Context, places: &mut Places) {
     let blender = |x: f32, y: f32, z: f32| origin + vec3(x, z, -y);
     let gruen = vec3(0.7, 2.6, 1.1);
     let violett = vec3(1.8, 0.6, 2.8);
-    for s in [-1.0, 1.0] {
-        places.lights.push((blender(s * 3.9, -29.35, 12.6), gruen, 10.0));
-        places.lights.push((blender(s * 2.7, -57.45, 4.7), gruen, 9.0));
-        places.lights.push((blender(s * 2.7, -41.25, 9.6), gruen, 9.0));
+    // Geisterfeuer an den vier Toren und Rampen (für das Südtor berechnet, dann gedreht)
+    for grad in [0.0f32, 90.0, 180.0, 270.0] {
+        let (sin, cos) = grad.to_radians().sin_cos();
+        let drehen = |x: f32, y: f32| (x * cos - y * sin, x * sin + y * cos);
+        for s in [-1.0, 1.0] {
+            for (x, y, z) in [(s * 3.9, -30.97, 12.6), (s * 2.7, -59.07, 4.7), (s * 2.7, -42.87, 9.65)] {
+                let (x, y) = drehen(x, y);
+                places.lights.push((blender(x, y, z), gruen, 9.0));
+            }
+        }
     }
-    for (x, y) in [(-4.0, -16.0), (4.0, -16.0), (6.0, 0.5), (-6.0, 0.5)] {
+    for (x, y) in [(-4.0, -16.0), (4.0, -16.0), (6.5, 6.5), (-6.5, 6.5), (16.0, 4.0), (16.0, -4.0), (-16.0, 4.0), (-16.0, -4.0)] {
         places.lights.push((blender(x, y, 12.5), gruen, 10.0));
     }
     places.labels.push(("Festungstor", vec2(0.0, 30.0)));
-    places.lights.push((blender(11.0, -8.0, 12.0), violett, 12.0));
+    places.lights.push((blender(11.0, -11.0, 12.0), violett, 12.0));
 }
 
 // ---------------------------------------------------------------------------
