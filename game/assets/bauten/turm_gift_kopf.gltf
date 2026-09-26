@@ -24,25 +24,25 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		},
 		{
 			"doubleSided":true,
 			"emissiveFactor":[
 				1,
-				0.7605245113372803,
-				0.3915724754333496
+				0.43415364623069763,
+				0.0802198201417923
 			],
 			"extensions":{
 				"KHR_materials_emissive_strength":{
-					"emissiveStrength":2.5
+					"emissiveStrength":2.200000047683716
 				}
 			},
-			"name":"Kopf_giftGlas",
+			"name":"Kopf_giftLeuchten",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
 				"roughnessFactor":0.5
@@ -57,20 +57,18 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				},
 				{
 					"attributes":{
-						"POSITION":5,
-						"NORMAL":6,
-						"TEXCOORD_0":7,
-						"COLOR_0":8
+						"POSITION":4,
+						"NORMAL":5,
+						"COLOR_0":6
 					},
-					"indices":9,
+					"indices":7,
 					"material":1
 				}
 			]
@@ -80,149 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":340,
+			"count":1044,
 			"max":[
-				0.7200000286102295,
-				1.2905255556106567,
-				1.379422903060913
+				0.6200000047683716,
+				1.0800000429153442,
+				1.1379473209381104
 			],
 			"min":[
-				-0.7200000286102295,
+				-0.6200000047683716,
 				0,
-				-0.6847606897354126
+				-0.7200000286102295
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":340,
+			"count":1044,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":340,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":340,
+			"count":1044,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":546,
+			"count":1548,
 			"type":"SCALAR"
+		},
+		{
+			"bufferView":4,
+			"componentType":5126,
+			"count":228,
+			"max":[
+				0.44999998807907104,
+				1.1799999475479126,
+				0.3499999940395355
+			],
+			"min":[
+				-0.44999998807907104,
+				1.059999942779541,
+				-0.550000011920929
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":240,
-			"max":[
-				0.5325916409492493,
-				1.2599999904632568,
-				0.5600000023841858
-			],
-			"min":[
-				-0.5325916409492493,
-				1.0499999523162842,
-				-0.5600000023841858
-			],
+			"count":228,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":240,
+			"count":228,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
-			"componentType":5126,
-			"count":240,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":8,
-			"componentType":5126,
-			"count":240,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":9,
 			"componentType":5123,
-			"count":288,
+			"count":246,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":4080,
+			"byteLength":12528,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4080,
-			"byteOffset":4080,
+			"byteLength":12528,
+			"byteOffset":12528,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2720,
-			"byteOffset":8160,
+			"byteLength":12528,
+			"byteOffset":25056,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4080,
-			"byteOffset":10880,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1092,
-			"byteOffset":14960,
+			"byteLength":3096,
+			"byteOffset":37584,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":2880,
-			"byteOffset":16052,
+			"byteLength":2736,
+			"byteOffset":40680,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2880,
-			"byteOffset":18932,
+			"byteLength":2736,
+			"byteOffset":43416,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1920,
-			"byteOffset":21812,
+			"byteLength":2736,
+			"byteOffset":46152,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2880,
-			"byteOffset":23732,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":576,
-			"byteOffset":26612,
+			"byteLength":492,
+			"byteOffset":48888,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":27188,
+			"byteLength":49380,
 			"uri":"turm_gift_kopf.bin"
 		}
 	]

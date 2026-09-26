@@ -3,6 +3,9 @@
 		"generator":"Khronos glTF Blender I/O v5.2.40",
 		"version":"2.0"
 	},
+	"extensionsUsed":[
+		"KHR_materials_emissive_strength"
+	],
 	"scene":0,
 	"scenes":[
 		{
@@ -21,10 +24,28 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
+			}
+		},
+		{
+			"doubleSided":true,
+			"emissiveFactor":[
+				1,
+				0.43415364623069763,
+				0.0802198201417923
+			],
+			"extensions":{
+				"KHR_materials_emissive_strength":{
+					"emissiveStrength":2.200000047683716
+				}
+			},
+			"name":"Turm_pfeil_3Leuchten",
+			"pbrMetallicRoughness":{
+				"metallicFactor":0,
+				"roughnessFactor":0.5
 			}
 		}
 	],
@@ -36,11 +57,19 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
+				},
+				{
+					"attributes":{
+						"POSITION":4,
+						"NORMAL":5,
+						"COLOR_0":6
+					},
+					"indices":7,
+					"material":1
 				}
 			]
 		}
@@ -49,79 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":1776,
+			"count":17338,
 			"max":[
-				1.8200000524520874,
-				9.100000381469727,
-				1.8200000524520874
+				2.088400363922119,
+				9.269999504089355,
+				2.082331895828247
 			],
 			"min":[
-				-1.8200000524520874,
+				-2.1455068588256836,
 				-0.6000000238418579,
-				-1.8200000524520874
+				-2.1577553749084473
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":1776,
+			"count":17338,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":1776,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":1776,
+			"count":17338,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":2736,
+			"count":23640,
+			"type":"SCALAR"
+		},
+		{
+			"bufferView":4,
+			"componentType":5126,
+			"count":24,
+			"max":[
+				1.75,
+				1.8600000143051147,
+				1.53000009059906
+			],
+			"min":[
+				1.5899999141693115,
+				1.5800000429153442,
+				1.3700000047683716
+			],
+			"type":"VEC3"
+		},
+		{
+			"bufferView":5,
+			"componentType":5126,
+			"count":24,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":6,
+			"componentType":5126,
+			"count":24,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":7,
+			"componentType":5123,
+			"count":36,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":21312,
+			"byteLength":208056,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":21312,
-			"byteOffset":21312,
+			"byteLength":208056,
+			"byteOffset":208056,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":14208,
-			"byteOffset":42624,
+			"byteLength":208056,
+			"byteOffset":416112,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":21312,
-			"byteOffset":56832,
+			"byteLength":47280,
+			"byteOffset":624168,
+			"target":34963
+		},
+		{
+			"buffer":0,
+			"byteLength":288,
+			"byteOffset":671448,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5472,
-			"byteOffset":78144,
+			"byteLength":288,
+			"byteOffset":671736,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":288,
+			"byteOffset":672024,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":72,
+			"byteOffset":672312,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":83616,
+			"byteLength":672384,
 			"uri":"turm_pfeil_3.bin"
 		}
 	]

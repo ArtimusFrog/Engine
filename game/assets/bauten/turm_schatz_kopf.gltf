@@ -24,25 +24,25 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		},
 		{
 			"doubleSided":true,
 			"emissiveFactor":[
 				1,
-				0.7605245113372803,
-				0.3915724754333496
+				0.43415364623069763,
+				0.0802198201417923
 			],
 			"extensions":{
 				"KHR_materials_emissive_strength":{
-					"emissiveStrength":2.5
+					"emissiveStrength":2.200000047683716
 				}
 			},
-			"name":"Kopf_schatzGlas",
+			"name":"Kopf_schatzLeuchten",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
 				"roughnessFactor":0.5
@@ -57,20 +57,18 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				},
 				{
 					"attributes":{
-						"POSITION":5,
-						"NORMAL":6,
-						"TEXCOORD_0":7,
-						"COLOR_0":8
+						"POSITION":4,
+						"NORMAL":5,
+						"COLOR_0":6
 					},
-					"indices":9,
+					"indices":7,
 					"material":1
 				}
 			]
@@ -80,57 +78,57 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":484,
+			"count":1604,
 			"max":[
-				0.8799999952316284,
-				1.1309165954589844,
-				0.599615216255188
+				0.699999988079071,
+				1.2421684265136719,
+				0.6824495196342468
 			],
 			"min":[
-				-0.8799999952316284,
+				-0.699999988079071,
 				0,
-				-0.7021966576576233
+				-0.6824495196342468
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":484,
+			"count":1604,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":484,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":484,
+			"count":1604,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":768,
+			"count":2016,
 			"type":"SCALAR"
+		},
+		{
+			"bufferView":4,
+			"componentType":5126,
+			"count":36,
+			"max":[
+				0.1599999964237213,
+				1.2599999904632568,
+				0.1385640650987625
+			],
+			"min":[
+				-0.1599999964237213,
+				0.8999999761581421,
+				-0.1385640650987625
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
 			"count":36,
-			"max":[
-				0.1599999964237213,
-				1.1600000858306885,
-				0.1385640650987625
-			],
-			"min":[
-				-0.1599999964237213,
-				0.800000011920929,
-				-0.1385640650987625
-			],
 			"type":"VEC3"
 		},
 		{
@@ -141,18 +139,6 @@
 		},
 		{
 			"bufferView":7,
-			"componentType":5126,
-			"count":36,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":8,
-			"componentType":5126,
-			"count":36,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":9,
 			"componentType":5123,
 			"count":36,
 			"type":"SCALAR"
@@ -161,68 +147,56 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":5808,
+			"byteLength":19248,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5808,
-			"byteOffset":5808,
+			"byteLength":19248,
+			"byteOffset":19248,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3872,
-			"byteOffset":11616,
+			"byteLength":19248,
+			"byteOffset":38496,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5808,
-			"byteOffset":15488,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1536,
-			"byteOffset":21296,
+			"byteLength":4032,
+			"byteOffset":57744,
 			"target":34963
 		},
 		{
 			"buffer":0,
 			"byteLength":432,
-			"byteOffset":22832,
+			"byteOffset":61776,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":432,
-			"byteOffset":23264,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":288,
-			"byteOffset":23696,
+			"byteOffset":62208,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":432,
-			"byteOffset":23984,
+			"byteOffset":62640,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":72,
-			"byteOffset":24416,
+			"byteOffset":63072,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":24488,
+			"byteLength":63144,
 			"uri":"turm_schatz_kopf.bin"
 		}
 	]

@@ -14,7 +14,7 @@ use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{Inventory, Item};
-use crate::tuerme::{FallenArt, TowerKind, KOPF_GROESSE, KOPF_Z, MAX_STUFE};
+use crate::tuerme::{kopf_hoehe, FallenArt, TowerKind, KOPF_GROESSE, MAX_STUFE, TURM_GROESSE};
 use crate::world::SoundEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -149,9 +149,9 @@ impl BuildingKind {
             BuildingKind::Lumberjack => 7.4,
             BuildingKind::Quarry => 8.0,
             BuildingKind::Mine => 7.4,
-            BuildingKind::Tower(TowerKind::Catapult) => 3.3,
-            BuildingKind::Tower(TowerKind::Barracks | TowerKind::Treasury) => 2.9,
-            BuildingKind::Tower(_) => 2.6,
+            BuildingKind::Tower(TowerKind::Catapult) => 3.3 * TURM_GROESSE,
+            BuildingKind::Tower(TowerKind::Barracks | TowerKind::Treasury) => 2.9 * TURM_GROESSE,
+            BuildingKind::Tower(_) => 2.6 * TURM_GROESSE,
             BuildingKind::Falle(_) => 2.0,
         }
     }
@@ -179,8 +179,8 @@ impl BuildingKind {
             BuildingKind::Quarry => vec![([0.0, 1.6, -4.3], [11.0, 3.2, 3.2]), ([2.6, 2.7, -0.2], [0.6, 5.4, 0.6])],
             BuildingKind::Mine => vec![([0.0, 1.8, -4.3], [10.0, 3.6, 4.2])],
             BuildingKind::Tower(t) => {
-                let h = KOPF_Z[(level.clamp(1, MAX_STUFE) - 1) as usize] + 1.0;
-                let breite = if t == TowerKind::Catapult { 4.4 } else { 3.3 };
+                let h = kopf_hoehe(level) + TURM_GROESSE;
+                let breite = if t == TowerKind::Catapult { 4.4 } else { 3.3 } * TURM_GROESSE;
                 vec![([0.0, h / 2.0, 0.0], [breite, h, breite])]
             }
             BuildingKind::Falle(_) => Vec::new(),
@@ -212,7 +212,7 @@ pub const PRODUCTION_SECONDS: f32 = 40.0;
 /// Wie weit man vom Bauplatz entfernt stehen darf.
 pub const BUILD_REACH: f32 = 32.0;
 /// Türme stehen mit ihrer Mitte so weit neben einer Heerstraße (Mittellinie, Meter).
-pub const TURM_ABSTAND: (f32, f32) = (4.5, 14.0);
+pub const TURM_ABSTAND: (f32, f32) = (6.0, 16.0);
 
 fn stufe_eins() -> u8 {
     1
@@ -535,7 +535,7 @@ impl BauVisuals {
     pub fn shot(&mut self, ctx: &mut Context, building: &Building, target: Vec3, sounds: &mut Vec<SoundEvent>) {
         let Some(kind) = building.tower() else { return };
         let zweig = building.aktiver_zweig();
-        let z = KOPF_Z[(building.level.clamp(1, MAX_STUFE) - 1) as usize];
+        let z = kopf_hoehe(building.level);
         let mut mund = building.position + Vec3::Y * (z + 1.0 * KOPF_GROESSE);
         if let Some(kopf) = self.sites.get_mut(&building.id).and_then(|s| s.head.as_mut()) {
             let to = target - building.position;
@@ -683,7 +683,10 @@ impl BauVisuals {
         let Some(visual) = self.kind(ctx, &model) else { return };
         let (full_mesh, glow_mesh, band_meshes) = (visual.full, visual.glow, visual.bands.clone());
         let (min, max, height) = (visual.min, visual.max, visual.height);
-        let transform = Transform::from_position(building.position).with_rotation(building.rotation());
+        // Türme werden größer dargestellt als modelliert
+        let groesse = if building.tower().is_some() { TURM_GROESSE } else { 1.0 };
+        let transform = Transform::from_position(building.position).with_rotation(building.rotation()).with_scale(Vec3::splat(groesse));
+        let (min, max, height) = (min * groesse, max * groesse, height * groesse);
         let bands = band_meshes.iter().map(|&m| ctx.scene.spawn(Entity::new("Bauabschnitt", m).with_transform(transform))).collect();
         let full = ctx.scene.spawn(Entity::new(building.kind.label(), full_mesh).with_transform(transform));
         let glow = glow_mesh.map(|m| ctx.scene.spawn(Entity::new("Licht", m).with_transform(transform).with_material(Material::Emissive { glow: 2.2 })));
@@ -699,8 +702,9 @@ impl BauVisuals {
         }
         // Turmkopf oben auf der Plattform (dreht sich zum Ziel)
         let head = building.tower().and_then(|t| {
-            let (mesh, _) = crate::asset_files::load_variants(ctx, "bauten", &format!("turm_{}_kopf", t.file()), Vec3::ONE, 0.0).into_iter().next()?;
-            let z = KOPF_Z[(building.level.clamp(1, MAX_STUFE) - 1) as usize];
+            let (mesh, glow) = crate::asset_files::load_variants(ctx, "bauten", &format!("turm_{}_kopf", t.file()), Vec3::ONE, 0.0).into_iter().next()?;
+            detailstufen(ctx, mesh, glow);
+            let z = kopf_hoehe(building.level);
             let transform = Transform::from_position(building.position + Vec3::Y * z)
                 .with_rotation(building.rotation())
                 .with_scale(Vec3::splat(KOPF_GROESSE));
@@ -898,7 +902,7 @@ impl BauVisuals {
         let pulse = 0.5 + 0.5 * (ctx.time.elapsed * 4.0).sin();
         let farbe = if valid { vec4(0.35, 1.7, 0.45, 1.0) } else { vec4(1.9, 0.35, 0.3, 1.0) };
         let entity = ctx.scene.get_mut(ghost.entity);
-        entity.transform = Transform::from_position(position).with_rotation(Quat::from_rotation_y(yaw));
+        entity.transform = Transform::from_position(position).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(if kind.tower().is_some() { TURM_GROESSE } else { 1.0 }));
         entity.color = farbe;
         entity.material = Material::Emissive { glow: 0.3 + pulse * 0.25 };
         if let (Some(ring), Some(tower)) = (ghost.ring, kind.tower()) {
@@ -1019,9 +1023,25 @@ fn ring_mesh() -> MeshData {
     mesh
 }
 
+/// Detailstufen für Gebäude, Türme und Köpfe: aus der Nähe alle Steine und Bretter, ab 25 m
+/// vergröbert, ab 60 m noch gröber (die fein gebauten Modelle haben viele kleine Dreiecke).
+fn detailstufen(ctx: &mut Context, full: MeshId, glow: Option<MeshId>) {
+    if ctx.assets.has_lods(full) {
+        return;
+    }
+    let mesh = ctx.assets.mesh(full).clone();
+    let mittel = ctx.assets.add_mesh(mesh.simplified(0.12));
+    let grob = ctx.assets.add_mesh(mesh.simplified(0.3));
+    ctx.assets.set_lods(full, vec![Lod { distance: 25.0, mesh: Some(mittel) }, Lod { distance: 60.0, mesh: Some(grob) }]);
+    if let Some(glow) = glow {
+        ctx.assets.set_lods(glow, vec![Lod { distance: 400.0, mesh: None }]);
+    }
+}
+
 /// Modell laden und in Schichten zerlegen.
 fn load_kind(ctx: &mut Context, model: &str) -> Option<KindVisual> {
     let (full, glow) = crate::asset_files::load_variants(ctx, "bauten", model, Vec3::ONE, 0.0).into_iter().next()?;
+    detailstufen(ctx, full, glow);
     let mesh = ctx.assets.mesh(full).clone();
     let (bottom, top) = mesh.vertices.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v.position[1]), hi.max(v.position[1])));
     let band_height = (top - bottom) / BANDS as f32;

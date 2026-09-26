@@ -24,25 +24,25 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		},
 		{
 			"doubleSided":true,
 			"emissiveFactor":[
 				1,
-				0.7605245113372803,
-				0.3915724754333496
+				0.43415364623069763,
+				0.0802198201417923
 			],
 			"extensions":{
 				"KHR_materials_emissive_strength":{
-					"emissiveStrength":2
+					"emissiveStrength":2.200000047683716
 				}
 			},
-			"name":"Turm_frost_2Glas",
+			"name":"Turm_frost_2Leuchten",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
 				"roughnessFactor":0.5
@@ -57,20 +57,18 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				},
 				{
 					"attributes":{
-						"POSITION":5,
-						"NORMAL":6,
-						"TEXCOORD_0":7,
-						"COLOR_0":8
+						"POSITION":4,
+						"NORMAL":5,
+						"COLOR_0":6
 					},
-					"indices":9,
+					"indices":7,
 					"material":1
 				}
 			]
@@ -80,149 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":648,
+			"count":17512,
 			"max":[
-				1.7590667009353638,
-				6.599999904632568,
-				1.7590667009353638
+				2.2160260677337646,
+				6.049999713897705,
+				2.190335750579834
 			],
 			"min":[
-				-1.7590667009353638,
+				-2.190901756286621,
 				-0.6000000238418579,
-				-1.9858193397521973
+				-2.2393102645874023
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":648,
+			"count":17512,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":648,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":648,
+			"count":17512,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":1044,
+			"count":23256,
 			"type":"SCALAR"
+		},
+		{
+			"bufferView":4,
+			"componentType":5126,
+			"count":1824,
+			"max":[
+				2.280306816101074,
+				1.232581377029419,
+				2.277956008911133
+			],
+			"min":[
+				-2.24737548828125,
+				-0.25111737847328186,
+				-2.2896862030029297
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":300,
-			"max":[
-				1.9516476392745972,
-				4.200000286102295,
-				2.1101694107055664
-			],
-			"min":[
-				-1.859190821647644,
-				-0.03816123679280281,
-				-1.7170988321304321
-			],
+			"count":1824,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":300,
+			"count":1824,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
-			"componentType":5126,
-			"count":300,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":8,
-			"componentType":5126,
-			"count":300,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":9,
 			"componentType":5123,
-			"count":408,
+			"count":2622,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":7776,
+			"byteLength":210144,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":7776,
-			"byteOffset":7776,
+			"byteLength":210144,
+			"byteOffset":210144,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":5184,
-			"byteOffset":15552,
+			"byteLength":210144,
+			"byteOffset":420288,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":7776,
-			"byteOffset":20736,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":2088,
-			"byteOffset":28512,
+			"byteLength":46512,
+			"byteOffset":630432,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":3600,
-			"byteOffset":30600,
+			"byteLength":21888,
+			"byteOffset":676944,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3600,
-			"byteOffset":34200,
+			"byteLength":21888,
+			"byteOffset":698832,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2400,
-			"byteOffset":37800,
+			"byteLength":21888,
+			"byteOffset":720720,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3600,
-			"byteOffset":40200,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":816,
-			"byteOffset":43800,
+			"byteLength":5244,
+			"byteOffset":742608,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":44616,
+			"byteLength":747852,
 			"uri":"turm_frost_2.bin"
 		}
 	]

@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":2804,
+			"count":18100,
 			"max":[
-				2.5011839866638184,
-				7.800000190734863,
-				2.217968225479126
+				2.6850407123565674,
+				9.019999504089355,
+				2.3605568408966064
 			],
 			"min":[
-				-2.4819326400756836,
+				-2.6644768714904785,
 				-0.6000000238418579,
-				-2.619779586791992
+				-2.789764404296875
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":2804,
+			"count":18100,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":2804,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":2804,
+			"count":18100,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":4524,
+			"count":25326,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":33648,
+			"byteLength":217200,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":33648,
-			"byteOffset":33648,
+			"byteLength":217200,
+			"byteOffset":217200,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":22432,
-			"byteOffset":67296,
+			"byteLength":217200,
+			"byteOffset":434400,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":33648,
-			"byteOffset":89728,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":9048,
-			"byteOffset":123376,
+			"byteLength":50652,
+			"byteOffset":651600,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":132424,
+			"byteLength":702252,
 			"uri":"turm_banner_3.bin"
 		}
 	]

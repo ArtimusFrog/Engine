@@ -71,8 +71,15 @@ pub enum DamageKind {
 
 /// Plattformhöhe je Stufe (wie `KOPF_Z` in art/lib/tuerme.py): dort sitzt der drehbare Kopf.
 pub const KOPF_Z: [f32; 3] = [4.2, 5.4, 6.6];
+/// Die Türme werden im Spiel größer dargestellt als modelliert (höher, breiter, eindrucksvoller).
+pub const TURM_GROESSE: f32 = 1.4;
 /// Wie groß der Kopf im Spiel dargestellt wird (damit er über die Zinnen schaut).
-pub const KOPF_GROESSE: f32 = 1.3;
+pub const KOPF_GROESSE: f32 = 1.3 * TURM_GROESSE;
+
+/// Höhe der Plattform (dort sitzt der Kopf) im Spiel.
+pub fn kopf_hoehe(stufe: u8) -> f32 {
+    KOPF_Z[(stufe.clamp(1, 3) - 1) as usize] * TURM_GROESSE
+}
 /// Höchste Stufe
 pub const MAX_STUFE: u8 = 3;
 /// Lebenspunkte einer Barrikade
@@ -808,7 +815,7 @@ impl Verteidigung {
             }
             let owner = building.owner.as_str();
             let von = Quelle { name: owner, turm: Some(building.id) };
-            let mund = building.position + Vec3::Y * (KOPF_Z[(building.level.clamp(1, 3) - 1) as usize] + 1.0);
+            let mund = building.position + Vec3::Y * (kopf_hoehe(building.level) + 1.0 * TURM_GROESSE);
             let fuss = building.position + Vec3::Y * 1.0;
 
             // Frostfeld: kein Schuss, ständige Verlangsamung

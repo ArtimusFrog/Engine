@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":808,
+			"count":27582,
 			"max":[
-				2.21819806098938,
-				6.599999904632568,
-				2.7251665592193604
+				2.5500001907348633,
+				6.819999694824219,
+				2.8141539096832275
 			],
 			"min":[
-				-2.21819806098938,
-				-0.6000000238418579,
-				-2.7711169719696045
+				-2.5500001907348633,
+				-0.6000001430511475,
+				-2.5500001907348633
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":808,
+			"count":27582,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":808,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":808,
+			"count":27582,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":1140,
+			"count":37704,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":9696,
+			"byteLength":330984,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":9696,
-			"byteOffset":9696,
+			"byteLength":330984,
+			"byteOffset":330984,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6464,
-			"byteOffset":19392,
+			"byteLength":330984,
+			"byteOffset":661968,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":9696,
-			"byteOffset":25856,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":2280,
-			"byteOffset":35552,
+			"byteLength":75408,
+			"byteOffset":992952,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":37832,
+			"byteLength":1068360,
 			"uri":"turm_katapult_2.bin"
 		}
 	]

@@ -24,25 +24,25 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		},
 		{
 			"doubleSided":true,
 			"emissiveFactor":[
 				1,
-				0.7605245113372803,
-				0.3915724754333496
+				0.43415364623069763,
+				0.0802198201417923
 			],
 			"extensions":{
 				"KHR_materials_emissive_strength":{
-					"emissiveStrength":2
+					"emissiveStrength":2.200000047683716
 				}
 			},
-			"name":"Turm_runen_2Glas",
+			"name":"Turm_runen_2Leuchten",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
 				"roughnessFactor":0.5
@@ -57,20 +57,18 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				},
 				{
 					"attributes":{
-						"POSITION":5,
-						"NORMAL":6,
-						"TEXCOORD_0":7,
-						"COLOR_0":8
+						"POSITION":4,
+						"NORMAL":5,
+						"COLOR_0":6
 					},
-					"indices":9,
+					"indices":7,
 					"material":1
 				}
 			]
@@ -80,149 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":1116,
+			"count":20656,
 			"max":[
-				2.514155387878418,
-				6.599999904632568,
-				2.301555633544922
+				2.820136785507202,
+				6,
+				2.4748871326446533
 			],
 			"min":[
-				-2.5359389781951904,
+				-2.79929780960083,
 				-0.6000000238418579,
-				-2.578582763671875
+				-2.9178178310394287
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":1116,
+			"count":20656,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":1116,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":1116,
+			"count":20656,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":1680,
+			"count":27480,
 			"type":"SCALAR"
+		},
+		{
+			"bufferView":4,
+			"componentType":5126,
+			"count":408,
+			"max":[
+				2.367769718170166,
+				2.7303109169006348,
+				2.0417206287384033
+			],
+			"min":[
+				-2.3475637435913086,
+				0.5499999523162842,
+				-2.463460922241211
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":552,
-			"max":[
-				2.4957103729248047,
-				2.799999952316284,
-				2.234502077102661
-			],
-			"min":[
-				-2.5205326080322266,
-				0.2920644283294678,
-				-2.616344451904297
-			],
+			"count":408,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":552,
+			"count":408,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
-			"componentType":5126,
-			"count":552,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":8,
-			"componentType":5126,
-			"count":552,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":9,
 			"componentType":5123,
-			"count":828,
+			"count":612,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":13392,
+			"byteLength":247872,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":13392,
-			"byteOffset":13392,
+			"byteLength":247872,
+			"byteOffset":247872,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":8928,
-			"byteOffset":26784,
+			"byteLength":247872,
+			"byteOffset":495744,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":13392,
-			"byteOffset":35712,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":3360,
-			"byteOffset":49104,
+			"byteLength":54960,
+			"byteOffset":743616,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":6624,
-			"byteOffset":52464,
+			"byteLength":4896,
+			"byteOffset":798576,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6624,
-			"byteOffset":59088,
+			"byteLength":4896,
+			"byteOffset":803472,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4416,
-			"byteOffset":65712,
+			"byteLength":4896,
+			"byteOffset":808368,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6624,
-			"byteOffset":70128,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1656,
-			"byteOffset":76752,
+			"byteLength":1224,
+			"byteOffset":813264,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":78408,
+			"byteLength":814488,
 			"uri":"turm_runen_2.bin"
 		}
 	]

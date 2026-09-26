@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":1102,
+			"count":20172,
 			"max":[
-				1.399999976158142,
-				9.300000190734863,
-				1.399999976158142
+				1.9157142639160156,
+				10.069999694824219,
+				1.9250776767730713
 			],
 			"min":[
-				-1.399999976158142,
+				-1.9279277324676514,
 				-0.6000000238418579,
-				-1.399999976158142
+				-1.9250777959823608
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":1102,
+			"count":20172,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":1102,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":1102,
+			"count":20172,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":1710,
+			"count":27564,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":13224,
+			"byteLength":242064,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":13224,
-			"byteOffset":13224,
+			"byteLength":242064,
+			"byteOffset":242064,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":8816,
-			"byteOffset":26448,
+			"byteLength":242064,
+			"byteOffset":484128,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":13224,
-			"byteOffset":35264,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":3420,
-			"byteOffset":48488,
+			"byteLength":55128,
+			"byteOffset":726192,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":51908,
+			"byteLength":781320,
 			"uri":"turm_spaeher_1.bin"
 		}
 	]

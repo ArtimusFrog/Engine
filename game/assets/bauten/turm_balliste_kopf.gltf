@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":364,
+			"count":2160,
 			"max":[
-				1.796332597732544,
-				1.3848527669906616,
-				2.049999952316284
+				1.4959999322891235,
+				1.409999966621399,
+				2.0999999046325684
 			],
 			"min":[
-				-1.796332597732544,
+				-1.4959999322891235,
 				0,
-				-0.9000000357627869
+				-1.0499999523162842
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":364,
+			"count":2160,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":364,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":364,
+			"count":2160,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":594,
+			"count":3222,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":4368,
+			"byteLength":25920,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4368,
-			"byteOffset":4368,
+			"byteLength":25920,
+			"byteOffset":25920,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2912,
-			"byteOffset":8736,
+			"byteLength":25920,
+			"byteOffset":51840,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4368,
-			"byteOffset":11648,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1188,
-			"byteOffset":16016,
+			"byteLength":6444,
+			"byteOffset":77760,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":17204,
+			"byteLength":84204,
 			"uri":"turm_balliste_kopf.bin"
 		}
 	]

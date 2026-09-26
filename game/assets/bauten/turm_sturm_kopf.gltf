@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":612,
+			"count":1488,
 			"max":[
-				0.699999988079071,
-				1.7000000476837158,
-				1.100000023841858
+				0.75,
+				1.7311959266662598,
+				1.1700000762939453
 			],
 			"min":[
-				-0.699999988079071,
+				-0.75,
 				0,
-				-0.6200000047683716
+				-0.7149999737739563
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":612,
+			"count":1488,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":612,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":612,
+			"count":1488,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":1056,
+			"count":2220,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":7344,
+			"byteLength":17856,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":7344,
-			"byteOffset":7344,
+			"byteLength":17856,
+			"byteOffset":17856,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4896,
-			"byteOffset":14688,
+			"byteLength":17856,
+			"byteOffset":35712,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":7344,
-			"byteOffset":19584,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":2112,
-			"byteOffset":26928,
+			"byteLength":4440,
+			"byteOffset":53568,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":29040,
+			"byteLength":58008,
 			"uri":"turm_sturm_kopf.bin"
 		}
 	]

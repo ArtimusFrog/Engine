@@ -21,10 +21,10 @@
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Burg",
+			"name":"Vorkommen",
 			"pbrMetallicRoughness":{
 				"metallicFactor":0,
-				"roughnessFactor":0.8999999761581421
+				"roughnessFactor":0.8500000238418579
 			}
 		}
 	],
@@ -36,10 +36,9 @@
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"COLOR_0":3
+						"COLOR_0":2
 					},
-					"indices":4,
+					"indices":3,
 					"material":0
 				}
 			]
@@ -49,79 +48,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":234,
+			"count":1084,
 			"max":[
-				1.8499999046325684,
+				1.850000023841858,
 				4.849999904632568,
-				0.30000001192092896
+				1.101013422012329
 			],
 			"min":[
-				-0.30000001192092896,
+				-0.3499999940395355,
 				0,
-				-0.30000001192092896
+				-0.3412247598171234
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":234,
+			"count":1084,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":234,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":3,
-			"componentType":5126,
-			"count":234,
+			"count":1084,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":4,
+			"bufferView":3,
 			"componentType":5123,
-			"count":360,
+			"count":1560,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":2808,
+			"byteLength":13008,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2808,
-			"byteOffset":2808,
+			"byteLength":13008,
+			"byteOffset":13008,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1872,
-			"byteOffset":5616,
+			"byteLength":13008,
+			"byteOffset":26016,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":2808,
-			"byteOffset":7488,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":720,
-			"byteOffset":10296,
+			"byteLength":3120,
+			"byteOffset":39024,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":11016,
+			"byteLength":42144,
 			"uri":"turm_banner_kopf.bin"
 		}
 	]
