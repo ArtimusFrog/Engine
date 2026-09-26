@@ -51,7 +51,7 @@
 	],
 	"meshes":[
 		{
-			"name":"Burgfried.001",
+			"name":"Burgfried",
 			"primitives":[
 				{
 					"attributes":{
@@ -78,125 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":43788,
+			"count":100328,
 			"max":[
-				12.414212226867676,
-				15.690298080444336,
-				10.522127151489258
+				12.289011001586914,
+				22.720001220703125,
+				10.483644485473633
 			],
 			"min":[
-				-11.355950355529785,
-				-0.8000001907348633,
-				-9.686707496643066
+				-12.062315940856934,
+				-1.0499999523162842,
+				-10.153642654418945
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":43788,
+			"count":100328,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":43788,
+			"count":100328,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
-			"componentType":5123,
-			"count":56580,
+			"componentType":5125,
+			"count":135762,
 			"type":"SCALAR"
 		},
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":504,
+			"count":900,
 			"max":[
-				5.664999961853027,
-				10.25,
-				4.75
+				8.300000190734863,
+				14.90000057220459,
+				6.070000171661377
 			],
 			"min":[
-				-8.049999237060547,
-				0.1499999761581421,
-				-7.450000286102295
+				-8.783136367797852,
+				0.20000000298023224,
+				-8.183136940002441
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":504,
+			"count":900,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":504,
+			"count":900,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
 			"componentType":5123,
-			"count":756,
+			"count":1332,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":525456,
+			"byteLength":1203936,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":525456,
-			"byteOffset":525456,
+			"byteLength":1203936,
+			"byteOffset":1203936,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":525456,
-			"byteOffset":1050912,
+			"byteLength":1203936,
+			"byteOffset":2407872,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":113160,
-			"byteOffset":1576368,
+			"byteLength":543048,
+			"byteOffset":3611808,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":6048,
-			"byteOffset":1689528,
+			"byteLength":10800,
+			"byteOffset":4154856,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6048,
-			"byteOffset":1695576,
+			"byteLength":10800,
+			"byteOffset":4165656,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6048,
-			"byteOffset":1701624,
+			"byteLength":10800,
+			"byteOffset":4176456,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1512,
-			"byteOffset":1707672,
+			"byteLength":2664,
+			"byteOffset":4187256,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":1709184,
+			"byteLength":4189920,
 			"uri":"dorfhalle_3.bin"
 		}
 	]

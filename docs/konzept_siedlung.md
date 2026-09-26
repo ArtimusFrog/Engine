@@ -16,6 +16,9 @@ bis 90 m), ohne Bäume und Felsen im Kern, mit einem Dorfweg vom Straßenende bi
   erscheinen sie von selbst.
 - Vorteile: Start und Wiedereinstieg vor der eigenen Dorfhalle, +5/10/20 Gold je überstandener Welle,
   Gebäude im Radius arbeiten 10 % schneller. Die Dorfhalle ersetzt den Schutzstein ihrer Straße.
+- Aussehen (`art/lib/siedlung.py`): Langhaus aus Fachwerk mit Vorlaube, Brunnen und Glockengalgen →
+  Rathaus mit Steingeschoss, Uhrturm, Balkon und zwei Marktständen → zusätzlich der Burgfried mit
+  Erkertürmen und Pyramidendach, dazu Mauern mit zwei Rundtürmen am Dorfplatz.
 
 ## Später
 

@@ -78,125 +78,125 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":64944,
+			"count":39486,
 			"max":[
 				7.935255527496338,
-				4.736721038818359,
+				6.259999752044678,
 				7.454660415649414
 			],
 			"min":[
 				-8.160649299621582,
-				-2.6523396968841553,
-				-7.497315883636475
+				-2.690251350402832,
+				-7.4351348876953125
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":64944,
+			"count":39486,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":64944,
+			"count":39486,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
 			"componentType":5123,
-			"count":67764,
+			"count":48390,
 			"type":"SCALAR"
 		},
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":128,
+			"count":184,
 			"max":[
-				2.0999999046325684,
-				2.059999942779541,
-				2.145435333251953
+				2.6999998092651367,
+				2.5799999237060547,
+				2.679999828338623
 			],
 			"min":[
-				-1.2599999904632568,
-				1.0628242492675781,
-				-0.18000000715255737
+				-4.019999980926514,
+				0.15000000596046448,
+				0.26999998092651367
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":128,
+			"count":184,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":128,
+			"count":184,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
 			"componentType":5123,
-			"count":168,
+			"count":246,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":779328,
+			"byteLength":473832,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":779328,
-			"byteOffset":779328,
+			"byteLength":473832,
+			"byteOffset":473832,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":779328,
-			"byteOffset":1558656,
+			"byteLength":473832,
+			"byteOffset":947664,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":135528,
-			"byteOffset":2337984,
+			"byteLength":96780,
+			"byteOffset":1421496,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":1536,
-			"byteOffset":2473512,
+			"byteLength":2208,
+			"byteOffset":1518276,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1536,
-			"byteOffset":2475048,
+			"byteLength":2208,
+			"byteOffset":1520484,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1536,
-			"byteOffset":2476584,
+			"byteLength":2208,
+			"byteOffset":1522692,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":336,
-			"byteOffset":2478120,
+			"byteLength":492,
+			"byteOffset":1524900,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":2478456,
+			"byteLength":1525392,
 			"uri":"erzmine.bin"
 		}
 	]

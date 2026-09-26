@@ -130,7 +130,8 @@ fn rules_for(path: &Path) -> Option<Rules> {
         "npc" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen"], below_ground: 0.05 }),
         // Große Bauwerke (Burg): ein Wahrzeichen, dafür viele Details
         "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[], below_ground: 0.05 }),
-        "bauten" => Some(Rules { max_triangles: 30_000, required_clips: &[], below_ground: 3.0 }),
+        // Bauten der Spieler; die Dorfhalle (Burgfried) ist das Wahrzeichen einer Siedlung
+        "bauten" => Some(Rules { max_triangles: 50_000, required_clips: &[], below_ground: 3.0 }),
         "gegner" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen", "Angriff"], below_ground: 0.05 }),
         _ => None,
     }

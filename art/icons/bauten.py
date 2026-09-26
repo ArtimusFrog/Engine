@@ -1,4 +1,4 @@
-"""Vorschaubilder für das Baumenü: jedes Gebäude aus art/lib/bauten.py schräg von vorne oben,
+"""Vorschaubilder für das Baumenü: jedes Gebäude aus art/lib/siedlung.py schräg von vorne oben,
 warmes Hauptlicht, kühles Kantenlicht, durchsichtiger Hintergrund.
 
 Aufruf (Ergebnis: game/assets/icons/bau_<name>.png, 384 × 256):
@@ -15,11 +15,11 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 ZIEL = REPO / "game" / "assets" / "icons"
 sys.path.insert(0, str(REPO / "art" / "lib"))
 
-import bauten  # noqa: E402
+import siedlung  # noqa: E402
 import tuerme  # noqa: E402
 import werkstatt  # noqa: E402
 
-GEBAEUDE = {"holzfaeller": bauten.holzfaeller, "steinbruch": bauten.steinbruch, "erzmine": bauten.erzmine, "dorfhalle_1": lambda: bauten.dorfhalle(1)}
+GEBAEUDE = {"holzfaeller": siedlung.holzfaeller, "steinbruch": siedlung.steinbruch, "erzmine": siedlung.erzmine, "dorfhalle_1": lambda: siedlung.dorfhalle(1)}
 
 
 def _turm(art):

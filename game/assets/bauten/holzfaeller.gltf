@@ -78,35 +78,35 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":33594,
+			"count":57358,
 			"max":[
-				7.996013164520264,
-				6.059999942779541,
-				6.829604148864746
+				7.610915660858154,
+				6.555000305175781,
+				6.304245471954346
 			],
 			"min":[
-				-7.793249130249023,
-				-0.800000011920929,
-				-6.834049224853516
+				-8.586552619934082,
+				-1.0499999523162842,
+				-6.947192192077637
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":33594,
+			"count":57358,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":33594,
+			"count":57358,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
 			"componentType":5123,
-			"count":48174,
+			"count":82338,
 			"type":"SCALAR"
 		},
 		{
@@ -147,56 +147,56 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":403128,
+			"byteLength":688296,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":403128,
-			"byteOffset":403128,
+			"byteLength":688296,
+			"byteOffset":688296,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":403128,
-			"byteOffset":806256,
+			"byteLength":688296,
+			"byteOffset":1376592,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":96348,
-			"byteOffset":1209384,
+			"byteLength":164676,
+			"byteOffset":2064888,
 			"target":34963
 		},
 		{
 			"buffer":0,
 			"byteLength":1152,
-			"byteOffset":1305732,
+			"byteOffset":2229564,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":1152,
-			"byteOffset":1306884,
+			"byteOffset":2230716,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":1152,
-			"byteOffset":1308036,
+			"byteOffset":2231868,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":288,
-			"byteOffset":1309188,
+			"byteOffset":2233020,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":1309476,
+			"byteLength":2233308,
 			"uri":"holzfaeller.bin"
 		}
 	]

@@ -78,49 +78,49 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":41928,
+			"count":72756,
 			"max":[
-				12.008312225341797,
-				14.107257843017578,
-				10.424017906188965
+				13.00082778930664,
+				18.720001220703125,
+				9.725069999694824
 			],
 			"min":[
-				-11.854988098144531,
-				-0.800000011920929,
-				-10.55141544342041
+				-12.026826858520508,
+				-1.0499999523162842,
+				-9.936068534851074
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":41928,
+			"count":72756,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":41928,
+			"count":72756,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":3,
-			"componentType":5123,
-			"count":53832,
+			"componentType":5125,
+			"count":95364,
 			"type":"SCALAR"
 		},
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":312,
+			"count":396,
 			"max":[
-				5.664999961853027,
-				6.049999713897705,
-				4.75
+				5.8184003829956055,
+				9.109999656677246,
+				4.661803245544434
 			],
 			"min":[
-				-5.664999961853027,
-				0.1499999761581421,
+				-5.8184003829956055,
+				0.20000000298023224,
 				-3.5250000953674316
 			],
 			"type":"VEC3"
@@ -128,75 +128,75 @@
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":312,
+			"count":396,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":312,
+			"count":396,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":7,
 			"componentType":5123,
-			"count":468,
+			"count":576,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":503136,
+			"byteLength":873072,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":503136,
-			"byteOffset":503136,
+			"byteLength":873072,
+			"byteOffset":873072,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":503136,
-			"byteOffset":1006272,
+			"byteLength":873072,
+			"byteOffset":1746144,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":107664,
-			"byteOffset":1509408,
+			"byteLength":381456,
+			"byteOffset":2619216,
 			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":3744,
-			"byteOffset":1617072,
+			"byteLength":4752,
+			"byteOffset":3000672,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3744,
-			"byteOffset":1620816,
+			"byteLength":4752,
+			"byteOffset":3005424,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3744,
-			"byteOffset":1624560,
+			"byteLength":4752,
+			"byteOffset":3010176,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":936,
-			"byteOffset":1628304,
+			"byteLength":1152,
+			"byteOffset":3014928,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":1629240,
+			"byteLength":3016080,
 			"uri":"dorfhalle_2.bin"
 		}
 	]

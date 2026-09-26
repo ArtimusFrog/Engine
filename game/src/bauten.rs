@@ -71,8 +71,8 @@ impl BuildingKind {
         match self {
             BuildingKind::Dorfhalle => "Hauptgebäude deiner Siedlung am Ende einer Heerstraße. Nur in ihrem Umkreis (R) baust du Holzfäller, Steinbruch und Erzmine.",
             BuildingKind::Lumberjack => "Blockhütte mit Holzschuppen. Der Holzfäller schlägt Holz für dich.",
-            BuildingKind::Quarry => "Felswand mit Kran und Werkstatt. Bricht Steinquader für dich.",
-            BuildingKind::Mine => "Stollen in den Fels, Lore voller Erz. Fördert Eisenerz für dich.",
+            BuildingKind::Quarry => "Felswand mit Tretradkran und Werkstatt. Bricht Steinquader für dich.",
+            BuildingKind::Mine => "Stollen mit Förderturm und Rennofen. Fördert Eisenerz für dich.",
             BuildingKind::Tower(t) => t.description(),
             BuildingKind::Falle(f) => f.description(),
         }
@@ -173,11 +173,38 @@ impl BuildingKind {
     /// Feste Hindernisse (Mitte, Größe) im Raum des Modells – der Rest bleibt begehbar.
     fn colliders(self, level: u8) -> Vec<([f32; 3], [f32; 3])> {
         match self {
-            BuildingKind::Dorfhalle if level >= 3 => vec![([0.0, 3.5, 0.0], [11.6, 7.0, 7.0]), ([-5.2, 7.0, -4.6], [5.6, 14.0, 5.6])],
-            BuildingKind::Dorfhalle => vec![([0.0, 3.5, 0.0], [11.6, 7.0, 7.0])],
-            BuildingKind::Lumberjack => vec![([0.0, 2.6, 0.0], [6.9, 5.2, 5.3]), ([4.3, 1.2, 0.0], [2.0, 2.4, 4.8])],
-            BuildingKind::Quarry => vec![([0.0, 1.6, -4.3], [11.0, 3.2, 3.2]), ([2.6, 2.7, -0.2], [0.6, 5.4, 0.6])],
-            BuildingKind::Mine => vec![([0.0, 1.8, -4.3], [10.0, 3.6, 4.2])],
+            BuildingKind::Dorfhalle => {
+                // Halle und Brunnen; ab Stufe 2 Marktstände, ab Stufe 3 Burgfried, Mauern und Rundtürme
+                let mut feste = vec![([0.0, 3.5, 0.0], [11.6, 7.0, 7.0]), ([-5.9, 1.5, 6.3], [2.2, 3.0, 2.2])];
+                if level >= 2 {
+                    feste.extend([([5.4, 1.2, 6.9], [2.4, 2.4, 1.4]), ([-3.1, 1.2, 8.1], [2.4, 2.4, 1.4])]);
+                }
+                if level >= 3 {
+                    feste.push(([-5.2, 7.0, -4.6], [5.6, 14.0, 5.6]));
+                    for x in [-8.2, 8.2] {
+                        feste.extend([([x, 1.6, 1.4], [0.9, 3.2, 6.0]), ([x, 2.1, 5.0], [2.1, 4.2, 2.1])]);
+                    }
+                }
+                feste
+            }
+            BuildingKind::Lumberjack => vec![
+                ([0.0, 2.6, 0.0], [6.9, 5.2, 5.3]),
+                ([4.3, 1.2, 0.0], [2.0, 2.4, 4.8]),
+                ([-4.0, 3.0, -1.3], [1.3, 6.0, 1.2]),
+                ([1.9, 1.0, -3.95], [3.6, 2.0, 1.6]),
+            ],
+            BuildingKind::Quarry => vec![
+                ([0.0, 1.6, -4.3], [11.0, 3.2, 3.2]),
+                ([1.1, 3.0, -0.6], [0.5, 6.0, 0.5]),
+                ([3.3, 1.7, -0.6], [2.8, 3.4, 2.0]),
+                ([3.4, 1.3, 1.75], [3.4, 2.6, 0.5]),
+            ],
+            BuildingKind::Mine => vec![
+                ([0.0, 1.8, -4.3], [10.0, 3.6, 4.2]),
+                ([0.0, 2.2, -0.6], [7.8, 4.4, 1.2]),
+                ([4.6, 2.5, 0.9], [2.2, 5.0, 2.2]),
+                ([-3.6, 1.2, 1.5], [2.0, 2.4, 2.0]),
+            ],
             BuildingKind::Tower(t) => {
                 let h = kopf_hoehe(level) + TURM_GROESSE;
                 let breite = if t == TowerKind::Catapult { 4.4 } else { 3.3 } * TURM_GROESSE;

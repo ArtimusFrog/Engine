@@ -1,5 +1,5 @@
 """steinbruch (siehe art/lib/bauten.py)."""
 
-from bauten import steinbruch
+from siedlung import steinbruch
 
 steinbruch()
