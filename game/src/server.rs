@@ -292,6 +292,11 @@ impl Authority {
         if !at.is_finite() {
             return Err("Ungültiger Bauplatz".into());
         }
+        // Fallen liegen immer mitten auf der Straße, quer zu ihr
+        let (at, yaw) = match kind.falle().and_then(|_| bauten::falle_platz(world, at)) {
+            Some(platz) => platz,
+            None => (at, yaw),
+        };
         let ground = bauten::check_site(world, kind, at, Some(builder)).map_err(str::to_string)?;
         let inventory = world.inventories.entry(player).or_default();
         if !bauten::affordable(inventory, kind) {

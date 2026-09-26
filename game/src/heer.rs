@@ -753,9 +753,9 @@ impl Heer {
         best.map(|(_, p, dir, along)| (p, dir, along))
     }
 
-    /// Zähigkeit der Truppen in einer Welle: +15 % je Welle, mehr Spieler und Schwierigkeit.
+    /// Zähigkeit der Truppen in einer Welle: +12 % je Welle, mehr Spieler und Schwierigkeit.
     fn zaehigkeit(&self, welle: u32) -> f32 {
-        let grund = 1.0 + 0.15 * welle.saturating_sub(1) as f32;
+        let grund = 1.0 + 0.12 * welle.saturating_sub(1) as f32;
         let endlos = 1.0 + 0.1 * welle.saturating_sub(ZIEL_WELLE) as f32;
         let spieler = 1.0 + 0.3 * self.spieler.saturating_sub(1) as f32;
         grund * endlos * spieler * self.schwierigkeit.zaehigkeit()
@@ -825,7 +825,7 @@ impl Heer {
     }
 
     /// Eine Welle: auf jeder Straße eine Gruppe. Mit jeder Welle werden die Truppen zäher
-    /// (+15 % Leben), alle drei Wellen kommt je Gruppe eine Einheit dazu, jede fünfte Welle
+    /// (+12 % Leben), alle drei Wellen kommt je Gruppe eine Einheit dazu, jede fünfte Welle
     /// führt ein Boss an. Die nächste Welle kommt frühestens nach `WAVE_SECONDS`.
     pub fn spawn_wave(&mut self) {
         self.timer = WAVE_SECONDS;
@@ -1986,7 +1986,7 @@ mod tests {
         assert_eq!(bosse, heer.routes.len(), "jede Straße braucht in Welle 5 einen Boss");
         assert!(heer.meldungen.iter().any(|m| m.contains("Bosswelle")));
         let golem = heer.groups.iter().flat_map(|g| &g.members).find(|m| m.boss).unwrap();
-        assert!((golem.max_health - EnemyKind::Golem.max_health() * 1.6 * 6.0).abs() < 0.1, "Boss-Leben {}", golem.max_health);
+        assert!((golem.max_health - EnemyKind::Golem.max_health() * 1.48 * 6.0).abs() < 0.1, "Boss-Leben {}", golem.max_health);
         assert!(heer.count() > erste, "Welle 5 ist nicht größer als Welle 1");
 
         // Durchbrüche: jede Einheit am Straßenende kostet Leben
@@ -2120,5 +2120,20 @@ mod tests {
         }
         assert!(heer.count() > vorher, "der Magier ruft keine Skelette");
         assert!(heer.ereignisse.iter().any(|e| matches!(e, Ereignis::Beschwoerung(_))));
+    }
+}
+
+#[cfg(test)]
+mod ausgabe {
+    /// Nur zum Nachsehen (Kamerapositionen für Bilder): `cargo test strassen_ausgeben -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn strassen_ausgeben() {
+        let mut ctx = engine::prelude::Context::headless();
+        let world = crate::world::World::new(&mut ctx);
+        for (i, strasse) in world.heer.strassen().enumerate() {
+            let punkte: Vec<String> = strasse.iter().step_by(5).map(|p| format!("({:.0},{:.1},{:.0})", p.x, world.terrain.height_at(p.x, p.y), p.y)).collect();
+            println!("Straße {i} {}: {}", world.heer.strassen_namen()[i], punkte.join(" "));
+        }
     }
 }

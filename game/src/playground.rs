@@ -373,7 +373,12 @@ impl Playground {
             at = own + (at - own).normalize_or(flat_forward) * nearest;
         }
         let toward = own - at;
-        let yaw = toward.x.atan2(toward.y) + turn;
+        let mut yaw = toward.x.atan2(toward.y) + turn;
+        // Fallen rasten mitten auf der Straße ein, quer zu ihr
+        if let Some((platz, quer)) = kind.falle().and_then(|_| crate::bauten::falle_platz(world, at)) {
+            at = platz;
+            yaw = quer;
+        }
         let mut check = crate::bauten::check_site(world, kind, at, Some(player));
         if check.is_ok() && !crate::bauten::affordable(&session.local_inventory(), kind) {
             check = Err("Nicht genug Rohstoffe");
@@ -1310,7 +1315,11 @@ impl Playground {
         if self.screen != Screen::Playing || self.map_open {
             return;
         }
-        ui::time_bar(egui_ctx, session.day());
+        // Bei offenen Fenstern keine Leisten darüber (sie würden Titel und Text verdecken)
+        let fenster = self.inventory_open || self.build_menu_open || self.admin_open || self.building_window.is_some() || self.td_open;
+        if !fenster {
+            ui::time_bar(egui_ctx, session.day());
+        }
         // Tower Defense: Wellenleiste, Bosse, Auswertung, Schadenszahlen
         let world = session.world();
         if world.berichte.len() != self.bericht_seit.0 {
@@ -1318,7 +1327,9 @@ impl Playground {
         }
         let me = local.and_then(|p| world.players.get(&p)).map(|a| crate::save::player_key(&a.name)).unwrap_or_default();
         let bericht = world.berichte.last().map(|b| (b, ctx.time.elapsed - self.bericht_seit.1));
-        crate::td_ui::wellen_hud(egui_ctx, world, &me, bericht);
+        if !fenster {
+            crate::td_ui::wellen_hud(egui_ctx, world, &me, bericht);
+        }
         if self.settings.schadenszahlen {
             crate::td_ui::schadenszahlen(ctx, egui_ctx, world);
         }
@@ -1496,6 +1507,9 @@ impl Game for Playground {
         }
         if args.iter().any(|a| a == "tuerme") {
             self.build_tab = 1;
+        }
+        if args.iter().any(|a| a == "fallen") {
+            self.build_tab = 2;
         }
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
@@ -1809,7 +1823,7 @@ impl Game for Playground {
         }
         if let (true, Some(session)) = (self.demo_build_menu, &mut self.session) {
             if let Some(local) = session.local_player() {
-                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 27, stone: 14, ore: 3, ..Default::default() });
+                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 27, stone: 14, ore: 3, gold: 180, ..Default::default() });
                 self.demo_build_menu = false;
                 self.build_menu_open = true;
                 self.refresh_cursor(ctx);

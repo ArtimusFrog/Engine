@@ -2,132 +2,109 @@
 
 ## Grundidee
 
-Die Schattenfestung schickt in Wellen Truppen über vier gleich lange Heerstraßen. Die Spieler bauen
-Türme an den Straßenrand, um sie aufzuhalten, bevor sie das Ende der Straße erreichen. Türme kosten
-die Rohstoffe, die die Spieler auf der Insel sammeln (Holz, Stein, Eisenerz). Besiegte Truppen
-bringen Beute, mit der sich Türme aufwerten lassen. So greifen Sammeln, Bauen und Verteidigen
-ineinander.
+Aus den vier Toren der Schattenfestung marschieren in Wellen Truppen über gleich lange Heerstraßen
+(380 m) bis zu den Schutzsteinen am Straßenende. Jeder Durchbruch kostet die Insel Leben. Die Spieler
+bauen Türme neben die Straßen und Fallen auf sie, werten sie auf, wählen auf Stufe 3 eine Richtung
+und kämpfen selbst mit dem Zauberstab mit. Ziel: **Welle 30 überstehen** (danach wahlweise Endlosmodus).
 
-## Bauen
+Code: `heer.rs` (Truppen), `tuerme.rs` (Türme, Soldaten, Fallen), `td.rs` (geteilte Regeln),
+`td_ui.rs` / `td_ansicht.rs` (Oberfläche und Effekte), `strassenbild.rs` (Pflaster und Laternen).
 
-- **Baumenü (B)** mit zwei Reitern: *Gebäude* (Holzfäller, Steinbruch, Erzmine) und *Türme*.
-- **Nur an der Straße:** Die Turmmitte muss 4–14 m vom Rand einer Heerstraße entfernt sein. Auf der
-  Straße selbst geht es nicht, sie muss frei bleiben. Außerdem gilt ein Mindestabstand zu anderen
-  Türmen und Gebäuden (Grundfläche 3 m Radius).
-- **Vorschau** wie bei den Gebäuden: grün oder rot mit Grund. Dazu ein Ring, der die Reichweite zeigt.
-- **Bauzeit:** 10–20 s mit der vorhandenen Bauanimation (Schichten, Gerüst, Staub). Erst wenn der Turm
-  fertig ist, schießt er.
-- **Besitz:** Jeder Turm gehört dem Spieler, der ihn gebaut hat. Aufwerten darf jeder, abreißen nur
-  der Besitzer.
+## Ablauf einer Partie
 
-## Aufwerten
+- Alle 45 s eine Welle, je Straße eine Gruppe. Mit **N** (oder im Fenster **T**) ruft man sie früher –
+  die gesparten Sekunden bringen allen Gold (0,8 Gold je Sekunde).
+- **Wellenvorschau**: Die nächste Welle steht vorher fest und wird angezeigt (Wellenleiste, Fenster T mit
+  den Eigenschaften jeder Einheit).
+- Zähigkeit: +12 % Leben je Welle, alle drei Wellen eine Einheit mehr je Gruppe, jede fünfte Welle ein
+  Boss (Golem, Ritter, Magier, Gespenst reihum). Mehr Spieler = +30 % Leben je weiterem Spieler.
+- **Schwierigkeit** (Admin-Panel): Leicht 30 Leben, Truppen ×0,7 · Normal 20 / ×1 · Schwer 15 / ×1,35 ·
+  Albtraum 10 / ×1,8 (weniger Gold je höher).
+- Bei 0 Leben fällt die Insel, nach 60 s geht es bei Welle 1 weiter. Nach Welle 30: Sieg, 500 Gold und
+  20 Erz für alle; im Endlosmodus geht es weiter (+10 % Zähigkeit je Welle darüber).
+- **Auswertung** nach jeder überstandenen Welle: besiegt, durchgebrochen, bester Turm, Schaden je
+  Spieler, Wellenbonus (10 + 3 × Welle Gold für alle).
+- **Straßen aufteilen** (Fenster T): Wer eine Straße verteidigt, steht in der Übersicht und in der Wellenleiste.
 
-- Jeder Turm hat **3 Stufen**. Auf einen Turm zielen und **E** drücken öffnet das Turmfenster mit
-  Werten, nächster Stufe, Kosten, *Aufwerten* und *Abreißen* (50 % der Kosten zurück).
-- Beim Aufwerten wird der Turm sichtbar größer (neues Modell je Stufe) und kurz erneut
-  eingerüstet (5 s). In der Zeit schießt er nicht.
-- **Werte je Stufe** (Richtwerte): Schaden ×1,6, Reichweite +10 %, Feuerrate +10 %. Dazu wird der
-  Spezialeffekt stärker (siehe Tabelle).
+## Gold
 
-## Die zehn Türme
+Gold ist die Währung für Türme und Fallen, dazu kommen Holz, Stein und Erz. Quellen: Kopfgeld für
+jeden Sieg (4–15, Boss 60, +5 % je Welle), Wellenbonus, frühes Rufen, Goldader der Schatzkammer.
+Jeder Spieler bekommt einmal 150 Startgold.
 
-| # | Turm | Rolle | Schaden | Besonderheit (Stufe 1 → 3) |
-|---|------|-------|---------|------------------------------|
-| 1 | **Pfeilturm** | günstiger Allrounder | physisch | schnelle Pfeile, Einzelziel |
-| 2 | **Balliste** | Panzerbrecher | Durchschlag | langsam, sehr hoher Einzelschaden, halbiert die Rüstung |
-| 3 | **Katapult** | Flächenschaden | physisch | Steinbrocken, Wirkung auf 3 → 4,5 m, Mindestreichweite 8 m |
-| 4 | **Feuerturm** | Brand | Feuer | Flammenstoß setzt Ziele 3 s in Brand (Schaden über Zeit) |
-| 5 | **Frostturm** | Kontrolle | Frost | verlangsamt um 25 → 45 % (Golems nur halb so stark) |
-| 6 | **Blitzturm** | Gruppen | Blitz | Kettenblitz springt auf 3 → 5 Ziele |
-| 7 | **Sonnenturm** | gegen Untote | heilig | Lichtstrahl, doppelter Schaden an Skeletten und Gespenstern |
-| 8 | **Arkanturm** | gegen Rüstung | arkan | ignoriert Rüstung, trifft Gespenster voll |
-| 9 | **Giftturm** | Zermürbung | Gift | Giftwolke am Boden (Fläche, Schaden über Zeit), senkt die Rüstung |
-| 10 | **Kriegsbanner** | Unterstützung | – | Türme im Umkreis von 12 m: +15 → 35 % Schaden und Feuerrate |
+## Gegner und ihre Eigenschaften
 
-### Richtwerte Stufe 1
+| Einheit | Besonderheit | Antwort |
+|---|---|---|
+| Dunkler Ritter | Schild: Nachbarn im Umkreis von 5 m nehmen 30 % weniger von Pfeilen und Bolzen | Felsbrocken (Katapult B), Läuterung (Sonne A), Magie |
+| Dunkelmagier | heilt Einheiten in der Nähe alle 4 s | Gift (Heilsperre), Läuterung |
+| Steingolem | zerfällt beim Tod in drei Felslinge | Flächenschaden, Runenstampfer |
+| Harpyie | fliegt – Katapult, Feuer, Gift, Runen, Fallen und Soldaten treffen sie nicht | Pfeil, Balliste B (holt sie runter), Sturm B, Frost, Blitz |
+| Schattenmeuchler | getarnt – Türme sehen ihn nur aufgedeckt | Späherturm, Sonne A; Spieler und Soldaten sehen ihn immer |
+| Gespenst | 75 % Rüstung, ×2 durch Heiliges, Runen treffen es nicht | Sonne, Arkan, Paladine |
+| Skelett | immun gegen Gift, ×2 durch Heiliges | Sonne, Paladine |
 
-| Turm | Reichweite | Schuss alle | Schaden |
-|------|-----------:|------------:|--------:|
-| Pfeilturm | 20 m | 0,8 s | 14 |
-| Balliste | 28 m | 2,6 s | 70 |
-| Katapult | 30 m | 3,2 s | 40 (Fläche) |
-| Feuerturm | 12 m | 1,2 s | 10 + 12/s Brand |
-| Frostturm | 16 m | 1,4 s | 6 + Verlangsamung |
-| Blitzturm | 18 m | 1,8 s | 26 je Ziel |
-| Sonnenturm | 22 m | 1,5 s | 22 (×2 gegen Untote) |
-| Arkanturm | 20 m | 1,6 s | 30 (ohne Rüstung) |
-| Giftturm | 15 m | 2,4 s | 8/s Gift, Wolke 4 s |
-| Kriegsbanner | 12 m (Aura) | – | – |
+**Bosse** (jede fünfte Welle, 6-faches Leben, 1,6-fach groß, eigene Leiste oben):
+Golem stampft alle 9 s und legt Türme im Umkreis von 14 m für 3 s lahm und zerfällt in drei Golems ·
+Ritter gerät bei halbem Leben in Wut (doppelter Schlag, keine Verlangsamung) · Magier heilt stark und
+ruft alle 12 s drei Skelette · Gespenst wird alle 13 s für 3 s unverwundbar.
 
-## Gegner-Eigenschaften (neu)
+## Zielmodi
 
-Die Lebenspunkte werden feiner (vorher 3–14 Treffer, jetzt echte Werte). Der Zauberstab des Spielers
-macht 20 Schaden (arkan).
+Jeder zielende Turm: **Erster** (Standard), **Letzter**, **Stärkster**, **Schwächster**, **Boss zuerst** –
+im Turmfenster (E) wählbar.
 
-| Einheit | Leben | Rüstung (physisch) | Besonderheiten |
-|---------|------:|-------------------:|----------------|
-| Dunkler Ritter | 160 | 40 % | – |
-| Bogenschütze | 70 | 10 % | – |
-| Pikenier | 120 | 25 % | – |
-| Skelettkrieger | 80 | 10 % | untot: heilig ×2, immun gegen Gift |
-| Dunkelmagier | 90 | 0 % | 40 % Widerstand gegen arkan und Blitz |
-| Steingolem | 420 | 60 % | Verlangsamung nur halb so stark, Feuer ×0,5 |
-| Schattenwolf | 60 | 0 % | schnell |
-| Gespenst | 100 | 75 % | untot: heilig ×2; arkan trifft voll |
+## Die fünfzehn Türme und ihre Richtungen auf Stufe 3
 
-Durchschlag halbiert die Rüstung, arkan ignoriert sie. Feuer, Frost, Blitz, heilig und Gift werden
-nicht von der Rüstung gebremst.
+| Turm | Rolle | A | B |
+|---|---|---|---|
+| Pfeilturm | günstig, trifft Flieger | Salve (3 Ziele) | Scharfschütze (Reichweite ×1,6, 25 % dreifach) |
+| Balliste | durchschlagend | Durchbohren (ganze Linie) | Harpune (Flieger zuerst, holt sie 5 s runter, ×1,5) |
+| Katapult | Gruppen, nicht nah, keine Flieger | Brandtöpfe (brennender Boden) | Felsbrocken (betäubt, bricht Schilde) |
+| Feuerturm | Brand | Flächenbrand (springt beim Tod über) | Drachenatem (Kegel, doppelter Schaden) |
+| Frostturm | verlangsamen | Einfrieren (jeder 4. Treffer 1,5 s) | Frostfeld (ständige Aura, auch Flieger) |
+| Blitzturm | Kette, ×1,5 an Vereisten | Überladung (×2,5 an Vereisten/Betäubten) | Gewitter (4 Einschläge im Umkreis) |
+| Sonnenturm | heilig | Läuterung (aufdecken, Heilsperre, Schilde weg) | Sonnenstrahl (Dauerstrahl, ×2 an Bossen) |
+| Arkanturm | +15 % je Treffer am selben Ziel | Fokus (bis +300 %) | Arkane Kugel (springt beim Sieg weiter) |
+| Giftturm | Wolke: Heilsperre, Rüstung −20 % | Seuche (neue Wolke beim Tod) | Säure (Rüstung 0, +25 % Schaden) |
+| Kriegsbanner | Türme in der Nähe schneller und härter | Kriegstrommel (doppelt Tempo) | Heilbanner (heilt Soldaten, Barrikaden) |
+| **Kaserne** | 3 Soldaten halten Gruppen auf | Veteranen (4, +50 % Leben, Rüstung) | Paladine (heilig, heilen sich) |
+| **Späherturm** | deckt Getarnte auf, markiert (+15–30 % Schaden) | Adlerauge (3 Ziele, Reichweite ×1,5) | Kopfgeldjäger (doppeltes Kopfgeld) |
+| **Sturmturm** | wirft Gruppen zurück, ×2 an Fliegern | Orkan (fast doppelt so weit, betäubt) | Sturmwand (×3 an Fliegern, holt sie runter) |
+| **Runenstampfer** | Bodenwelle um den Turm, betäubt | Beben (größer, 1,5 s) | Runenfeld (3 s starke Verlangsamung) |
+| **Schatzkammer** | +50–80 % Beute und Kopfgeld in Reichweite | Goldader (8 Gold alle 10 s) | Tributkammer (doppelte Beute) |
 
-## Zielwahl
+Stufen: Schaden ×1,6 je Stufe, Reichweite +10 %, Feuerrate +10 %. Kosten in Gold, Holz, Stein, Erz;
+Abreißen gibt die Hälfte zurück.
 
-Jeder Turm nimmt das Ziel, das **am weitesten auf der Straße** gekommen ist („erstes“). Das ist in
-Tower Defense üblich und für alle nachvollziehbar. Später lässt sich im Turmfenster umstellen:
-*erstes / stärkstes / schwächstes*.
+## Kombos
 
-## Beute
+- **Gift + Feuer**: Vergiftete explodieren bei einem Feuertreffer (3 m Umkreis, verbraucht das Gift).
+- **Frost + Blitz**: Blitze machen an verlangsamten Zielen 1,5-fachen Schaden (Überladung 2,5-fach).
+- **Späher-Markierung**: alle Treffer auf markierte Ziele machen mehr Schaden.
+- **Teer + Feuer**: geteerte Einheiten nehmen 1,5-fachen Feuerschaden und brennen doppelt.
 
-Besiegte Einheiten geben dem Besitzer des Turms (bzw. dem Spieler mit dem Stab), der den letzten
-Treffer gesetzt hat, Rohstoffe:
+## Fallen (direkt auf der Straße, rasten mittig und quer ein)
 
-| Einheit | Beute |
-|---|---|
-| Wolf, Bogenschütze, Skelett | 1 Stein |
-| Pikenier, Magier, Gespenst | 1 Stein + 1 Erz |
-| Ritter | 2 Erz |
-| Golem | 4 Stein + 3 Erz |
+Stachelfalle (30 Schaden/s) · Teergrube (halbes Tempo, Feuer doppelt) · Barrikade (hält Gruppen auf,
+420 Leben, Heilbanner reparieren sie). Nicht gegen Flieger und Gespenster.
 
-## Kosten (Holz / Stein / Erz)
+## Übersicht und Rückmeldung
 
-| Turm | Stufe 1 | Stufe 2 | Stufe 3 |
-|------|---------|---------|---------|
-| Pfeilturm | 12 / 4 / 0 | 16 / 8 / 2 | 20 / 12 / 6 |
-| Balliste | 18 / 8 / 2 | 22 / 12 / 5 | 26 / 16 / 10 |
-| Katapult | 20 / 12 / 0 | 24 / 18 / 4 | 28 / 24 / 8 |
-| Feuerturm | 10 / 14 / 2 | 14 / 18 / 5 | 18 / 22 / 9 |
-| Frostturm | 8 / 14 / 4 | 12 / 18 / 7 | 16 / 22 / 11 |
-| Blitzturm | 8 / 12 / 8 | 12 / 16 / 12 | 16 / 20 / 16 |
-| Sonnenturm | 10 / 16 / 4 | 14 / 20 / 8 | 18 / 24 / 12 |
-| Arkanturm | 10 / 14 / 6 | 14 / 18 / 10 | 18 / 22 / 14 |
-| Giftturm | 14 / 8 / 2 | 18 / 12 / 5 | 22 / 16 / 9 |
-| Kriegsbanner | 16 / 6 / 4 | 20 / 10 / 8 | 24 / 14 / 12 |
+- Wellenleiste oben: Welle x/30, Countdown, Leben, Vorschau, Straße, Hinweis N/T.
+- Bossleisten, Schadenszahlen (abschaltbar in den Einstellungen), Zustände unter dem Fadenkreuz
+  (fliegt, getarnt, geschützt, markiert, betäubt, brennt, vergiftet …).
+- Turmfenster: Werte mit Schaden pro Sekunde, Kills und Schaden bisher, Zielmodus, nächste Stufe bzw.
+  beide Richtungen nebeneinander.
+- Fenster T: nächste Welle mit Eigenschaften, früh rufen, Straßen, Beitrag je Spieler, letzte Auswertung.
 
-## Technik
+## Balancing
 
-- **Server-autoritativ:** Der Server wählt Ziele, rechnet Schaden und Effekte (Brand, Frost, Gift als
-  Zustände an der Einheit). Die Clients bekommen Schüsse als kurze Ereignisse, zeigen Geschosse und
-  Treffer und drehen den Turmkopf zum Ziel.
-- **Türme sind Gebäude** (`bauten.rs`): gleiche Platzierung, Speicherung, Bauanimation und
-  Kollision. Neu sind Art = Turm, Stufe und Richtung des Kopfs.
-- **Modelle** (`art/lib/tuerme.py`): ein Turm je Stufe (`bauten/turm_<art>_<stufe>.gltf`) und ein
-  beweglicher Kopf je Art (`bauten/turm_<art>_kopf.gltf`), der sich zum Ziel dreht (Armbrust,
-  Balliste, Katapultarm, Kristall …).
-- **Gleiche Schnittstelle für Spielerangriffe:** Zauberstab und Türme machen Schaden über dieselbe
-  Funktion (`Heer::damage(id, menge, art)`).
+`cargo test --release balancing -- --nocapture` spielt die Wellen gegen drei Verteidigungen:
+ohne Türme fällt die Insel in den ersten Wellen, vier Türme auf Stufe 2 je Straße halten bis etwa
+Welle 9, eine voll ausgebaute Verteidigung (13 Türme je Straße auf Stufe 3) gewinnt.
 
-## Später (nicht in diesem Schritt)
+## Später
 
-- **Ziel am Straßenende:** Eine Dorf- oder Burg-„Lebensleiste“. Durchgebrochene Truppen ziehen
-  Leben ab, bei 0 ist die Runde verloren.
-- **Wellen mit steigender Stärke** (Welle 1, 2, 3 … mit Anzeige und Countdown) und Boss-Wellen.
-- **Lebenspunkte für Spieler**, damit die Angriffe der Truppen wehtun.
-- **Zielwahl** im Turmfenster umstellbar.
+- Spieler-Lebenspunkte (Truppen greifen Spieler an, bisher nur Optik)
+- Eigene Kampagnenkarten, Belohnungen je Schwierigkeit, Bestenliste

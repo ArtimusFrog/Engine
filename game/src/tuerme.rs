@@ -1289,6 +1289,85 @@ mod kampf_tests {
         assert_eq!(vorbei, 0, "die Soldaten halten niemanden auf");
     }
 
+    /// Spielt Wellen gegen eine Verteidigung (je Straße dieselben Türme) und liefert die Welle, in der
+    /// die Insel fällt – oder `ZIEL_WELLE + 1` bei Sieg.
+    fn welle_bis_zum_fall(tuerme_je_strasse: &[(TowerKind, u8, u8)]) -> u32 {
+        let mut ctx = Context::headless();
+        let mut world = crate::world::World::new(&mut ctx);
+        let strassen: Vec<Vec<Vec2>> = world.heer.strassen().collect();
+        let mut tuerme = Vec::new();
+        for (s, strasse) in strassen.iter().enumerate() {
+            for (i, &(kind, level, zweig)) in tuerme_je_strasse.iter().enumerate() {
+                let k = 6 + i * 6;
+                let (a, b) = (strasse[k], strasse[k + 1]);
+                let p = a + (b - a).normalize().perp() * if i % 2 == 0 { 7.0 } else { -7.0 };
+                tuerme.push(Building {
+                    id: (s * 100 + i + 1) as u32,
+                    kind: BuildingKind::Tower(kind),
+                    position: vec3(p.x, world.terrain.height_at(p.x, p.y), p.y),
+                    yaw: 0.0,
+                    progress: 1.0,
+                    owner: "nils".into(),
+                    produce_in: 0.0,
+                    level,
+                    zweig,
+                    ziel: Default::default(),
+                });
+            }
+        }
+        let mut heer = std::mem::replace(&mut world.heer, Heer::new(Vec::new()));
+        let mut verteidigung = Verteidigung::default();
+        let boden = |p: Vec2| world.terrain.height_at(p.x, p.y);
+        heer.set_enabled(true);
+        let mut hoechste = 0;
+        for _ in 0..(crate::td::ZIEL_WELLE as f32 * crate::heer::WAVE_SECONDS * 1.3 / 0.05) as usize {
+            let blocker = verteidigung.blocker(&tuerme);
+            let strikes = heer.tick(0.05, &blocker, &boden);
+            verteidigung.tick(0.05, &tuerme, &mut heer, &strikes, &boden);
+            heer.gefallen.clear();
+            heer.meldungen.clear();
+            heer.berichte.clear();
+            heer.ereignisse.clear();
+            if heer.welle == 0 && hoechste > 0 {
+                return hoechste;
+            }
+            hoechste = hoechste.max(heer.welle);
+            if heer.sieg {
+                return crate::td::ZIEL_WELLE + 1;
+            }
+        }
+        crate::td::ZIEL_WELLE + 1
+    }
+
+    /// Balancing: ohne Verteidigung fällt die Insel sofort, eine schwache Verteidigung hält ein paar
+    /// Wellen, eine starke (ausgebaute Türme mit Richtungen) übersteht alle 30.
+    /// Ausgabe mit `cargo test --release balancing -- --nocapture`.
+    #[test]
+    fn balancing() {
+        use TowerKind::*;
+        let ohne = welle_bis_zum_fall(&[]);
+        let schwach = welle_bis_zum_fall(&[(Arrow, 2, 0), (Fire, 2, 0), (Frost, 2, 0), (Lightning, 2, 0)]);
+        let stark = welle_bis_zum_fall(&[
+            (Barracks, 3, 1),
+            (Frost, 3, 1),
+            (Lightning, 3, 1),
+            (Arcane, 3, 1),
+            (Scout, 3, 1),
+            (Catapult, 3, 2),
+            (Arrow, 3, 1),
+            (Sun, 3, 1),
+            (Poison, 3, 2),
+            (Fire, 3, 1),
+            (Banner, 3, 2),
+            (Ballista, 3, 2),
+            (Storm, 3, 2),
+        ]);
+        println!("Balancing: ohne Türme fällt die Insel in Welle {ohne}, schwach in Welle {schwach}, stark {}", if stark > crate::td::ZIEL_WELLE { "nie (Sieg)".to_string() } else { format!("in Welle {stark}") });
+        assert!(ohne <= 5, "ohne Verteidigung hält die Insel zu lange: {ohne}");
+        assert!((4..=20).contains(&schwach), "schwache Verteidigung: Welle {schwach}");
+        assert!(stark > 20, "starke Verteidigung fällt schon in Welle {stark}");
+    }
+
     #[test]
     fn frost_bremst_und_ruestung_zaehlt() {
         // Rüstung: der Ritter nimmt von Pfeilen weniger als vom Arkanturm

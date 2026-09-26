@@ -378,7 +378,26 @@ def zauberstab():
     _aus_magier("Stab", Matrix.Rotation(math.radians(45), 4, "Y"), nur_oben=0.75)
 
 
-GEGENSTAENDE = {"holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
+def gold():
+    """Zwei Stapel Goldmünzen und eine angelehnte Münze."""
+    metall = material("Gold", "#E8B53A", rau=0.25, muster=True, muster_farbe="#FFE08A", muster_skala=14.0, glanz=0.6)
+    rand = material("Goldrand", "#B8841E", rau=0.3)
+    zufall = random.Random(9)
+    for sx, anzahl in ((-0.42, 5), (0.38, 3)):
+        for i in range(anzahl):
+            bm = zylinder(0.42, 0.11, 24)
+            for f in bm.faces:
+                f.material_index = 0 if abs(f.normal.z) > 0.5 else 1
+            bewegen(bm, (sx + zufall.uniform(-0.04, 0.04), zufall.uniform(-0.04, 0.04), -0.55 + i * 0.12), (0, 0, zufall.uniform(0, 30)))
+            objekt("Muenze", bm, metall, rand)
+    bm = zylinder(0.42, 0.11, 24)
+    for f in bm.faces:
+        f.material_index = 0 if abs(f.normal.z) > 0.5 else 1
+    bewegen(bm, (0.2, -0.45, -0.18), (70, 0, 20))
+    objekt("Muenze", bm, metall, rand)
+
+
+GEGENSTAENDE = {"gold": gold, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
                 "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab}
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
 BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25)}

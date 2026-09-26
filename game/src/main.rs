@@ -17,6 +17,7 @@ mod heer;
 mod td;
 mod td_ansicht;
 mod td_ui;
+mod strassenbild;
 mod tuerme;
 mod markierungen;
 mod messung;

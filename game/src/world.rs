@@ -271,6 +271,12 @@ impl World {
                 world.places.labels.push(("Schutzstein", p));
             }
         }
+        // Die Heerstraßen gepflastert, mit Randsteinen, Meilensteinen und Laternen
+        if !ctx.is_headless() {
+            let strassen: Vec<Vec<Vec2>> = world.heer.strassen().collect();
+            let terrain = &world.terrain;
+            crate::strassenbild::bauen(ctx, &|p| terrain.height_at(p.x, p.y), &strassen, &mut world.places.lights);
+        }
         for (id, spec) in island.resources {
             let health = spec.max_health;
             world.resources.insert(

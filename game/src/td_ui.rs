@@ -102,9 +102,19 @@ pub fn wellen_hud(egui_ctx: &egui::Context, world: &World, ich: &str, bericht: O
                 }
             });
         });
-        // Bosse im Blick: Name und Lebensleiste
-        let bosse = world.sichtbare_bosse();
-        for (name, health) in bosse.iter().take(4) {
+        // Bosse im Blick: je Art eine Leiste (der Schwächste zählt), dazu wie viele es sind
+        let mut bosse: Vec<(&str, u8, usize)> = Vec::new();
+        for (name, health) in world.sichtbare_bosse() {
+            match bosse.iter_mut().find(|b| b.0 == name) {
+                Some(b) => {
+                    b.1 = b.1.min(health);
+                    b.2 += 1;
+                }
+                None => bosse.push((name, health, 1)),
+            }
+        }
+        for (name, health, anzahl) in bosse.iter().take(3) {
+            let name = if *anzahl > 1 { format!("{name} ×{anzahl}") } else { name.to_string() };
             ui.add_space(4.0);
             egui::Frame::new().fill(Color32::from_black_alpha(150)).corner_radius(5.0).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
                 ui.set_width(300.0);

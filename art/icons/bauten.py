@@ -34,6 +34,8 @@ def _turm(art):
 
 for _art in tuerme.TUERME:
     GEBAEUDE["turm_" + _art] = _turm(_art)
+for _name in tuerme.FALLEN:
+    GEBAEUDE[_name] = (lambda n: lambda: tuerme.falle(n))(_name)
 
 
 def setze(obj, **werte):
@@ -109,7 +111,12 @@ def main():
     for name in namen:
         werkstatt.neu()
         GEBAEUDE[name]()
-        buehne() if not name.startswith("turm_") else buehne((-0.8, -1.0, 0.55))
+        if name.startswith("turm_"):
+            buehne((-0.8, -1.0, 0.55))
+        elif name in tuerme.FALLEN:
+            buehne((-0.7, -1.0, 1.1))
+        else:
+            buehne()
         pfad = ZIEL / f"bau_{name}.png"
         bpy.context.scene.render.filepath = str(pfad)
         bpy.ops.render.render(write_still=True)

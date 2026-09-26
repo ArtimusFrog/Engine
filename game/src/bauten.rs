@@ -267,6 +267,13 @@ pub fn road_distance(world: &crate::world::World, at: Vec2) -> f32 {
     best
 }
 
+/// Fallen rasten auf der Mitte der nächsten Heerstraße ein und liegen quer zu ihr.
+pub fn falle_platz(world: &crate::world::World, at: Vec2) -> Option<(Vec2, f32)> {
+    let (p, dir, _) = world.heer.naechster_strassenpunkt(at)?;
+    let p = vec2(p.x, p.z);
+    (p.distance(at) < 6.0).then(|| (p, dir.x.atan2(dir.y)))
+}
+
 /// Bauplatz prüfen: Liefert die Bodenhöhe für das Gebäude oder den Grund, warum es hier nicht geht.
 pub fn check_site(world: &crate::world::World, kind: BuildingKind, at: Vec2, builder: Option<Vec3>) -> Result<f32, &'static str> {
     let radius = kind.radius();
