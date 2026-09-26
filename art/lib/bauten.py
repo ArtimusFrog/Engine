@@ -506,3 +506,255 @@ def erzmine(seed=63):
         (0.0, -0.13, 0.14, 0.1, 0, "#B85A34"),
     ])
     return _fertig("Erzmine", teile, licht)
+
+
+# ---------------------------------------------------------------------------
+# Dorfhalle (Hauptgebäude einer Siedlung): Stufe 1 Langhaus, Stufe 2 Rathaus mit Glockenturm,
+# Stufe 3 Burgfried – steinerner Wehrturm hinter dem Rathaus, Mauerstücke und Banner
+# ---------------------------------------------------------------------------
+def _fachwerkwand(teile, laenge, hoehe, ort, drehung_z, putz, balken, zufall, luecken=(), streben=True):
+    """Fachwerkwand entlang ihrer X-Achse (Mitte unten bei `ort`): Putzfelder, dunkle Balken,
+    Streben in jedem zweiten Feld. `luecken`: (von, bis, unten, oben) für Tür und Fenster."""
+    x0, y0, z0 = ort
+    rot = Matrix.Rotation(math.radians(drehung_z), 4, "Z")
+
+    def p(dx, dy, dz):
+        v = rot @ Vector((dx, dy, dz))
+        return (x0 + v.x, y0 + v.y, z0 + v.z)
+    felder = max(int(round(laenge / 1.5)), 2)
+    breite = laenge / felder
+    for i in range(felder):
+        a = -laenge / 2 + i * breite
+        b = a + breite
+        mitte = (a + b) / 2
+        offen = [l for l in luecken if l[0] < b and l[1] > a]
+        if not offen:
+            _brett(teile, "Putz", putz, (breite, 0.2, hoehe), p(mitte, 0, hoehe / 2), (0, 0, drehung_z), fase=0.0)
+            if streben and i % 2 == 0:
+                winkel = math.degrees(math.atan2(hoehe * 0.8, breite))
+                _brett(teile, "Strebe", balken, (math.hypot(breite, hoehe * 0.8) * 0.95, 0.12, 0.14), p(mitte, -0.13, hoehe / 2),
+                       (0, -winkel if i % 4 == 0 else winkel, drehung_z), fase=0.01)
+        else:
+            (la, lb, lu, lo) = offen[0]
+            if lu > 0.05:
+                _brett(teile, "Putz", putz, (breite, 0.2, lu), p(mitte, 0, lu / 2), (0, 0, drehung_z), fase=0.0)
+            if lo < hoehe - 0.05:
+                _brett(teile, "Putz", putz, (breite, 0.2, hoehe - lo), p(mitte, 0, (hoehe + lo) / 2), (0, 0, drehung_z), fase=0.0)
+            for (c, d) in ((a, max(a, la)), (min(b, lb), b)):
+                if d - c > 0.05:
+                    _brett(teile, "Putz", putz, (d - c, 0.2, lo - lu), p((c + d) / 2, 0, (lu + lo) / 2), (0, 0, drehung_z), fase=0.0)
+        _brett(teile, "Pfosten", balken, (0.2, 0.26, hoehe), p(a, -0.04, hoehe / 2), (0, 0, drehung_z), fase=0.015)
+    _brett(teile, "Pfosten", balken, (0.2, 0.26, hoehe), p(laenge / 2, -0.04, hoehe / 2), (0, 0, drehung_z), fase=0.015)
+    for z in (0.1, hoehe * 0.52, hoehe - 0.1):
+        _brett(teile, "Riegel", balken, (laenge + 0.2, 0.26, 0.2), p(0, -0.05, z), (0, 0, drehung_z), fase=0.015)
+
+
+def _dorf_fenster(teile, licht, zufall, mitte, drehung_z, breite, hoehe, rahmen, laden):
+    x0, y0, z0 = mitte
+    rot = Matrix.Rotation(math.radians(drehung_z), 4, "Z")
+
+    def p(dx, dy, dz):
+        v = rot @ Vector((dx, dy, dz))
+        return (x0 + v.x, y0 + v.y, z0 + v.z)
+    bm = brett_bm(breite, 0.05, hoehe, fase=0.0)
+    setzen(bm, (0, 0, 0), (0, 0, drehung_z))
+    setzen(bm, p(0, 0.02, 0))
+    licht.append(objekt("Scheibe", bm, einfarbig("#FFC878", 0.02, zufall)))
+    _brett(teile, "Fensterbank", rahmen, (breite + 0.3, 0.3, 0.08), p(0, -0.1, -hoehe / 2 - 0.04), (0, 0, drehung_z), fase=0.01)
+    _brett(teile, "Fenstersturz", rahmen, (breite + 0.3, 0.3, 0.1), p(0, -0.1, hoehe / 2 + 0.05), (0, 0, drehung_z), fase=0.01)
+    _brett(teile, "Sprosse", rahmen, (0.05, 0.08, hoehe), p(0, -0.04, 0), (0, 0, drehung_z), fase=0.0)
+    _brett(teile, "Sprosse", rahmen, (breite, 0.08, 0.05), p(0, -0.04, 0), (0, 0, drehung_z), fase=0.0)
+    for s in (-1, 1):
+        _brett(teile, "Laden", laden, (breite / 2 + 0.05, 0.05, hoehe - 0.05), p(s * (breite * 0.75 + 0.1), -0.14, 0), (0, 0, drehung_z), fase=0.012)
+    # Blumenkasten
+    _brett(teile, "Blumenkasten", rahmen, (breite + 0.1, 0.25, 0.2), p(0, -0.25, -hoehe / 2 - 0.15), (0, 0, drehung_z), fase=0.01)
+    for i in range(4):
+        bm = stein_bm(zufall, 0.1, flach=1.0)
+        setzen(bm, p(-breite / 2 + 0.15 + i * breite / 3.3, -0.25, -hoehe / 2 + 0.02))
+        teile.append(objekt("Blume", bm, einfarbig(zufall.choice(["#E24A4A", "#F2C94C", "#E88AD0", "#6FA8E8"]), 0.05, zufall)))
+
+
+def _banner_mast(teile, zufall, ort, hoehe=6.5, farbe_tuch="#3F6FB5"):
+    x, y, z = ort
+    mast = holzfarbe(zufall, "#6E4A2A", "#4E321A")
+    gold = einfarbig("#D8AE4A", 0.03, zufall)
+    _brett(teile, "Mast", mast, (0.16, 0.16, hoehe), (x, y, z + hoehe / 2), fase=0.03)
+    _brett(teile, "Rahe", gold, (1.4, 0.08, 0.08), (x + 0.7, y, z + hoehe - 0.3), fase=0.01)
+    tuch = einfarbig(farbe_tuch, 0.03, zufall)
+    _brett(teile, "Banner", tuch, (1.3, 0.05, 2.4), (x + 0.72, y, z + hoehe - 1.55), fase=0.0)
+    _brett(teile, "Bannerspitze", tuch, (0.9, 0.05, 0.5), (x + 0.72, y, z + hoehe - 2.9), (0, 45, 0), fase=0.0)
+    _brett(teile, "Wappen", gold, (0.5, 0.06, 0.5), (x + 0.72, y - 0.02, z + hoehe - 1.3), (0, 45, 0), fase=0.0)
+    bm = stein_bm(zufall, 0.12, flach=1.0)
+    setzen(bm, (x, y, z + hoehe + 0.05))
+    teile.append(objekt("Knauf", bm, gold))
+
+
+def dorfhalle(stufe=1, seed=64):
+    zufall = random.Random(seed + stufe)
+    teile, licht = [], []
+    B, T = 11.0, 6.4
+    boden = 0.5
+    geschoss = 3.2
+    traufe = boden + geschoss * (2 if stufe >= 2 else 1)
+    first = traufe + 3.2
+
+    stein = _steinfarbe(zufall, farbe("#6B665E"), farbe("#948D82"), farbe("#BDB5A8"), farbe("#D6CFC2"))
+    erde = einfarbig("#8C7A58", 0.06, zufall)
+    putz = einfarbig("#EFE4C8", 0.025, zufall)
+    balken = holzfarbe(zufall, "#5E3C22", "#3E2614")
+    rahmen = holzfarbe(zufall, "#C49A62", "#96703E")
+    laden = einfarbig("#3F6FB5", 0.04, zufall)
+    ziegel = holzfarbe(zufall, "#B4523A", "#8A3A28", maserung=9.0)
+    gold = einfarbig("#D8AE4A", 0.03, zufall)
+    eisen = einfarbig("#35312E", 0.05, zufall)
+
+    _platte(teile, "Dorfplatz", erde, 11.5, 9.5, 0.04, zufall, ecken=22)
+    # Pflaster vor dem Tor
+    for i in range(24):
+        bm = stein_bm(zufall, zufall.uniform(0.28, 0.4), flach=0.35)
+        setzen(bm, (zufall.uniform(-2.2, 2.2), -T / 2 - zufall.uniform(0.8, 3.4), 0.03), (0, 0, zufall.uniform(0, 360)))
+        teile.append(objekt("Pflaster", bm, stein))
+    # Sockel und Freitreppe
+    _brett(teile, "Sockel", stein, (B + 0.6, T + 0.6, boden + SOCKEL), (0, 0, (boden - SOCKEL) / 2), fase=0.06)
+    for i in range(3):
+        _brett(teile, "Stufe", stein, (3.2 - i * 0.2, 0.45, boden - i * 0.16), (0, -T / 2 - 0.5 - i * 0.42, (boden - i * 0.16) / 2), fase=0.03)
+    # Erdgeschoss: Fachwerk ringsum, Tor vorne, Fenster
+    tor = (-1.0, 1.0, 0.0, 2.7)
+    fenster = [(-3.6, -2.4, 1.1, 2.3), (2.4, 3.6, 1.1, 2.3)]
+    _fachwerkwand(teile, B, geschoss, (0, -T / 2, boden), 0, putz, balken, zufall, luecken=[tor] + fenster)
+    _fachwerkwand(teile, B, geschoss, (0, T / 2, boden), 180, putz, balken, zufall, luecken=[(-0.6, 0.6, 1.1, 2.3)])
+    _fachwerkwand(teile, T, geschoss, (-B / 2, 0, boden), 90, putz, balken, zufall, luecken=[(-0.6, 0.6, 1.1, 2.3)])
+    _fachwerkwand(teile, T, geschoss, (B / 2, 0, boden), -90, putz, balken, zufall, luecken=[(-0.6, 0.6, 1.1, 2.3)])
+    for (a, b, u, o) in fenster:
+        _dorf_fenster(teile, licht, zufall, ((a + b) / 2, -T / 2 - 0.12, boden + (u + o) / 2), 0, b - a, o - u, rahmen, laden)
+    for (x, y, d) in ((0, T / 2 + 0.12, 180), (-B / 2 - 0.12, 0, 90), (B / 2 + 0.12, 0, -90)):
+        _dorf_fenster(teile, licht, zufall, (x, y, boden + 1.7), d, 1.2, 1.2, rahmen, laden)
+    # Zweiflügeliges Tor mit Rundbogen aus Holz und Eisenbändern
+    torholz = holzfarbe(zufall, "#7C4E2A", "#5A3618")
+    for i in range(8):
+        _brett(teile, "Torbrett", torholz, (0.24, 0.08, 2.6), (-0.87 + i * 0.25, -T / 2 - 0.02, boden + 1.3), fase=0.01)
+    for dz in (0.5, 2.1):
+        _brett(teile, "Torband", eisen, (2.0, 0.04, 0.1), (0, -T / 2 - 0.08, boden + dz), fase=0.0)
+    for w in range(7):
+        a = math.pi * w / 6
+        _brett(teile, "Torbogen", balken, (0.5, 0.3, 0.22), (math.cos(a) * 1.05, -T / 2 - 0.08, boden + 2.7 + math.sin(a) * 0.55), (0, -math.degrees(a) + 90, 0), fase=0.02)
+    if stufe >= 2:
+        # Obergeschoss, leicht vorkragend, mit Balkon über dem Tor und Uhr/Wappen im Giebel
+        z1 = boden + geschoss
+        _brett(teile, "Deckenbalken", balken, (B + 0.7, T + 0.7, 0.25), (0, 0, z1), fase=0.02)
+        _fachwerkwand(teile, B + 0.4, geschoss, (0, -T / 2 - 0.2, z1 + 0.12), 0, putz, balken, zufall, luecken=[(-3.6, -2.4, 0.9, 2.2), (-0.8, 0.8, 0.0, 2.4), (2.4, 3.6, 0.9, 2.2)])
+        _fachwerkwand(teile, B + 0.4, geschoss, (0, T / 2 + 0.2, z1 + 0.12), 180, putz, balken, zufall, luecken=[(-2.0, -0.8, 0.9, 2.2), (0.8, 2.0, 0.9, 2.2)])
+        _fachwerkwand(teile, T + 0.4, geschoss, (-B / 2 - 0.2, 0, z1 + 0.12), 90, putz, balken, zufall)
+        _fachwerkwand(teile, T + 0.4, geschoss, (B / 2 + 0.2, 0, z1 + 0.12), -90, putz, balken, zufall)
+        for x in (-3.0, 3.0):
+            _dorf_fenster(teile, licht, zufall, (x, -T / 2 - 0.32, z1 + 1.67), 0, 1.2, 1.3, rahmen, laden)
+        for x in (-1.4, 1.4):
+            _dorf_fenster(teile, licht, zufall, (x, T / 2 + 0.32, z1 + 1.67), 180, 1.2, 1.3, rahmen, laden)
+        # Balkontür und Balkon
+        bm = brett_bm(1.4, 0.05, 2.2, fase=0.0)
+        setzen(bm, (0, -T / 2 - 0.22, z1 + 1.25))
+        licht.append(objekt("Balkontür", bm, einfarbig("#FFC878", 0.02, zufall)))
+        _brett(teile, "Balkonboden", rahmen, (2.8, 1.2, 0.14), (0, -T / 2 - 0.85, z1 + 0.1), fase=0.02)
+        for i in range(8):
+            _brett(teile, "Geländerstab", rahmen, (0.07, 0.07, 0.9), (-1.3 + i * 0.37, -T / 2 - 1.4, z1 + 0.6), fase=0.01)
+        _brett(teile, "Handlauf", balken, (2.9, 0.12, 0.1), (0, -T / 2 - 1.4, z1 + 1.08), fase=0.01)
+        for x in (-1.3, 1.3):
+            _brett(teile, "Balkonstütze", balken, (0.14, 0.14, 1.2), (x, -T / 2 - 1.3, z1 - 0.5), (35, 0, 0), fase=0.01)
+    # Giebel (Putz mit Balkenkreuz) und Dach mit Ziegeln
+    for x in (-B / 2 - (0.2 if stufe >= 2 else 0.0), B / 2 + (0.2 if stufe >= 2 else 0.0)):
+        _giebel(teile, putz, T + (0.7 if stufe >= 2 else 0.3), x, traufe - 0.05, first - 0.05, bretter=9)
+        _brett(teile, "Giebelbalken", balken, (0.14, 0.2, first - traufe), (x * 1.01, 0, (traufe + first) / 2), fase=0.01)
+        # Gekreuzte Pferdeköpfe am Giebel
+        for s in (-1, 1):
+            _brett(teile, "Giebelzier", balken, (0.14, 1.2, 0.2), (x * 1.02, s * 0.35, first + 0.3), (s * 40, 0, 0), fase=0.02)
+    _satteldach(teile, ziegel, B + (0.4 if stufe >= 2 else 0.0), T + (0.4 if stufe >= 2 else 0.0), traufe, first, 0.65, zufall, reihen=9, name="Dachziegel")
+    # Schornstein
+    _brett(teile, "Kamin", stein, (0.8, 0.7, first - traufe + 1.6), (B / 2 - 2.0, 1.4, (first + traufe) / 2 + 0.8), fase=0.03)
+    _brett(teile, "Kaminkrone", stein, (1.0, 0.9, 0.18), (B / 2 - 2.0, 1.4, first + 1.65), fase=0.03)
+    if stufe == 2:
+        # Dachreiter mit Glocke auf dem First
+        z = first + 0.1
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                _brett(teile, "Glockenpfosten", balken, (0.16, 0.16, 2.0), (sx * 0.7, sy * 0.7, z + 1.0), fase=0.02)
+        _brett(teile, "Glockenboden", balken, (1.7, 1.7, 0.16), (0, 0, z + 0.05), fase=0.02)
+        bm = stein_bm(zufall, 0.45, flach=1.3)
+        setzen(bm, (0, 0, z + 1.2))
+        teile.append(objekt("Glocke", bm, gold))
+        for i in range(5):
+            _brett(teile, "Turmdach", ziegel, (2.0 - i * 0.38, 2.0 - i * 0.38, 0.35), (0, 0, z + 2.1 + i * 0.32), fase=0.02)
+        bm = stein_bm(zufall, 0.12, flach=1.0)
+        setzen(bm, (0, 0, z + 3.8))
+        teile.append(objekt("Turmspitze", bm, gold))
+    # Wappenscheibe im vorderen Giebel des Obergeschosses (Rathaus)
+    if stufe >= 2:
+        _brett(teile, "Wappenscheibe", gold, (1.1, 0.08, 1.1), (0, -T / 2 - 0.35, traufe + 0.9), (0, 45, 0), fase=0.02)
+        _brett(teile, "Wappen", einfarbig("#3F6FB5", 0.03, zufall), (0.75, 0.1, 0.75), (0, -T / 2 - 0.37, traufe + 0.9), (0, 45, 0), fase=0.02)
+    if stufe >= 3:
+        # Burgfried hinter dem Rathaus: Bruchstein, Zinnen, Schießscharten, blaue Banner
+        kx, ky, kb, kh = -5.2, 4.6, 5.6, 14.0
+        _brett(teile, "Burgfried", stein, (kb, kb, kh + SOCKEL), (kx, ky, (kh - SOCKEL) / 2), fase=0.08)
+        for z in (4.0, 8.0, 11.5):
+            _brett(teile, "Gurtgesims", stein, (kb + 0.3, kb + 0.3, 0.3), (kx, ky, z), fase=0.05)
+        for i in range(4):
+            w = i * 90
+            rot = Matrix.Rotation(math.radians(w), 4, "Z")
+            for zz in (6.0, 9.8):
+                v = rot @ Vector((0, -kb / 2 - 0.02, 0))
+                bm = brett_bm(0.25, 0.06, 0.9, fase=0.0)
+                setzen(bm, (0, 0, 0), (0, 0, w))
+                setzen(bm, (kx + v.x, ky + v.y, zz))
+                licht.append(objekt("Scharte", bm, einfarbig("#FFC878", 0.02, zufall)))
+            for j in range(4):
+                v = rot @ Vector((-kb / 2 + 0.55 + j * 1.5, -kb / 2 + 0.25, 0))
+                _brett(teile, "Zinne", stein, (0.8, 0.5, 0.9), (kx + v.x, ky + v.y, kh + 0.45), (0, 0, w), fase=0.04)
+            v = rot @ Vector((0, -kb / 2 - 0.06, 0))
+            _brett(teile, "Turmbanner", einfarbig("#3F6FB5", 0.03, zufall), (1.2, 0.05, 3.2), (kx + v.x, ky + v.y, kh - 2.4), (0, 0, w), fase=0.0)
+            _brett(teile, "Bannerrand", gold, (1.25, 0.06, 0.15), (kx + v.x, ky + v.y, kh - 0.8), (0, 0, w), fase=0.0)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                bm = stein_bm(zufall, 0.3, flach=1.6)
+                setzen(bm, (kx + sx * (kb / 2 - 0.2), ky + sy * (kb / 2 - 0.2), kh + 1.2))
+                teile.append(objekt("Eckspitze", bm, gold))
+        # Mauerstücke links und rechts des Dorfplatzes mit Zinnen
+        for sx in (-1, 1):
+            for j in range(3):
+                x = sx * (B / 2 + 2.5)
+                y = -T / 2 - 1.0 + j * 2.8
+                _brett(teile, "Mauer", stein, (0.9, 2.8, 2.6 + SOCKEL), (x, y, (2.6 - SOCKEL) / 2), fase=0.05)
+                _brett(teile, "Mauerzinne", stein, (1.0, 1.0, 0.7), (x, y - 0.6, 2.95), fase=0.04)
+    # Rund um die Halle: Banner, Feuerschale, Glocke am Galgen, Fässer, Bank
+    _banner_mast(teile, zufall, (-3.6, -T / 2 - 3.2, 0.0), hoehe=6.5 + stufe)
+    if stufe >= 2:
+        _banner_mast(teile, zufall, (3.6, -T / 2 - 3.2, 0.0), hoehe=6.5 + stufe)
+    for i in range(10):
+        w = math.tau * i / 10
+        bm = stein_bm(zufall, 0.22, flach=0.8)
+        setzen(bm, (4.8 + math.cos(w) * 0.55, -T / 2 - 1.3 + math.sin(w) * 0.55, 0.12))
+        teile.append(objekt("Feuerstein", bm, stein))
+    for i in range(3):
+        _stamm(teile, "Feuerholz", stammfarbe(zufall, "#8A5A30", "#5A3A1C", "#E8C48C", "#C49A62"), 0.08, 0.8, (4.8, -T / 2 - 1.3, 0.18), (0, 0, i * 60), ecken=6, seed=seed + 70 + i)
+    bm = brett_bm(0.5, 0.5, 0.6, fase=0.0)
+    setzen(bm, (4.8, -T / 2 - 1.3, 0.45))
+    licht.append(objekt("Flammen", bm, einfarbig("#FF9A3A", 0.05, zufall)))
+    if stufe == 1:
+        # Glocke am Holzgalgen
+        for x in (-5.8, -4.6):
+            _brett(teile, "Galgenpfosten", balken, (0.16, 0.16, 2.8), (x, -T / 2 - 1.2, 1.4), fase=0.02)
+        _brett(teile, "Galgenbalken", balken, (1.5, 0.16, 0.16), (-5.2, -T / 2 - 1.2, 2.8), fase=0.02)
+        bm = stein_bm(zufall, 0.3, flach=1.3)
+        setzen(bm, (-5.2, -T / 2 - 1.2, 2.3))
+        teile.append(objekt("Glocke", bm, gold))
+    fass = holzfarbe(zufall, "#8A5A30", "#6A4222")
+    for (x, y) in ((B / 2 + 0.9, -1.5), (B / 2 + 0.9, -0.6), (B / 2 + 1.6, -1.05)):
+        bm = stamm_bm(0.36, 0.85, ecken=10, seed=seed + int(x * 10 + y))
+        setzen(bm, (0, 0, 0), (0, -90, 0))
+        setzen(bm, (x, y, 0.0))
+        teile.append(objekt("Fass", bm, fass))
+        _brett(teile, "Fassreif", eisen, (0.76, 0.76, 0.05), (x, y, 0.62), fase=0.0)
+    _brett(teile, "Bank", rahmen, (2.2, 0.45, 0.08), (-B / 2 + 2.0, -T / 2 - 1.0, 0.48), fase=0.01)
+    for x in (-B / 2 + 1.1, -B / 2 + 2.9):
+        _brett(teile, "Bankbein", balken, (0.1, 0.4, 0.45), (x, -T / 2 - 1.0, 0.22), fase=0.01)
+    _laterne(teile, licht, zufall, (1.8, -T / 2 - 1.1, 0.0), hoehe=2.3)
+    _laterne(teile, licht, zufall, (-2.4, -T / 2 - 1.1, 0.0), hoehe=2.3)
+    return _fertig(["Dorfhalle", "Rathaus", "Burgfried"][stufe - 1], teile, licht)

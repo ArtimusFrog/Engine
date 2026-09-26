@@ -183,6 +183,10 @@ pub struct World {
     pub tower_shots: Vec<crate::tuerme::Schuss>,
     /// Schutzsteine an den Straßenenden (Mitte am Boden) und die zuletzt gezeigten Leben
     pub schutzsteine: Vec<Vec3>,
+    /// Was vom Schutzstein zu sehen ist (je Straße) – verschwindet, wenn dort eine Dorfhalle steht
+    schutzstein_teile: Vec<Vec<EntityId>>,
+    /// Siedlungsplätze am Ende der Heerstraßen (Mitte, Höhe des ebenen Bodens), je Straße
+    pub siedlungsplaetze: Vec<(Vec2, f32)>,
     shown_leben: u32,
     /// Stand der Verteidigung (beim Server selbst gerechnet, beim Client aus dem Schnappschuss)
     pub td: crate::td::TdStand,
@@ -246,6 +250,8 @@ impl World {
             building_bodies: HashMap::new(),
             tower_shots: Vec::new(),
             schutzsteine: Vec::new(),
+            schutzstein_teile: Vec::new(),
+            siedlungsplaetze: island.siedlungen.clone(),
             shown_leben: crate::heer::MAX_LEBEN,
             td: Default::default(),
             td_stats: HashMap::new(),
@@ -259,16 +265,22 @@ impl World {
             let p = vec2(ende.x, ende.z) + richtung * 5.0;
             let boden = vec3(p.x, world.terrain.height_at(p.x, p.y), p.y);
             world.schutzsteine.push(boden);
+            let mut teile = Vec::new();
             if !ctx.is_headless() {
                 if let Some(&(mesh, glow)) = crate::asset_files::load_variants(ctx, "bauten", "schutzstein", Vec3::ONE, 0.0).first() {
                     let transform = Transform::from_position(boden).with_rotation(Quat::from_rotation_y(richtung.x.atan2(richtung.y)));
-                    ctx.scene.spawn(Entity::new("Schutzstein", mesh).with_transform(transform));
+                    teile.push(ctx.scene.spawn(Entity::new("Schutzstein", mesh).with_transform(transform)));
                     if let Some(glow) = glow {
-                        ctx.scene.spawn(Entity::new("Schutzstein (leuchtet)", glow).with_transform(transform).with_material(Material::Emissive { glow: 2.2 }));
+                        teile.push(ctx.scene.spawn(Entity::new("Schutzstein (leuchtet)", glow).with_transform(transform).with_material(Material::Emissive { glow: 2.2 })));
                     }
                 }
                 world.places.lights.push((boden + Vec3::Y * 6.0, vec3(0.6, 1.4, 2.4), 12.0));
-                world.places.labels.push(("Schutzstein", p));
+            }
+            world.schutzstein_teile.push(teile);
+        }
+        if !ctx.is_headless() {
+            for &(mitte, _) in &world.siedlungsplaetze {
+                world.places.labels.push(("Siedlungsplatz", mitte));
             }
         }
         // Die Heerstraßen gepflastert, mit Randsteinen, Meilensteinen und Laternen
@@ -339,6 +351,34 @@ impl World {
         self.place_building(ctx, building);
     }
 
+    /// Die Dorfhalle eines Spielers (Name klein geschrieben).
+    pub fn dorfhalle_von(&self, owner: &str) -> Option<&crate::bauten::Building> {
+        self.buildings.iter().find(|b| b.kind == crate::bauten::BuildingKind::Dorfhalle && b.owner == owner)
+    }
+
+    /// Siedlungsplatz (Nummer = Straße) im Umkreis weite um einen Punkt.
+    pub fn siedlungsplatz_bei(&self, at: Vec2, weite: f32) -> Option<usize> {
+        self.siedlungsplaetze.iter().position(|(mitte, _)| mitte.distance(at) < weite)
+    }
+
+    /// Die Dorfhalle, die auf einem Siedlungsplatz steht.
+    pub fn dorfhalle_auf_platz(&self, platz: usize) -> Option<&crate::bauten::Building> {
+        let (mitte, _) = *self.siedlungsplaetze.get(platz)?;
+        self.buildings.iter().find(|b| b.kind == crate::bauten::BuildingKind::Dorfhalle && vec2(b.position.x, b.position.z).distance(mitte) < 40.0)
+    }
+
+    /// Wo ein Spieler (wieder) anfängt: vor seiner Dorfhalle, sonst am Startlager.
+    pub fn startpunkt(&self, name: &str) -> Vec3 {
+        match self.dorfhalle_von(&crate::save::player_key(name)) {
+            Some(halle) => {
+                let vorne = halle.rotation() * Vec3::Z;
+                let p = halle.position + vorne * 11.0;
+                vec3(p.x, self.terrain.height_at(p.x, p.z) + 1.2, p.z)
+            }
+            None => self.spawn,
+        }
+    }
+
     /// Welches Gebäude gehört zu diesem (unsichtbaren) Objekt? Zum Anvisieren.
     pub fn building_at(&self, entity: EntityId) -> Option<u32> {
         self.building_bodies.iter().find(|(_, (marker, _))| *marker == entity).map(|(&id, _)| id)
@@ -395,6 +435,14 @@ impl World {
         }
         td.turm_stats.clear();
         self.td = td;
+    }
+
+    /// Ringe am Boden (Schlüssel, Mitte, Radius, Farbe): Bauradien und Siedlungsplätze.
+    pub fn zeige_radien(&mut self, ctx: &mut Context, wuensche: &[(u64, Vec3, f32, Vec4)]) {
+        if !ctx.is_headless() {
+            let terrain = &self.terrain;
+            self.bau.radien(ctx, wuensche, &|p| terrain.height_at(p.x, p.y));
+        }
     }
 
     /// Vorschau beim Platzieren (Art, Ort, Drehung, passt?) – `None` blendet sie aus.
@@ -1112,6 +1160,15 @@ impl World {
             }
         }
         self.shown_leben = self.td.leben;
+        // Wo eine Dorfhalle steht, ersetzt sie den Schutzstein
+        for platz in 0..self.schutzstein_teile.len() {
+            let sichtbar = self.dorfhalle_auf_platz(platz).is_none();
+            for &teil in &self.schutzstein_teile[platz] {
+                if let Some(e) = ctx.scene.try_get_mut(teil) {
+                    e.visible = sichtbar;
+                }
+            }
+        }
         if !ctx.is_headless() {
             for ereignis in std::mem::take(&mut self.ereignisse) {
                 crate::td_ansicht::ereignis(ctx, &mut self.sound_events, &mut self.felder, ereignis);

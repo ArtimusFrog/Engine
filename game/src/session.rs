@@ -64,7 +64,7 @@ impl Session {
             authority.restore(ctx, &mut world);
         }
         if matches!(mode, Mode::Offline | Mode::Host { .. }) {
-            let spawn = world.spawn;
+            let spawn = world.startpunkt(&hello.name);
             world.spawn_player(ctx, HOST_PLAYER, &hello.name, hello.class, spawn);
             if let Some(authority) = &mut authority {
                 authority.welcome_back(&mut world, HOST_PLAYER);
@@ -471,75 +471,133 @@ mod tests {
         pair.server.session.world().resources[&id].spec.max_health
     }
 
+    /// Freier Bauplatz im Radius der Dorfhalle von `owner` (Ringe um die Halle).
+    fn platz_in_siedlung(world: &World, kind: crate::bauten::BuildingKind, owner: &str) -> Vec2 {
+        let halle = world.dorfhalle_von(owner).expect("keine Dorfhalle");
+        let mitte = vec2(halle.position.x, halle.position.z);
+        (0..240)
+            .map(|i| mitte + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (14.0 + (i / 24) as f32 * 1.5))
+            .find(|&at| crate::bauten::check_site(world, kind, at, None).is_ok() && crate::bauten::siedlung_pruefen(world, kind, at, owner).is_ok())
+            .expect("kein Platz in der Siedlung")
+    }
+
     #[test]
     fn gebaeude_bauen_fertigstellen_und_liefern() {
-        use crate::bauten::{check_site, BuildingKind, PRODUCTION_SECONDS};
+        use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
         let mut pair = Pair::start(false);
         pair.run(60);
         let id = pair.client.session.local_player().unwrap();
-        let kind = BuildingKind::Lumberjack;
-        // Freien Bauplatz suchen und die Figur daneben stellen
+        // Auf den ersten Siedlungsplatz stellen
         let world = pair.server.session.world();
-        let spawn = vec2(world.spawn.x, world.spawn.z);
-        let at = (0..480)
-            .map(|i| spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0))
-            .find(|&at| check_site(world, kind, at, None).is_ok())
-            .expect("Kein Bauplatz auf der Insel");
-        let stand = at + vec2(kind.radius() + 4.0, 0.0);
+        let (mitte, _) = world.siedlungsplaetze[0];
         let character = world.players[&id].character;
+        let stand = mitte + vec2(0.0, 16.0);
         let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
         pair.server_ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
         pair.run(40);
+        let bauen = |pair: &mut Pair, kind: BuildingKind, at: Vec2| {
+            let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
+            pair.client.session.request_build(&mut client_ctx, kind, at, 0.3);
+            pair.client_ctx = client_ctx;
+            pair.run(30);
+        };
 
-        // Ohne Rohstoffe: abgelehnt
-        let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
-        pair.client.session.request_build(&mut client_ctx, kind, at, 0.3);
-        pair.client_ctx = client_ctx;
-        pair.run(30);
+        // Ohne Dorfhalle kein Holzfäller, ohne Rohstoffe keine Dorfhalle
+        pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 60, stone: 25, ..Default::default() });
+        bauen(&mut pair, BuildingKind::Lumberjack, mitte + vec2(0.0, -16.0));
+        assert!(pair.server.session.world().buildings.is_empty(), "Holzfäller ohne Dorfhalle");
+        pair.server.session.world_mut().inventories.insert(id, Inventory::default());
+        bauen(&mut pair, BuildingKind::Dorfhalle, mitte);
         assert!(pair.server.session.world().buildings.is_empty(), "Bau ohne Rohstoffe");
 
-        pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 30, stone: 10, ..Default::default() });
-        let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
-        pair.client.session.request_build(&mut client_ctx, kind, at, 0.3);
-        pair.client_ctx = client_ctx;
-        pair.run(30);
-        assert_eq!(pair.server.session.world().buildings.len(), 1, "Server baut nicht");
+        pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 60, stone: 25, ..Default::default() });
+        bauen(&mut pair, BuildingKind::Dorfhalle, mitte);
+        assert_eq!(pair.server.session.world().buildings.len(), 1, "Server baut die Dorfhalle nicht");
         assert_eq!(pair.client.session.world().buildings.len(), 1, "Client sieht die Baustelle nicht");
-        assert_eq!(pair.client.session.local_inventory().wood, 10, "Holz nicht abgezogen");
-        assert_eq!(pair.client.session.local_inventory().stone, 2, "Stein nicht abgezogen");
+        assert_eq!(pair.client.session.local_inventory().wood, 30, "Holz nicht abgezogen");
+        assert_eq!(pair.client.session.local_inventory().stone, 10, "Stein nicht abgezogen");
 
-        pair.run((kind.build_seconds(1) * 60.0) as u32 + 30);
-        assert!(pair.server.session.world().buildings[0].finished(), "Server: nicht fertig");
-        assert!(pair.client.session.world().buildings[0].finished(), "Client: nicht fertig");
+        // Holzfäller im Radius der Dorfhalle
+        let at = platz_in_siedlung(pair.server.session.world(), BuildingKind::Lumberjack, "testerin");
+        bauen(&mut pair, BuildingKind::Lumberjack, at);
+        assert_eq!(pair.server.session.world().buildings.len(), 2, "Holzfäller im Radius abgelehnt");
+        assert_eq!(pair.client.session.local_inventory().wood, 10);
+
+        pair.run((BuildingKind::Lumberjack.build_seconds(1) * 60.0) as u32 + 30);
+        assert!(pair.server.session.world().buildings.iter().all(|b| b.finished()), "Server: nicht fertig");
+        assert!(pair.client.session.world().buildings.iter().all(|b| b.finished()), "Client: nicht fertig");
         pair.run((PRODUCTION_SECONDS * 60.0) as u32 + 30);
         assert_eq!(pair.client.session.local_inventory().wood, 11, "Holzfäller liefert nicht");
     }
 
     #[test]
-    fn einzelspieler_baut_direkt() {
-        use crate::bauten::{check_site, BuildingKind};
+    fn siedlung_regeln_im_einzelspieler() {
+        use crate::bauten::{Building, BuildingKind};
         let mut ctx = Context::headless();
         let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("Nils"), None).unwrap();
         let local = session.local_player().unwrap();
-        let kind = BuildingKind::Mine;
         let world = session.world();
-        let spawn = vec2(world.spawn.x, world.spawn.z);
-        let at = (0..480)
-            .map(|i| spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0))
-            .find(|&at| check_site(world, kind, at, None).is_ok())
-            .expect("Kein Bauplatz");
+        // Die Siedlungsplätze sind eben
+        for &(mitte, hoehe) in &world.siedlungsplaetze {
+            for k in 0..16 {
+                let p = mitte + Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU) * 25.0;
+                assert!((world.terrain.height_at(p.x, p.y) - hoehe).abs() < 0.2, "Siedlungsplatz uneben bei {p}");
+            }
+        }
+        let (mitte, _) = world.siedlungsplaetze[1];
         let character = world.players[&local].character;
-        let stand = at + vec2(0.0, kind.radius() + 3.0);
+        let stand = mitte + vec2(16.0, 0.0);
         let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
         ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
-        session.world_mut().inventories.insert(local, Inventory { wood: 30, stone: 20, ..Default::default() });
-        session.request_build(&mut ctx, kind, at, 1.0);
-        assert_eq!(session.world().buildings.len(), 1, "Einzelspieler baut nicht");
-        assert_eq!(session.local_inventory().wood, 0);
-        // Zweites Gebäude an derselben Stelle geht nicht
-        session.world_mut().inventories.insert(local, Inventory { wood: 30, stone: 20, ..Default::default() });
-        session.request_build(&mut ctx, kind, at, 1.0);
-        assert_eq!(session.world().buildings.len(), 1, "Zwei Gebäude übereinander");
+        let genug = Inventory { wood: 500, stone: 500, ore: 100, gold: 1000, ..Default::default() };
+        session.world_mut().inventories.insert(local, genug);
+
+        // Nicht irgendwo: nur auf einem Siedlungsplatz
+        session.request_build(&mut ctx, BuildingKind::Dorfhalle, mitte + vec2(30.0, 0.0), 0.0);
+        assert!(session.world().buildings.is_empty(), "Dorfhalle abseits des Siedlungsplatzes");
+        session.request_build(&mut ctx, BuildingKind::Dorfhalle, mitte, 0.0);
+        assert_eq!(session.world().buildings.len(), 1, "Dorfhalle auf dem Siedlungsplatz abgelehnt");
+        // Nur eine Dorfhalle je Spieler
+        let anderer = session.world().siedlungsplaetze[2].0;
+        session.request_build(&mut ctx, BuildingKind::Dorfhalle, anderer, 0.0);
+        assert_eq!(session.world().buildings.len(), 1, "zweite Dorfhalle");
+        // Die Straße gehört jetzt dieser Siedlung
+        assert_eq!(session.world().dorfhalle_auf_platz(1).map(|h| h.owner.as_str()), Some("nils"));
+
+        // Erzmine erst ab dem Rathaus
+        let at = platz_in_siedlung(session.world(), BuildingKind::Lumberjack, "nils");
+        session.request_build(&mut ctx, BuildingKind::Mine, at, 0.0);
+        assert_eq!(session.world().buildings.len(), 1, "Erzmine ohne Rathaus");
+        session.world_mut().advance_buildings(60.0);
+        let halle = session.world().dorfhalle_von("nils").unwrap().id;
+        session.td(&mut ctx, crate::td::TdBefehl::Aufwerten(halle, 0));
+        assert_eq!(session.world().dorfhalle_von("nils").unwrap().level, 2, "Dorfhalle wird kein Rathaus");
+        let at = platz_in_siedlung(session.world(), BuildingKind::Mine, "nils");
+        session.request_build(&mut ctx, BuildingKind::Mine, at, 0.0);
+        assert_eq!(session.world().buildings.len(), 2, "Erzmine im Radius des Rathauses abgelehnt");
+        // Außerhalb des Radius nicht
+        let weit = mitte + (mitte - vec2(0.0, 0.0)).normalize() * -60.0;
+        session.request_build(&mut ctx, BuildingKind::Quarry, weit, 0.0);
+        assert_eq!(session.world().buildings.len(), 2, "Steinbruch außerhalb des Radius");
+
+        // Ein Platz, auf dem schon jemand siedelt, ist vergeben
+        let fremd = session.world().siedlungsplaetze[0];
+        let anna = Building {
+            id: 900,
+            kind: BuildingKind::Dorfhalle,
+            position: vec3(fremd.0.x, fremd.1, fremd.0.y),
+            yaw: 0.0,
+            progress: 1.0,
+            owner: "anna".into(),
+            produce_in: 0.0,
+            level: 1,
+            zweig: 0,
+            ziel: Default::default(),
+        };
+        session.world_mut().place_building(&mut ctx, anna);
+        assert_eq!(crate::bauten::siedlung_pruefen(session.world(), BuildingKind::Dorfhalle, fremd.0, "bert"), Err("Dieser Siedlungsplatz ist schon vergeben"));
+        // Wer eine Dorfhalle hat, fängt dort an
+        assert!(vec2(session.world().startpunkt("Nils").x, session.world().startpunkt("Nils").z).distance(mitte) < 20.0);
     }
 
     #[test]

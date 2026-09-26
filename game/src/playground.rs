@@ -73,11 +73,15 @@ pub struct Playground {
     aim_enemy: Option<(crate::heer::EnemyKind, u8, u16)>,
     /// Verteidigungsfenster (T) offen
     td_open: bool,
+    /// Siedlungsradien anzeigen (R)
+    radius_an: bool,
     /// Wie viele Auswertungen schon da waren und seit wann die neueste gezeigt wird
     bericht_seit: (usize, f32),
     /// Nur zum Testen: Fallen und Kaserne an die Südstraße (`--demo-fallen`), Turmfenster öffnen
     demo_fallen: bool,
     demo_turmfenster: Option<u8>,
+    /// Nur zum Testen: Siedlung am Ende der Südstraße (`--demo-siedlung [Stufe] [Platz]`)
+    demo_siedlung: Option<(u8, usize)>,
     /// Gebäude, das gerade platziert wird, und die eigene Drehung dazu (Q/E, Mausrad)
     build_mode: Option<(crate::bauten::BuildingKind, f32)>,
     /// Bauplatz unter dem Fadenkreuz: Mitte, Drehung und ob (bzw. warum nicht) gebaut werden kann
@@ -163,9 +167,11 @@ impl Playground {
             noclip: false,
             aim_enemy: None,
             td_open: false,
+            radius_an: false,
             bericht_seit: (0, 0.0),
             demo_fallen: false,
             demo_turmfenster: None,
+            demo_siedlung: None,
             build_mode: None,
             build_site: None,
             build_icons: None,
@@ -379,13 +385,47 @@ impl Playground {
             at = platz;
             yaw = quer;
         }
+        let me = local.and_then(|p| world.players.get(&p)).map(|a| crate::save::player_key(&a.name)).unwrap_or_default();
         let mut check = crate::bauten::check_site(world, kind, at, Some(player));
+        if check.is_ok() {
+            if let Err(grund) = crate::bauten::siedlung_pruefen(world, kind, at, &me) {
+                check = Err(grund);
+            }
+        }
         if check.is_ok() && !crate::bauten::affordable(&session.local_inventory(), kind) {
             check = Err("Nicht genug Rohstoffe");
         }
         let ground = check.unwrap_or_else(|_| world.terrain.height_at(at.x, at.y));
         session.world_mut().set_build_preview(ctx, Some((kind, vec3(at.x, ground, at.y), yaw, check.is_ok())));
         self.build_site = Some((at, yaw, check));
+    }
+
+    /// Leuchtende Ringe am Boden: Bauradius der Dorfhallen (eigene golden, fremde hell) und freie
+    /// Siedlungsplätze (grün) – mit R oder automatisch beim Platzieren.
+    fn update_radien(&mut self, ctx: &mut Context) {
+        use crate::bauten::BuildingKind;
+        let Some(session) = &mut self.session else { return };
+        let world = session.world();
+        let me = session.local_player().and_then(|p| world.players.get(&p)).map(|a| crate::save::player_key(&a.name)).unwrap_or_default();
+        let bau = self.build_mode.map(|(k, _)| k).filter(|_| self.screen == Screen::Playing);
+        let mut wuensche = Vec::new();
+        if self.screen == Screen::Playing {
+            let hallen = self.radius_an || matches!(bau, Some(BuildingKind::Lumberjack | BuildingKind::Quarry | BuildingKind::Mine));
+            if hallen {
+                for halle in world.buildings.iter().filter(|b| b.kind == BuildingKind::Dorfhalle) {
+                    let farbe = if halle.owner == me { vec4(1.25, 0.8, 0.18, 1.0) } else { vec4(0.75, 0.85, 1.1, 1.0) };
+                    wuensche.push((halle.id as u64, halle.position, crate::bauten::bauradius(halle.level), farbe));
+                }
+            }
+            if self.radius_an || bau == Some(BuildingKind::Dorfhalle) {
+                for (i, &(mitte, hoehe)) in world.siedlungsplaetze.iter().enumerate() {
+                    if world.dorfhalle_auf_platz(i).is_none() {
+                        wuensche.push((1_000_000 + i as u64, vec3(mitte.x, hoehe, mitte.y), 26.0, vec4(0.3, 1.15, 0.35, 1.0)));
+                    }
+                }
+            }
+        }
+        session.world_mut().zeige_radien(ctx, &wuensche);
     }
 
     /// Admin-Panel (Taste X): Noclip, Wetter, Truppen der Schattenfestung.
@@ -488,6 +528,11 @@ impl Playground {
         use crate::tuerme::TowerKind;
         let inventory = self.session.as_ref().map(|s| s.local_inventory()).unwrap_or_default();
         let icons = self.build_icons.get_or_insert_with(|| load_build_icons(egui_ctx)).clone();
+        // Stufe der eigenen Dorfhalle (keine = noch keine Siedlung)
+        let halle_stufe = self.session.as_ref().and_then(|s| {
+            let me = s.local_player().and_then(|p| s.world().players.get(&p)).map(|a| crate::save::player_key(&a.name))?;
+            s.world().dorfhalle_von(&me).map(|h| h.level)
+        });
         let mut chosen = None;
         let mut close = false;
         let mut tab = self.build_tab;
@@ -539,7 +584,11 @@ impl Playground {
                     }
                 });
             } else if tab == 0 {
-                ui.label(RichText::new("Fertige Gebäude liefern dir regelmäßig Rohstoffe. Nicht auf die Heerstraßen bauen.").size(15.0).color(ui::TEXT.gamma_multiply(0.8)));
+                let hinweis = match halle_stufe {
+                    None => "Zuerst deine Dorfhalle auf einem freien Siedlungsplatz am Ende einer Heerstraße bauen. R zeigt die Plätze.",
+                    Some(_) => "Wirtschaftsgebäude nur im Radius deiner Dorfhalle (R). Fertige Gebäude liefern dir regelmäßig Rohstoffe.",
+                };
+                ui.label(RichText::new(hinweis).size(15.0).color(ui::TEXT.gamma_multiply(0.8)));
                 ui.add_space(8.0);
                 ui.columns(BuildingKind::ALL.len(), |columns| {
                     for (column, kind) in columns.iter_mut().zip(BuildingKind::ALL) {
@@ -554,15 +603,22 @@ impl Playground {
                             ui.label(RichText::new(kind.description()).size(14.0));
                             ui.add_space(6.0);
                             kosten_zeile(ui, &kind.cost());
-                            let liefert = kind.produces().map(|i| i.label()).unwrap_or("-");
-                            ui.label(
-                                RichText::new(format!("Liefert 1 {liefert} alle {:.0} s · Bauzeit {:.0} s", PRODUCTION_SECONDS, kind.build_seconds(1)))
-                                    .size(13.0)
-                                    .color(ui::TEXT.gamma_multiply(0.75)),
-                            );
+                            let zeile = match kind.produces() {
+                                Some(item) => format!("Liefert 1 {} alle {:.0} s · Bauzeit {:.0} s", item.label(), PRODUCTION_SECONDS, kind.build_seconds(1)),
+                                None => format!("Bauradius {:.0} m · Bauzeit {:.0} s · ausbaubar zu Rathaus und Burgfried", crate::bauten::bauradius(1), kind.build_seconds(1)),
+                            };
+                            ui.label(RichText::new(zeile).size(13.0).color(ui::TEXT.gamma_multiply(0.75)));
                             ui.add_space(8.0);
-                            let label = if affordable { "Bauen" } else { "Zu wenig Rohstoffe" };
-                            if ui.add_enabled(affordable, egui::Button::new(RichText::new(label).size(17.0)).min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
+                            // Voraussetzungen der Siedlung
+                            let sperre = match (kind, halle_stufe) {
+                                (BuildingKind::Dorfhalle, Some(_)) => Some("Schon gebaut"),
+                                (BuildingKind::Dorfhalle, None) => None,
+                                (_, None) => Some("Erst Dorfhalle bauen"),
+                                (BuildingKind::Mine, Some(1)) => Some("Braucht ein Rathaus"),
+                                _ => None,
+                            };
+                            let label = sperre.unwrap_or(if affordable { "Bauen" } else { "Zu wenig Rohstoffe" });
+                            if ui.add_enabled(affordable && sperre.is_none(), egui::Button::new(RichText::new(label).size(17.0)).min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
                                 chosen = Some(kind);
                             }
                         });
@@ -728,6 +784,10 @@ impl Playground {
                     self.build_mode = None;
                     self.refresh_cursor(ctx);
                     return;
+                }
+                // R: Radien der Siedlungen und freie Siedlungsplätze zeigen
+                if ctx.input.key_pressed(KeyCode::KeyR) && !self.free_camera {
+                    self.radius_an = !self.radius_an;
                 }
                 // N: die nächste Welle sofort rufen
                 if ctx.input.key_pressed(KeyCode::KeyN) && !self.free_camera {
@@ -1000,7 +1060,11 @@ impl Playground {
             if let Some(building) = session.world().buildings.iter().find(|b| b.id == id) {
                 let center = egui_ctx.content_rect().center();
                 let painter = egui_ctx.layer_painter(egui::LayerId::background());
-                let name = if building.tower().is_some() { format!("{} · Stufe {}", building.kind.label(), building.level) } else { building.kind.label().to_string() };
+                let name = if building.tower().is_some() || building.kind == crate::bauten::BuildingKind::Dorfhalle {
+                    format!("{} · Stufe {}", building.kind.stufen_name(building.level), building.level)
+                } else {
+                    building.kind.label().to_string()
+                };
                 painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, name, egui::FontId::proportional(18.0), Color32::WHITE);
                 let hinweis = if building.tower().is_some() { "E: Turm verwalten" } else { "E: Gebäude verwalten" };
                 painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, hinweis, egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
@@ -1419,7 +1483,7 @@ impl Playground {
         let hint = if self.build_mode.is_some() {
             "Linksklick Bauen · Q/E oder Mausrad Drehen · Rechtsklick oder B Abbrechen"
         } else if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · B Bauen · T Verteidigung · I Inventar · M Karte · Enter Chat · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · B Bauen · R Siedlung · T Verteidigung · I Inventar · M Karte · Enter Chat · Esc Menü"
         } else if self.inventory_open || self.build_menu_open || self.map_open || self.chat.open || self.td_open || self.admin_open || self.building_window.is_some() {
             ""
         } else {
@@ -1530,6 +1594,12 @@ impl Game for Playground {
         self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
         self.demo_towers = args.iter().any(|a| a == "--demo-tuerme");
         self.demo_fallen = args.iter().any(|a| a == "--demo-fallen");
+        if let Some(position) = args.iter().position(|a| a == "--demo-siedlung") {
+            let stufe = args.get(position + 1).and_then(|n| n.parse().ok()).unwrap_or(1);
+            let platz = args.get(position + 2).and_then(|n| n.parse().ok()).unwrap_or(0);
+            self.demo_siedlung = Some((stufe, platz));
+            self.radius_an = true;
+        }
         self.td_open = args.iter().any(|a| a == "--demo-td");
         if let Some(position) = args.iter().position(|a| a == "--demo-turmfenster") {
             self.demo_turmfenster = Some(args.get(position + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
@@ -1643,6 +1713,7 @@ impl Game for Playground {
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        self.update_radien(ctx);
         self.handle_game_keys(ctx);
         self.update_build_preview(ctx);
 
@@ -1795,6 +1866,47 @@ impl Game for Playground {
                     self.building_window = Some(500 + i as u32);
                     session.world_mut().inventories.entry(local).or_default().gold += 1000;
                 }
+            }
+        }
+        // Siedlung: Dorfhalle (Stufe) auf einem Siedlungsplatz, Holzfäller und Steinbruch im Radius
+        if let (Some((stufe, platz)), Some(session)) = (self.demo_siedlung, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_siedlung = None;
+                use crate::bauten::{Building, BuildingKind};
+                let me = crate::save::player_key(&session.world().players[&local].name);
+                let (mitte, hoehe) = session.world().siedlungsplaetze[platz.min(3)];
+                let strasse: Vec<Vec2> = session.world().heer.strassen().nth(platz.min(3)).unwrap_or_default();
+                let ende = *strasse.last().unwrap_or(&mitte);
+                let blick = (ende - mitte).normalize_or(Vec2::Y);
+                let halle = Building {
+                    id: 800,
+                    kind: BuildingKind::Dorfhalle,
+                    position: vec3(mitte.x, hoehe, mitte.y),
+                    yaw: blick.x.atan2(blick.y),
+                    progress: 1.0,
+                    owner: me.clone(),
+                    produce_in: 40.0,
+                    level: stufe.clamp(1, 3),
+                    zweig: 0,
+                    ziel: Default::default(),
+                };
+                session.world_mut().place_building(ctx, halle);
+                for (i, kind) in [BuildingKind::Lumberjack, BuildingKind::Quarry].into_iter().enumerate() {
+                    let world = session.world();
+                    let seite = blick.perp() * if i == 0 { 1.0 } else { -1.0 };
+                    let at = (0..40).map(|k| mitte + seite * 19.0 - blick * (k as f32 * 0.8)).find(|&at| crate::bauten::check_site(world, kind, at, None).is_ok());
+                    if let Some(at) = at {
+                        let y = crate::bauten::check_site(world, kind, at, None).unwrap_or(hoehe);
+                        let b = Building { id: 801 + i as u32, kind, position: vec3(at.x, y, at.y), yaw: (mitte - at).x.atan2((mitte - at).y), progress: 1.0, owner: me.clone(), produce_in: 40.0, level: 1, zweig: 0, ziel: Default::default() };
+                        session.world_mut().place_building(ctx, b);
+                    }
+                }
+                let world = session.world();
+                let stand = mitte + blick * 24.0;
+                let character = world.players[&local].character;
+                ctx.physics.teleport_character(character, vec3(stand.x, world.terrain.height_at(stand.x, stand.y) + 1.0, stand.y));
+                self.demo_crystal = Some(Some(vec3(mitte.x, hoehe + 3.0, mitte.y)));
+                self.demo_yaw_offset = 0.0;
             }
         }
         // Fallen, Barrikade und Kaserne an der Südstraße, Truppen kommen

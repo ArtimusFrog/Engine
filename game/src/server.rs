@@ -168,7 +168,7 @@ impl Authority {
             let position = ctx.physics.character_position(avatar.character);
             let ground = world.terrain.height_at(position.x, position.z);
             if position.y < -30.0 {
-                ctx.physics.teleport_character(avatar.character, world.spawn);
+                ctx.physics.teleport_character(avatar.character, world.startpunkt(&avatar.name));
             } else if position.y < ground - 2.0 {
                 ctx.physics.teleport_character(avatar.character, vec3(position.x, ground + 1.2, position.z));
             }
@@ -298,6 +298,7 @@ impl Authority {
             None => (at, yaw),
         };
         let ground = bauten::check_site(world, kind, at, Some(builder)).map_err(str::to_string)?;
+        bauten::siedlung_pruefen(world, kind, at, &owner).map_err(str::to_string)?;
         let inventory = world.inventories.entry(player).or_default();
         if !bauten::affordable(inventory, kind) {
             return Err(format!("Nicht genug Gold oder Rohstoffe für {}", kind.with_article()));
@@ -311,7 +312,14 @@ impl Authority {
         let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS, level: 1, zweig: 0, ziel: Default::default() };
         log::info!("{name} baut {} bei ({:.0}, {:.0})", kind.with_article(), at.x, at.y);
         world.place_building(ctx, building.clone());
-        world.chat_events.push(crate::world::ChatLine::notice(format!("{name} baut {}", kind.with_article())));
+        let text = match world.siedlungsplatz_bei(at, 26.0).filter(|_| kind == BuildingKind::Dorfhalle) {
+            Some(platz) => format!("{name} gründet eine Siedlung am Ende der Straße {}", world.heer.strassen_namen()[platz]),
+            None => format!("{name} baut {}", kind.with_article()),
+        };
+        world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+        if kind == BuildingKind::Dorfhalle {
+            self.broadcast(ServerMessage::Notice(text));
+        }
         self.broadcast(ServerMessage::BuildingPlaced(building));
         self.send_inventory(player, inventory);
         self.save(world);
@@ -404,6 +412,11 @@ impl Authority {
             for name in namen {
                 self.give(world, &name, &[(Item::Gold, bericht.gold)]);
             }
+            // Jede Dorfhalle bringt ihrem Besitzer zusätzlich Gold
+            let hallen: Vec<(String, u8)> = world.buildings.iter().filter(|b| b.kind == BuildingKind::Dorfhalle && b.finished()).map(|b| (b.owner.clone(), b.level)).collect();
+            for (owner, level) in hallen {
+                self.give(world, &owner, &[(Item::Gold, bauten::dorfhalle_gold(level))]);
+            }
             let mut text = format!("Welle {} überstanden: {} besiegt, {} durchgebrochen · +{} Gold für alle", bericht.welle, bericht.besiegt, bericht.durchgebrochen, bericht.gold);
             if let Some((name, schaden)) = &bericht.bester_spieler {
                 text += &format!(" · Bester: {name} ({schaden} Schaden)");
@@ -447,7 +460,13 @@ impl Authority {
             schwierigkeit: heer.schwierigkeit,
             endlos: heer.endlos,
             sieg: heer.sieg,
-            strassen: heer.strassen_namen().iter().enumerate().map(|(i, n)| (n.to_string(), self.strassen_spieler.get(i).cloned().flatten())).collect(),
+            // Wer am Ende einer Straße siedelt, verteidigt sie; sonst gilt, wer sie gewählt hat
+            strassen: heer
+                .strassen_namen()
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (n.to_string(), world.dorfhalle_auf_platz(i).map(|h| h.owner.clone()).or_else(|| self.strassen_spieler.get(i).cloned().flatten())))
+                .collect(),
             soldaten: self.verteidigung.soldaten(),
             barrikaden: self.verteidigung.barrikaden(),
             turm_stats: if mit_stats { heer.turm_stats.iter().map(|(&id, &(s, k))| (id, k, s.round() as u32)).collect() } else { Vec::new() },
@@ -492,6 +511,9 @@ impl Authority {
                         *eintrag = None;
                     }
                 }
+                if world.dorfhalle_auf_platz(index as usize).is_some_and(|h| h.owner != key) {
+                    return Err("An dieser Straße siedelt schon jemand anderes".into());
+                }
                 if let Some(eintrag) = self.strassen_spieler.get_mut(index as usize) {
                     *eintrag = Some(key);
                     let text = format!("{name} verteidigt jetzt die Straße {}", namen[index as usize]);
@@ -506,9 +528,17 @@ impl Authority {
     /// Fertige Gebäude liefern ihrem Erbauer regelmäßig Rohstoffe – auch wenn er gerade nicht da ist.
     fn produce(&mut self, world: &mut World) {
         let mut deliveries = Vec::new();
+        // Gebäude im Radius der eigenen Dorfhalle arbeiten 10 % schneller
+        let hallen: Vec<(String, Vec3, f32)> = world
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Dorfhalle && b.finished())
+            .map(|b| (b.owner.clone(), b.position, bauten::bauradius(b.level)))
+            .collect();
         for building in world.buildings.iter_mut().filter(|b| b.finished()) {
             let Some(item) = building.kind.produces() else { continue };
-            building.produce_in -= Physics::FIXED_DT;
+            let im_radius = hallen.iter().any(|(owner, ort, r)| *owner == building.owner && ort.distance(building.position) <= *r);
+            building.produce_in -= Physics::FIXED_DT * if im_radius { 1.1 } else { 1.0 };
             if building.produce_in <= 0.0 {
                 building.produce_in += PRODUCTION_SECONDS;
                 deliveries.push((building.owner.clone(), item));
@@ -547,8 +577,11 @@ impl Authority {
     /// dabei die Richtung gewählt (`zweig` 1 = A, 2 = B).
     pub fn upgrade(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32, zweig: u8) -> Result<(), String> {
         let Some(building) = world.buildings.iter().find(|b| b.id == id).cloned() else { return Err("Das Gebäude gibt es nicht mehr".into()) };
-        if building.tower().is_none() {
-            return Err("Nur Türme lassen sich aufwerten".into());
+        if building.kind == BuildingKind::Dorfhalle && world.players.get(&player).map(|a| player_key(&a.name)).as_deref() != Some(building.owner.as_str()) {
+            return Err("Nur der Besitzer baut seine Dorfhalle aus".into());
+        }
+        if building.tower().is_none() && building.kind != BuildingKind::Dorfhalle {
+            return Err("Nur Türme und die Dorfhalle lassen sich aufwerten".into());
         }
         if !building.finished() {
             return Err("Erst fertig bauen".into());
@@ -556,7 +589,7 @@ impl Authority {
         if building.level >= crate::tuerme::MAX_STUFE {
             return Err("Schon auf der höchsten Stufe".into());
         }
-        if building.level + 1 == crate::tuerme::MAX_STUFE && !(1..=2).contains(&zweig) {
+        if building.tower().is_some() && building.level + 1 == crate::tuerme::MAX_STUFE && !(1..=2).contains(&zweig) {
             return Err("Für Stufe 3 eine Richtung wählen".into());
         }
         let cost = building.kind.upgrade_cost(building.level + 1);
@@ -569,7 +602,14 @@ impl Authority {
         }
         let inventory = *inventory;
         let level = building.level + 1;
-        let neu = Building { level, progress: 0.0, zweig: if level == crate::tuerme::MAX_STUFE { zweig } else { building.zweig }, ..building };
+        let zweig = if level == crate::tuerme::MAX_STUFE && building.tower().is_some() { zweig } else { building.zweig };
+        let neu = Building { level, progress: 0.0, zweig, ..building };
+        if neu.kind == BuildingKind::Dorfhalle {
+            let name = world.players.get(&player).map(|a| a.name.clone()).unwrap_or_default();
+            let text = format!("{name} baut die Dorfhalle zum {} aus", neu.kind.stufen_name(level));
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            self.broadcast(ServerMessage::Notice(text));
+        }
         world.replace_building(ctx, neu.clone());
         self.broadcast(ServerMessage::BuildingChanged(neu));
         self.send_inventory(player, inventory);
@@ -630,6 +670,7 @@ impl Authority {
                     let spawn = world.spawn + vec3((id % 5) as f32 - 2.0, 0.0, 0.0);
                     let hello = Hello::parse(&net.hello(id));
                     let (name, class) = (hello.name, hello.class);
+                    let spawn = world.startpunkt(&name) + (spawn - world.spawn);
                     world.spawn_player(ctx, id, &name, class, spawn);
                     world.chat_events.push(crate::world::ChatLine::notice(format!("{name} ist beigetreten")));
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.

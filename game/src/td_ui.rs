@@ -284,6 +284,7 @@ pub fn turm_fenster(egui_ctx: &egui::Context, world: &World, building: &Building
         let titel = match building.tower() {
             Some(t) if building.aktiver_zweig() > 0 => format!("{} · Stufe {} · {}", building.kind.label(), building.level, t.zweig(building.zweig).0),
             Some(_) => format!("{} · Stufe {}", building.kind.label(), building.level),
+            None if building.kind == crate::bauten::BuildingKind::Dorfhalle => format!("{} · Stufe {}", building.kind.stufen_name(building.level), building.level),
             None => building.kind.label().to_string(),
         };
         ui::heading(ui, &titel);
@@ -353,6 +354,28 @@ pub fn turm_fenster(egui_ctx: &egui::Context, world: &World, building: &Building
                 }
             } else {
                 ui.label(RichText::new("Höchste Stufe erreicht").size(15.0).color(ui::ACCENT));
+            }
+        } else if building.kind == crate::bauten::BuildingKind::Dorfhalle {
+            use crate::bauten::{bauradius, dorfhalle_freischaltung, dorfhalle_gold};
+            ui.add_space(6.0);
+            ui.label(RichText::new(format!("Bauradius {:.0} m (R zeigt ihn)", bauradius(building.level))).size(15.0));
+            ui.label(RichText::new(format!("Schaltet frei: {}", dorfhalle_freischaltung(building.level))).size(15.0));
+            ui.label(RichText::new(format!("+{} Gold je überstandener Welle · Gebäude im Radius arbeiten 10 % schneller", dorfhalle_gold(building.level))).size(14.0).color(GOLD));
+            ui.label(RichText::new("Hier fängst du an, wenn du ins Spiel kommst oder von der Insel fällst.").size(13.0).color(ui::MUTED));
+            ui.add_space(10.0);
+            if building.level < MAX_STUFE {
+                let naechste = building.level + 1;
+                ui.label(RichText::new(format!("Ausbau zum {}", building.kind.stufen_name(naechste))).size(16.0).strong().color(ui::ACCENT));
+                ui.label(RichText::new(format!("Bauradius {:.0} m · schaltet frei: {} · +{} Gold je Welle", bauradius(naechste), dorfhalle_freischaltung(naechste), dorfhalle_gold(naechste))).size(14.0).color(GRUEN));
+                let cost = building.kind.upgrade_cost(naechste);
+                kosten_zeile(ui, inventory, &cost, 14.0);
+                let kann = building.finished() && crate::bauten::can_pay(inventory, &cost) && building.owner == me;
+                let text = if building.owner == me { format!("Zum {} ausbauen", building.kind.stufen_name(naechste)) } else { "Nur der Besitzer baut aus".to_string() };
+                if ui.add_enabled(kann, egui::Button::new(RichText::new(text).size(17.0)).min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
+                    aktion = Some(TurmAktion::Aufwerten(0));
+                }
+            } else {
+                ui.label(RichText::new("Voll ausgebaut").size(15.0).color(ui::ACCENT));
             }
         } else if let Some(item) = building.kind.produces() {
             ui.label(RichText::new(format!("Liefert 1 {} alle {:.0} s", item.label(), crate::bauten::PRODUCTION_SECONDS)).size(15.0));

@@ -19,6 +19,8 @@ use crate::world::SoundEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BuildingKind {
+    /// Hauptgebäude einer Siedlung am Straßenende (Dorfhalle → Rathaus → Burgfried)
+    Dorfhalle,
     Lumberjack,
     Quarry,
     Mine,
@@ -29,7 +31,7 @@ pub enum BuildingKind {
 
 impl BuildingKind {
     /// Die Wirtschaftsgebäude (Reiter „Gebäude“ im Baumenü)
-    pub const ALL: [BuildingKind; 3] = [BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine];
+    pub const ALL: [BuildingKind; 4] = [BuildingKind::Dorfhalle, BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine];
 
     pub fn tower(self) -> Option<TowerKind> {
         match self {
@@ -47,6 +49,7 @@ impl BuildingKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            BuildingKind::Dorfhalle => "Dorfhalle",
             BuildingKind::Lumberjack => "Holzfäller",
             BuildingKind::Quarry => "Steinbruch",
             BuildingKind::Mine => "Erzmine",
@@ -55,8 +58,18 @@ impl BuildingKind {
         }
     }
 
+    /// Name auf einer Stufe (die Dorfhalle wird zum Rathaus und zum Burgfried).
+    pub fn stufen_name(self, level: u8) -> &'static str {
+        match (self, level) {
+            (BuildingKind::Dorfhalle, 2) => "Rathaus",
+            (BuildingKind::Dorfhalle, l) if l >= 3 => "Burgfried",
+            _ => self.label(),
+        }
+    }
+
     pub fn description(self) -> &'static str {
         match self {
+            BuildingKind::Dorfhalle => "Hauptgebäude deiner Siedlung am Ende einer Heerstraße. Nur in ihrem Umkreis (R) baust du Holzfäller, Steinbruch und Erzmine.",
             BuildingKind::Lumberjack => "Blockhütte mit Holzschuppen. Der Holzfäller schlägt Holz für dich.",
             BuildingKind::Quarry => "Felswand mit Kran und Werkstatt. Bricht Steinquader für dich.",
             BuildingKind::Mine => "Stollen in den Fels, Lore voller Erz. Fördert Eisenerz für dich.",
@@ -68,6 +81,7 @@ impl BuildingKind {
     /// Modell in `game/assets/bauten/` (Türme je Stufe).
     pub fn model(self, level: u8) -> String {
         match self {
+            BuildingKind::Dorfhalle => format!("dorfhalle_{}", level.clamp(1, 3)),
             BuildingKind::Lumberjack => "holzfaeller".into(),
             BuildingKind::Quarry => "steinbruch".into(),
             BuildingKind::Mine => "erzmine".into(),
@@ -87,6 +101,7 @@ impl BuildingKind {
     /// Kosten für das Bauen (Stufe 1).
     pub fn cost(self) -> Vec<(Item, u32)> {
         match self {
+            BuildingKind::Dorfhalle => vec![(Item::Wood, 30), (Item::Stone, 15)],
             BuildingKind::Lumberjack => vec![(Item::Wood, 20), (Item::Stone, 8)],
             BuildingKind::Quarry => vec![(Item::Wood, 25), (Item::Stone, 10)],
             BuildingKind::Mine => vec![(Item::Wood, 30), (Item::Stone, 20)],
@@ -99,6 +114,8 @@ impl BuildingKind {
     pub fn upgrade_cost(self, level: u8) -> Vec<(Item, u32)> {
         match self {
             BuildingKind::Tower(t) if level <= MAX_STUFE => t.kosten(level),
+            BuildingKind::Dorfhalle if level == 2 => vec![(Item::Gold, 120), (Item::Wood, 40), (Item::Stone, 30), (Item::Ore, 8)],
+            BuildingKind::Dorfhalle if level == 3 => vec![(Item::Gold, 300), (Item::Wood, 60), (Item::Stone, 60), (Item::Ore, 25)],
             _ => Vec::new(),
         }
     }
@@ -106,6 +123,7 @@ impl BuildingKind {
     /// Mit unbestimmtem Artikel („einen Holzfäller“, „eine Erzmine“).
     pub fn with_article(self) -> String {
         match self {
+            BuildingKind::Dorfhalle => "eine Dorfhalle".into(),
             BuildingKind::Lumberjack => "einen Holzfäller".into(),
             BuildingKind::Quarry => "einen Steinbruch".into(),
             BuildingKind::Mine => "eine Erzmine".into(),
@@ -120,13 +138,14 @@ impl BuildingKind {
             BuildingKind::Lumberjack => Some(Item::Wood),
             BuildingKind::Quarry => Some(Item::Stone),
             BuildingKind::Mine => Some(Item::Ore),
-            BuildingKind::Tower(_) | BuildingKind::Falle(_) => None,
+            BuildingKind::Tower(_) | BuildingKind::Falle(_) | BuildingKind::Dorfhalle => None,
         }
     }
 
     /// Radius des Bauplatzes in Metern (Hof bzw. Vorplatz eingeschlossen).
     pub fn radius(self) -> f32 {
         match self {
+            BuildingKind::Dorfhalle => 10.5,
             BuildingKind::Lumberjack => 7.4,
             BuildingKind::Quarry => 8.0,
             BuildingKind::Mine => 7.4,
@@ -140,6 +159,8 @@ impl BuildingKind {
     /// So lange dauert der Bau bzw. das Aufwerten auf `level` (Sekunden).
     pub fn build_seconds(self, level: u8) -> f32 {
         match self {
+            BuildingKind::Dorfhalle if level > 1 => 20.0,
+            BuildingKind::Dorfhalle => 25.0,
             BuildingKind::Lumberjack => 30.0,
             BuildingKind::Quarry => 36.0,
             BuildingKind::Mine => 42.0,
@@ -152,6 +173,8 @@ impl BuildingKind {
     /// Feste Hindernisse (Mitte, Größe) im Raum des Modells – der Rest bleibt begehbar.
     fn colliders(self, level: u8) -> Vec<([f32; 3], [f32; 3])> {
         match self {
+            BuildingKind::Dorfhalle if level >= 3 => vec![([0.0, 3.5, 0.0], [11.6, 7.0, 7.0]), ([-5.2, 7.0, -4.6], [5.6, 14.0, 5.6])],
+            BuildingKind::Dorfhalle => vec![([0.0, 3.5, 0.0], [11.6, 7.0, 7.0])],
             BuildingKind::Lumberjack => vec![([0.0, 2.6, 0.0], [6.9, 5.2, 5.3]), ([4.3, 1.2, 0.0], [2.0, 2.4, 4.8])],
             BuildingKind::Quarry => vec![([0.0, 1.6, -4.3], [11.0, 3.2, 3.2]), ([2.6, 2.7, -0.2], [0.6, 5.4, 0.6])],
             BuildingKind::Mine => vec![([0.0, 1.8, -4.3], [10.0, 3.6, 4.2])],
@@ -163,6 +186,25 @@ impl BuildingKind {
             BuildingKind::Falle(_) => Vec::new(),
         }
     }
+}
+
+/// Bauradius der Dorfhalle je Stufe (Meter)
+pub fn bauradius(level: u8) -> f32 {
+    [30.0, 42.0, 55.0][(level.clamp(1, 3) - 1) as usize]
+}
+
+/// Was die Stufen der Dorfhalle freischalten (für Menü und Fenster).
+pub fn dorfhalle_freischaltung(level: u8) -> &'static str {
+    match level {
+        1 => "Holzfäller und Steinbruch",
+        2 => "Erzmine, 42 m Bauradius, mehr Gold je Welle",
+        _ => "55 m Bauradius, am meisten Gold je Welle",
+    }
+}
+
+/// Gold, das eine Dorfhalle ihrem Besitzer je überstandener Welle bringt.
+pub fn dorfhalle_gold(level: u8) -> u32 {
+    [5, 10, 20][(level.clamp(1, 3) - 1) as usize]
 }
 
 /// Wie oft ein fertiges Gebäude liefert (Sekunden).
@@ -267,6 +309,36 @@ pub fn road_distance(world: &crate::world::World, at: Vec2) -> f32 {
     best
 }
 
+/// Regeln der Siedlungen (brauchen den Bauherrn): eine Dorfhalle je Spieler und je Siedlungsplatz,
+/// Wirtschaftsgebäude nur im Radius der eigenen Dorfhalle, die Erzmine erst ab dem Rathaus.
+pub fn siedlung_pruefen(world: &crate::world::World, kind: BuildingKind, at: Vec2, owner: &str) -> Result<(), &'static str> {
+    let eigene = world.dorfhalle_von(owner);
+    match kind {
+        BuildingKind::Dorfhalle => {
+            if eigene.is_some() {
+                return Err("Du hast schon eine Dorfhalle");
+            }
+            let Some(platz) = world.siedlungsplatz_bei(at, 26.0) else { return Err("Die Dorfhalle nur auf einem Siedlungsplatz am Ende einer Heerstraße") };
+            if world.dorfhalle_auf_platz(platz).is_some() {
+                return Err("Dieser Siedlungsplatz ist schon vergeben");
+            }
+            Ok(())
+        }
+        BuildingKind::Lumberjack | BuildingKind::Quarry | BuildingKind::Mine => {
+            let Some(halle) = eigene else { return Err("Erst eine Dorfhalle bauen") };
+            if kind == BuildingKind::Mine && halle.level < 2 {
+                return Err("Die Erzmine braucht ein Rathaus (Dorfhalle Stufe 2)");
+            }
+            let mitte = vec2(halle.position.x, halle.position.z);
+            if mitte.distance(at) + kind.radius() * 0.5 > bauradius(halle.level) {
+                return Err("Nur im Radius deiner Dorfhalle (R zeigt ihn)");
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Fallen rasten auf der Mitte der nächsten Heerstraße ein und liegen quer zu ihr.
 pub fn falle_platz(world: &crate::world::World, at: Vec2) -> Option<(Vec2, f32)> {
     let (p, dir, _) = world.heer.naechster_strassenpunkt(at)?;
@@ -283,7 +355,11 @@ pub fn check_site(world: &crate::world::World, kind: BuildingKind, at: Vec2, bui
         }
     }
     let strasse = road_distance(world, at);
-    if kind.falle().is_some() {
+    if kind == BuildingKind::Dorfhalle {
+        if !world.siedlungsplaetze.iter().any(|(mitte, _)| mitte.distance(at) < 26.0) {
+            return Err("Die Dorfhalle nur auf einem Siedlungsplatz am Ende einer Heerstraße");
+        }
+    } else if kind.falle().is_some() {
         if strasse > 2.6 {
             return Err("Fallen nur auf eine Heerstraße");
         }
@@ -434,6 +510,8 @@ pub struct BauVisuals {
     rng: Option<Rng>,
     /// Geschosse der Türme im Flug
     geschosse: Vec<Geschoss>,
+    /// Leuchtende Ringe am Boden (Bauradius, Siedlungsplätze): Schlüssel → Objekt, Mitte, Radius
+    radien: HashMap<u64, (EntityId, Vec3, f32)>,
 }
 
 impl BauVisuals {
@@ -762,6 +840,38 @@ impl BauVisuals {
         done
     }
 
+    /// Ringe am Boden zeigen (dem Gelände folgend); was nicht mehr gewünscht ist, verschwindet.
+    pub fn radien(&mut self, ctx: &mut Context, wuensche: &[(u64, Vec3, f32, Vec4)], hoehe: &dyn Fn(Vec2) -> f32) {
+        let weg: Vec<u64> = self
+            .radien
+            .iter()
+            .filter(|(key, (_, mitte, r))| !wuensche.iter().any(|w| w.0 == **key && w.1.distance(*mitte) < 0.01 && (w.2 - r).abs() < 0.01))
+            .map(|(&key, _)| key)
+            .collect();
+        for key in weg {
+            if let Some((entity, ..)) = self.radien.remove(&key) {
+                ctx.scene.despawn(entity);
+            }
+        }
+        let puls = 0.8 + 0.2 * (ctx.time.elapsed * 2.5).sin();
+        for &(key, mitte, radius, farbe) in wuensche {
+            let entity = match self.radien.get(&key) {
+                Some(&(entity, ..)) => entity,
+                None => {
+                    let mesh = ctx.assets.add_mesh(boden_ring(mitte, radius, hoehe));
+                    let mut e = Entity::new("Bauradius", mesh).with_material(Material::Emissive { glow: 1.4 });
+                    e.casts_shadow = false;
+                    let entity = ctx.scene.spawn(e);
+                    self.radien.insert(key, (entity, mitte, radius));
+                    entity
+                }
+            };
+            if let Some(e) = ctx.scene.try_get_mut(entity) {
+                e.color = farbe * vec4(puls, puls, puls, 1.0);
+            }
+        }
+    }
+
     /// Vorschau beim Platzieren: Modell in Grün (passt) oder Rot (passt nicht). `None` = weg.
     pub fn set_ghost(&mut self, ctx: &mut Context, ghost: Option<(BuildingKind, Vec3, f32, bool)>) {
         if let Some(old) = &self.ghost {
@@ -863,6 +973,34 @@ fn dust(at: Vec3, count: u32, size: f32) -> Burst {
         grow: 1.8,
         round: true,
     }
+}
+
+/// Ring am Boden um `mitte`, der dem Gelände folgt (40 cm breit, knapp darüber), dazu kurze Striche
+/// nach innen alle paar Meter, damit man den Rand auch von der Seite sieht.
+fn boden_ring(mitte: Vec3, radius: f32, hoehe: &dyn Fn(Vec2) -> f32) -> MeshData {
+    let mut mesh = MeshData::default();
+    let n = ((radius * 2.5) as usize).clamp(48, 220);
+    let punkt = |w: f32, r: f32| {
+        let p = vec2(mitte.x + w.cos() * r, mitte.z + w.sin() * r);
+        vec3(p.x, hoehe(p) + 0.3, p.y)
+    };
+    for k in 0..n {
+        let a = std::f32::consts::TAU * k as f32 / n as f32;
+        let b = std::f32::consts::TAU * (k + 1) as f32 / n as f32;
+        let (a0, a1, b0, b1) = (punkt(a, radius - 0.4), punkt(a, radius), punkt(b, radius - 0.4), punkt(b, radius));
+        mesh.push_triangle(a0, b1, a1, Vec3::ONE);
+        mesh.push_triangle(a0, b0, b1, Vec3::ONE);
+        // Leuchtende Pfähle alle paar Meter
+        if k % 6 == 0 {
+            let fuss = punkt(a, radius - 0.2);
+            let quer = vec3(-a.sin(), 0.0, a.cos()) * 0.08;
+            let oben = fuss + Vec3::Y * 1.1;
+            mesh.push_triangle(fuss - quer, fuss + quer, oben + quer, Vec3::ONE);
+            mesh.push_triangle(fuss - quer, oben + quer, oben - quer, Vec3::ONE);
+        }
+    }
+    mesh.double_sided = true;
+    mesh
 }
 
 /// Flacher Ring mit Radius 1 (wird auf die Reichweite skaliert).

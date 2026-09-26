@@ -73,6 +73,52 @@ pub struct Island {
     pub places: crate::orte::Places,
     /// Die vier Heerstraßen von den Rampen der Festung (Süd, Ost, Nord, West)
     pub strassen: Vec<Vec<Vec2>>,
+    /// Siedlungsplätze am Ende jeder Heerstraße: Mitte und Höhe des geebneten Bodens
+    pub siedlungen: Vec<(Vec2, f32)>,
+}
+
+/// Siedlungsplatz: so weit hinter dem Straßenende liegt die Mitte, bis hierhin ist der Boden eben,
+/// bis hierhin läuft er weich ins Gelände aus, und in diesem Umkreis wächst nichts.
+pub const SIEDLUNG_ABSTAND: f32 = 22.0;
+pub const SIEDLUNG_EBEN: f32 = 34.0;
+pub const SIEDLUNG_RAND: f32 = 62.0;
+pub const SIEDLUNG_FREI: f32 = 40.0;
+
+/// Die Siedlungsplätze am Ende der Heerstraßen: Mitte etwas hinter dem Ende (in Straßenrichtung),
+/// Höhe = mittlere Geländehöhe dort (mindestens knapp über dem Strand).
+fn siedlungsplaetze(terrain: &Terrain, strassen: &[Vec<Vec2>]) -> Vec<(Vec2, f32)> {
+    strassen
+        .iter()
+        .map(|strasse| {
+            let n = strasse.len();
+            let ende = strasse[n - 1];
+            let richtung = (ende - strasse[n.saturating_sub(4)]).normalize_or(ende.normalize_or(Vec2::Y));
+            let mitte = ende + richtung * SIEDLUNG_ABSTAND;
+            let (mut summe, mut anzahl) = (0.0, 0.0);
+            for iz in -5..=5 {
+                for ix in -5..=5 {
+                    let p = mitte + vec2(ix as f32, iz as f32) * 5.0;
+                    if p.distance(mitte) <= 25.0 {
+                        summe += terrain.height_at(p.x, p.y);
+                        anzahl += 1.0;
+                    }
+                }
+            }
+            (mitte, (summe / anzahl).max(2.8))
+        })
+        .collect()
+}
+
+/// Gelände mit den Siedlungsplätzen: innen eben, nach außen weich ins natürliche Gelände.
+fn siedlungsgrund(p: Vec2, h: f32, plaetze: &[(Vec2, f32)]) -> f32 {
+    let mut h = h;
+    for &(mitte, eben) in plaetze {
+        let d = p.distance(mitte);
+        if d < SIEDLUNG_RAND {
+            h = eben + (h - eben) * smoothstep(SIEDLUNG_EBEN, SIEDLUNG_RAND, d);
+        }
+    }
+    h
 }
 
 /// Die Übersichtskarte zeigt ±`MAP_EXTENT` Meter um die Inselmitte (Norden = -z oben).
@@ -794,6 +840,9 @@ pub fn wildlife_spots(terrain: &Terrain) -> (Vec<Vec2>, Vec<Vec2>) {
 }
 
 /// Bester Punkt eines 6-m-Rasters über die Insel (höchste Wertung, `None` = ungeeignet).
+/// Siedlungsplätze (Mitte): dort und drumherum stehen keine anderen Orte (einmal gesetzt, immer gleich).
+static SIEDLUNGEN: std::sync::OnceLock<Vec<Vec2>> = std::sync::OnceLock::new();
+
 fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
     let r = ISLAND_RADIUS * 1.05;
     let steps = (r * 2.0 / 6.0) as i32;
@@ -802,7 +851,7 @@ fn best_spot(mut score: impl FnMut(Vec2) -> Option<f32>) -> Option<Vec2> {
         for ix in 0..=steps {
             let p = vec2(-r + ix as f32 * 6.0, -r + iz as f32 * 6.0);
             // Rund um die Burg und ihre Auffahrt ist kein Platz für andere Orte
-            if burg_rand(p) < 30.0 || burg_weg(p).0 < 15.0 || festung_rand(p) < 40.0 {
+            if burg_rand(p) < 30.0 || burg_weg(p).0 < 15.0 || festung_rand(p) < 40.0 || SIEDLUNGEN.get().is_some_and(|l| l.iter().any(|m| p.distance(*m) < SIEDLUNG_RAND + 25.0)) {
                 continue;
             }
             if let Some(s) = score(p) {
@@ -1163,9 +1212,20 @@ pub fn build(ctx: &mut Context) -> Island {
     // Licht und Himmel kommen vom Tag-Nacht-Zyklus (`World::day`).
     ctx.env.shadow_range = 45.0;
 
-    let terrain = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, height);
-    let spawn = find_spawn(&terrain);
-    let paths = Paths::build(&terrain, spawn);
+    // Erst das natürliche Gelände: daraus Startpunkt, Wege und Heerstraßen. Dann werden an den
+    // Straßenenden die Siedlungsplätze geebnet (das endgültige Gelände).
+    let natur = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, height);
+    let spawn = find_spawn(&natur);
+    let mut paths = Paths::build(&natur, spawn);
+    let siedlungen = siedlungsplaetze(&natur, &paths.strassen);
+    let _ = SIEDLUNGEN.set(siedlungen.iter().map(|s| s.0).collect());
+    drop(natur);
+    let terrain = Terrain::generate(Vec2::ZERO, TERRAIN_SIZE, TERRAIN_CELLS, |p| siedlungsgrund(p, height(p), &siedlungen));
+    let spawn = vec3(spawn.x, terrain.height_at(spawn.x, spawn.z), spawn.z);
+    // Dorfweg vom Straßenende bis in die Mitte des Siedlungsplatzes
+    for (strasse, &(mitte, _)) in paths.strassen.clone().iter().zip(&siedlungen) {
+        paths.stamp(*strasse.last().unwrap_or(&mitte), mitte, 1.6);
+    }
     // Mit Fenster: fein aufgelöste Bodentextur; der Server braucht nur die Form.
     let ground = if ctx.is_headless() {
         let terrain_mesh = ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(|c, n| ground_color(c, n) * facet_jitter(c)));
@@ -1197,7 +1257,9 @@ pub fn build(ctx: &mut Context) -> Island {
     let camp = crate::orte::camp_center(spawn);
     let spots = find_sights(&terrain, spawn, camp);
     let blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
-    let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p) || festung_frei(p);
+    let is_blocked = |p: Vec2| {
+        blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p) || festung_frei(p) || siedlungen.iter().any(|&(m, _)| p.distance(m) < SIEDLUNG_FREI)
+    };
 
 
     let spacing = 3.2;
@@ -1460,7 +1522,7 @@ pub fn build(ctx: &mut Context) -> Island {
         image
     });
     let strassen = paths.strassen.clone();
-    Island { terrain, resources, spawn, crystals, map, places, strassen }
+    Island { terrain, resources, spawn, crystals, map, places, strassen, siedlungen }
 }
 
 /// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich

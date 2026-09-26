@@ -19,7 +19,7 @@ import bauten  # noqa: E402
 import tuerme  # noqa: E402
 import werkstatt  # noqa: E402
 
-GEBAEUDE = {"holzfaeller": bauten.holzfaeller, "steinbruch": bauten.steinbruch, "erzmine": bauten.erzmine}
+GEBAEUDE = {"holzfaeller": bauten.holzfaeller, "steinbruch": bauten.steinbruch, "erzmine": bauten.erzmine, "dorfhalle_1": lambda: bauten.dorfhalle(1)}
 
 
 def _turm(art):
