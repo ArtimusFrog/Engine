@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use engine::prelude::*;
 
+use crate::bauten::{self, Building, BuildingKind, PRODUCTION_SECONDS};
 use crate::characters::Action;
 use crate::protocol::*;
 use crate::save::{player_key, WorldSave};
@@ -111,6 +112,8 @@ impl Authority {
         }
 
         world.day.advance(Physics::FIXED_DT);
+        world.advance_buildings(Physics::FIXED_DT);
+        self.produce(world);
         world.think_animals(ctx);
         self.land_hits(ctx, world);
         if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
@@ -232,6 +235,61 @@ impl Authority {
         }
     }
 
+    // ---------- Gebäude ----------
+
+    /// Ein Spieler möchte ein Gebäude errichten: Platz und Kosten prüfen, dann bauen lassen.
+    pub fn build(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, kind: BuildingKind, at: Vec2, yaw: f32) -> Result<(), String> {
+        let Some(avatar) = world.players.get(&player) else { return Err("Unbekannter Spieler".into()) };
+        let (owner, name) = (player_key(&avatar.name), avatar.name.clone());
+        let builder = ctx.physics.character_position(avatar.character);
+        if !at.is_finite() {
+            return Err("Ungültiger Bauplatz".into());
+        }
+        let ground = bauten::check_site(world, kind, at, Some(builder)).map_err(str::to_string)?;
+        let inventory = world.inventories.entry(player).or_default();
+        if !bauten::affordable(inventory, kind) {
+            return Err(format!("Nicht genug Rohstoffe für {}", kind.with_article()));
+        }
+        for &(item, amount) in kind.cost() {
+            inventory.remove_item(item, amount);
+        }
+        let inventory = *inventory;
+        let id = world.buildings.iter().map(|b| b.id + 1).max().unwrap_or(1);
+        let yaw = if yaw.is_finite() { yaw.rem_euclid(std::f32::consts::TAU) } else { 0.0 };
+        let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS };
+        log::info!("{name} baut {} bei ({:.0}, {:.0})", kind.with_article(), at.x, at.y);
+        world.place_building(ctx, building.clone());
+        world.chat_events.push(crate::world::ChatLine::notice(format!("{name} baut {}", kind.with_article())));
+        self.broadcast(ServerMessage::BuildingPlaced(building));
+        self.send_inventory(player, inventory);
+        self.save(world);
+        Ok(())
+    }
+
+    /// Fertige Gebäude liefern ihrem Erbauer regelmäßig Rohstoffe – auch wenn er gerade nicht da ist.
+    fn produce(&mut self, world: &mut World) {
+        let mut deliveries = Vec::new();
+        for building in world.buildings.iter_mut().filter(|b| b.finished()) {
+            building.produce_in -= Physics::FIXED_DT;
+            if building.produce_in <= 0.0 {
+                building.produce_in += PRODUCTION_SECONDS;
+                deliveries.push((building.owner.clone(), building.kind.produces()));
+            }
+        }
+        for (owner, item) in deliveries {
+            let online = world.players.iter().find(|(_, a)| player_key(&a.name) == owner).map(|(&id, _)| id);
+            match online {
+                Some(id) => {
+                    let inventory = world.inventories.entry(id).or_default();
+                    inventory.add_item(item, 1);
+                    let inventory = *inventory;
+                    self.send_inventory(id, inventory);
+                }
+                None => self.inventories.entry(owner).or_default().add_item(item, 1),
+            }
+        }
+    }
+
     fn send_inventory(&mut self, player: PlayerId, inventory: Inventory) {
         if player != HOST_PLAYER {
             if let Some(net) = &mut self.net {
@@ -291,6 +349,7 @@ impl Authority {
                         .map(|(&id, r)| (id, r.health))
                         .collect();
                     intro.push(ServerMessage::ResourceStates { gone, damaged });
+                    intro.push(ServerMessage::Buildings(world.buildings.clone()));
                     for message in intro {
                         net.send(id, Channel::Reliable, encode(&message));
                     }
@@ -324,10 +383,13 @@ impl Authority {
         }
 
         let mut chats = Vec::new();
+        let mut builds = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
-                if let Some(ClientMessage::Chat(text)) = decode(&bytes) {
-                    chats.push((id, text));
+                match decode(&bytes) {
+                    Some(ClientMessage::Chat(text)) => chats.push((id, text)),
+                    Some(ClientMessage::Build { kind, at, yaw }) => builds.push((id, kind, at, yaw)),
+                    _ => {}
                 }
             }
             while let Some(bytes) = net.message(id, Channel::Unreliable) {
@@ -350,6 +412,13 @@ impl Authority {
         for (id, text) in chats {
             self.chat(ctx, world, id, &text);
         }
+        for (id, kind, at, yaw) in builds {
+            if let Err(reason) = self.build(ctx, world, id, kind, at, yaw) {
+                if let Some(net) = &mut self.net {
+                    net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+                }
+            }
+        }
         if left {
             self.save(world);
         }
@@ -371,7 +440,16 @@ impl Authority {
                 resource.regrows_at = Some(ctx.time.tick + remaining);
             }
         }
-        log::info!("Spielstand geladen: Tag {}, {} Spieler bekannt, {} Rohstoffe abgebaut", save.day, save.inventories.len(), save.gone.len());
+        for building in save.buildings.iter().cloned() {
+            world.place_building(ctx, building);
+        }
+        log::info!(
+            "Spielstand geladen: Tag {}, {} Spieler bekannt, {} Rohstoffe abgebaut, {} Gebäude",
+            save.day,
+            save.inventories.len(),
+            save.gone.len(),
+            save.buildings.len()
+        );
         self.inventories = save.inventories;
     }
 

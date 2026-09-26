@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0010;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0011;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -133,6 +133,12 @@ pub enum ServerMessage {
     AnimalHit { id: u16, health: u8, by: PlayerId },
     /// Chatnachricht eines Spielers (vom Server geprüft).
     Chat { from: PlayerId, name: String, text: String },
+    /// Ein Spieler hat ein Gebäude in Auftrag gegeben – es entsteht jetzt bei allen.
+    BuildingPlaced(crate::bauten::Building),
+    /// Für neue Spieler: alle Gebäude mit ihrem Baufortschritt.
+    Buildings(Vec<crate::bauten::Building>),
+    /// Der eigene Bauauftrag wurde abgelehnt (Grund zum Anzeigen).
+    BuildRefused(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,6 +147,8 @@ pub enum ClientMessage {
     Inputs(Vec<PlayerInput>),
     /// Chatnachricht an alle.
     Chat(String),
+    /// Gebäude errichten: Art, Mitte (x, z) und Drehung.
+    Build { kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32 },
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -284,6 +292,23 @@ impl Inventory {
             Item::Wool => &mut self.wool,
         };
         *slot += amount;
+    }
+
+    /// Nimmt `amount` Stück heraus, wenn so viele da sind.
+    pub fn remove_item(&mut self, item: Item, amount: u32) -> bool {
+        let slot = match item {
+            Item::Wood => &mut self.wood,
+            Item::Stone => &mut self.stone,
+            Item::Ore => &mut self.ore,
+            Item::Meat => &mut self.meat,
+            Item::Pelt => &mut self.pelt,
+            Item::Wool => &mut self.wool,
+        };
+        if *slot < amount {
+            return false;
+        }
+        *slot -= amount;
+        true
     }
 
     /// Alle Gegenstände, die mindestens einmal da sind.

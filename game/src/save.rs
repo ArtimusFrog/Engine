@@ -30,6 +30,9 @@ pub struct WorldSave {
     pub gone: Vec<(u32, u64)>,
     /// Beschädigte Rohstoffe: (ID, verbleibende Schläge).
     pub damaged: Vec<(u32, u8)>,
+    /// Von Spielern errichtete Gebäude (ältere Spielstände haben keine).
+    #[serde(default)]
+    pub buildings: Vec<crate::bauten::Building>,
 }
 
 /// Schlüssel für Inventare: Name ohne Groß/klein-Unterschied.
@@ -54,6 +57,7 @@ impl WorldSave {
             inventories,
             gone: world.resources.iter().filter_map(|(&id, r)| r.regrows_at.map(|at| (id, at.saturating_sub(tick)))).collect(),
             damaged: world.resources.iter().filter(|(_, r)| r.is_present() && r.health < r.spec.max_health).map(|(&id, r)| (id, r.health)).collect(),
+            buildings: world.buildings.clone(),
         }
     }
 
@@ -65,7 +69,7 @@ impl WorldSave {
             Ok(save) if save.format == FORMAT && save.seed == WORLD_ID => Some(save),
             Ok(save) if save.format == FORMAT => {
                 log::warn!("Spielstand {} gehört zu einer anderen Insel – Inventare bleiben, Rohstoffe wachsen neu", path.display());
-                Some(WorldSave { seed: WORLD_ID, gone: Vec::new(), damaged: Vec::new(), ..save })
+                Some(WorldSave { seed: WORLD_ID, gone: Vec::new(), damaged: Vec::new(), buildings: Vec::new(), ..save })
             }
             Ok(_) => {
                 log::warn!("Spielstand {} gehört zu einer anderen Version – fange neu an", path.display());
@@ -121,7 +125,7 @@ mod tests {
 
         // Andere Insel: Inventare bleiben, aber keine falschen Bäume fällen.
         WorldSave { seed: WORLD_ID + 1, ..save.clone() }.store(&path).unwrap();
-        assert_eq!(WorldSave::load(&path), Some(WorldSave { gone: Vec::new(), damaged: Vec::new(), ..save.clone() }));
+        assert_eq!(WorldSave::load(&path), Some(WorldSave { gone: Vec::new(), damaged: Vec::new(), buildings: Vec::new(), ..save.clone() }));
         // Altes Format: neu anfangen.
         WorldSave { format: FORMAT + 1, ..save }.store(&path).unwrap();
         assert_eq!(WorldSave::load(&path), None);

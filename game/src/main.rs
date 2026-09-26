@@ -12,6 +12,7 @@ mod hauptmenue;
 mod island;
 mod karte;
 mod leben;
+mod bauten;
 mod markierungen;
 mod messung;
 mod models;

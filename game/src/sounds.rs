@@ -164,6 +164,15 @@ impl Sounds {
                 SoundEvent::Thunder { volume } => {
                     ctx.audio.play(self.thunder, Play { volume: volume.clamp(0.2, 1.0), pitch: self.rng.range(0.85, 1.1), ..Default::default() });
                 }
+                SoundEvent::Built { at, done } => {
+                    if done {
+                        ctx.audio.play(self.pickup, Play { at: Some(at + Vec3::Y * 2.0), volume: 0.9, pitch: 0.7, range: 60.0, ..Default::default() });
+                        ctx.audio.play(self.rock_breaks, Play { at: Some(at), volume: 0.5, pitch: 1.2, range: 60.0, ..Default::default() });
+                    } else {
+                        let pitch = self.rng.range(0.72, 0.95);
+                        ctx.audio.play(self.stone, Play { at: Some(at), volume: 0.45, pitch, range: 40.0, ..Default::default() });
+                    }
+                }
                 SoundEvent::Crackle { at } => {
                     let volume = self.rng.range(0.25, 0.5);
                     ctx.audio.play(self.crackle, Play { at: Some(at), volume, pitch: self.rng.range(0.8, 1.3), range: 22.0, ..Default::default() });

@@ -116,6 +116,18 @@ impl Session {
         }
     }
 
+    /// Gebäude errichten (beim Host/Einzelspieler direkt, sonst entscheidet der Server).
+    pub fn request_build(&mut self, ctx: &mut Context, kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_build(kind, at, yaw);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.build(ctx, &mut self.world, local, kind, at, yaw) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Stellt die Uhr vor (nur wer die Welt berechnet: Einzelspieler, Host, Server).
     pub fn skip_time(&mut self, hours: f32) -> bool {
         if self.authority.is_none() {
@@ -435,6 +447,50 @@ mod tests {
 
     fn resource_health(pair: &Pair, id: u32) -> u8 {
         pair.server.session.world().resources[&id].spec.max_health
+    }
+
+    #[test]
+    fn gebaeude_bauen_fertigstellen_und_liefern() {
+        use crate::bauten::{check_site, BuildingKind, PRODUCTION_SECONDS};
+        let mut pair = Pair::start(false);
+        pair.run(60);
+        let id = pair.client.session.local_player().unwrap();
+        let kind = BuildingKind::Lumberjack;
+        // Freien Bauplatz suchen und die Figur daneben stellen
+        let world = pair.server.session.world();
+        let spawn = vec2(world.spawn.x, world.spawn.z);
+        let at = (0..480)
+            .map(|i| spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0))
+            .find(|&at| check_site(world, kind, at, None).is_ok())
+            .expect("Kein Bauplatz auf der Insel");
+        let stand = at + vec2(kind.radius() + 4.0, 0.0);
+        let character = world.players[&id].character;
+        let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+        pair.server_ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+        pair.run(40);
+
+        // Ohne Rohstoffe: abgelehnt
+        let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
+        pair.client.session.request_build(&mut client_ctx, kind, at, 0.3);
+        pair.client_ctx = client_ctx;
+        pair.run(30);
+        assert!(pair.server.session.world().buildings.is_empty(), "Bau ohne Rohstoffe");
+
+        pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 30, stone: 10, ..Default::default() });
+        let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
+        pair.client.session.request_build(&mut client_ctx, kind, at, 0.3);
+        pair.client_ctx = client_ctx;
+        pair.run(30);
+        assert_eq!(pair.server.session.world().buildings.len(), 1, "Server baut nicht");
+        assert_eq!(pair.client.session.world().buildings.len(), 1, "Client sieht die Baustelle nicht");
+        assert_eq!(pair.client.session.local_inventory().wood, 10, "Holz nicht abgezogen");
+        assert_eq!(pair.client.session.local_inventory().stone, 2, "Stein nicht abgezogen");
+
+        pair.run((kind.build_seconds() * 60.0) as u32 + 30);
+        assert!(pair.server.session.world().buildings[0].finished(), "Server: nicht fertig");
+        assert!(pair.client.session.world().buildings[0].finished(), "Client: nicht fertig");
+        pair.run((PRODUCTION_SECONDS * 60.0) as u32 + 30);
+        assert_eq!(pair.client.session.local_inventory().wood, 11, "Holzfäller liefert nicht");
     }
 
     #[test]

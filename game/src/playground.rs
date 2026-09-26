@@ -59,6 +59,12 @@ pub struct Playground {
     last_cast: f32,
     /// Inventar-Fenster offen (Taste I)?
     inventory_open: bool,
+    /// Baumenü offen (Taste B)?
+    build_menu_open: bool,
+    /// Gebäude, das gerade platziert wird, und die eigene Drehung dazu (Q/E, Mausrad)
+    build_mode: Option<(crate::bauten::BuildingKind, f32)>,
+    /// Bauplatz unter dem Fadenkreuz: Mitte, Drehung und ob (bzw. warum nicht) gebaut werden kann
+    build_site: Option<(Vec2, f32, Result<f32, &'static str>)>,
     /// Symbole und Zustand des Inventar-Fensters.
     inventory_ui: crate::inventar::InventoryUi,
     /// Gewählter Platz der Auswahlleiste (Werkzeug in der Hand).
@@ -77,6 +83,10 @@ pub struct Playground {
     demo_crystal: Option<Option<Vec3>>,
     /// Nur zum Testen: vor eine Sehenswürdigkeit stellen (`--demo-ort Name [Abstand]`).
     demo_spot: Option<(String, f32)>,
+    /// Nur zum Testen: Gebäude in der Nähe aufstellen (`--demo-bau <art> [fortschritt]`, ohne
+    /// Fortschritt: Vorschau beim Platzieren) bzw. das Baumenü öffnen (`--demo-baumenue`).
+    demo_bau: Option<(String, Option<f32>)>,
+    demo_build_menu: bool,
     demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
@@ -118,6 +128,9 @@ impl Playground {
             last_harvest: 0.0,
             last_cast: -10.0,
             inventory_open: false,
+            build_menu_open: false,
+            build_mode: None,
+            build_site: None,
             inventory_ui: Default::default(),
             hotbar_slot: 0,
             chat: Default::default(),
@@ -128,6 +141,8 @@ impl Playground {
             demo_mine_request: None,
             demo_crystal: None,
             demo_spot: None,
+            demo_bau: None,
+            demo_build_menu: false,
             demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
@@ -156,6 +171,8 @@ impl Playground {
                 self.connect_started = ctx.time.elapsed;
                 self.local_ip = ui::local_ip();
                 self.inventory_open = false;
+                self.build_menu_open = false;
+                self.build_mode = None;
                 self.orbit.distance = 6.0;
                 ctx.camera.pitch = -0.35;
                 self.refresh_cursor(ctx);
@@ -262,7 +279,110 @@ impl Playground {
     fn toggle_inventory(&mut self, ctx: &mut Context) {
         self.inventory_open = !self.inventory_open;
         self.map_open = false;
+        self.build_menu_open = false;
+        self.build_mode = None;
         self.refresh_cursor(ctx);
+    }
+
+    fn toggle_build_menu(&mut self, ctx: &mut Context) {
+        self.build_menu_open = !self.build_menu_open;
+        self.inventory_open = false;
+        self.map_open = false;
+        self.build_mode = None;
+        self.refresh_cursor(ctx);
+    }
+
+    /// Platzieren beginnen (aus dem Baumenü).
+    fn start_placing(&mut self, ctx: &mut Context, kind: crate::bauten::BuildingKind) {
+        self.build_menu_open = false;
+        self.build_mode = Some((kind, 0.0));
+        self.refresh_cursor(ctx);
+    }
+
+    /// Vorschau des Gebäudes, das gerade platziert wird: dort, wo das Fadenkreuz den Boden trifft,
+    /// die Vorderseite zur eigenen Figur gedreht.
+    fn update_build_preview(&mut self, ctx: &mut Context) {
+        let Some(session) = &mut self.session else { return };
+        let Some((kind, turn)) = self.build_mode.filter(|_| self.screen == Screen::Playing) else {
+            if self.build_site.take().is_some() || self.build_mode.is_none() {
+                session.world_mut().set_build_preview(ctx, None);
+            }
+            return;
+        };
+        let local = session.local_player();
+        let world = session.world();
+        let Some(player) = local.and_then(|id| world.player_position(ctx, id)) else { return };
+        let character = local.and_then(|id| world.players.get(&id)).map(|a| a.character);
+        let forward = ctx.camera.forward();
+        let hit = ctx.physics.raycast(ctx.camera.position, forward, 70.0, character).map(|(_, d)| ctx.camera.position + forward * d);
+        let flat_forward = vec2(forward.x, forward.z).normalize_or(Vec2::Y);
+        let own = vec2(player.x, player.z);
+        let mut at = hit.map(|p| vec2(p.x, p.z)).unwrap_or(own + flat_forward * 14.0);
+        // Nicht auf die eigene Figur bauen
+        let nearest = kind.radius() + 1.5;
+        if at.distance(own) < nearest {
+            at = own + (at - own).normalize_or(flat_forward) * nearest;
+        }
+        let toward = own - at;
+        let yaw = toward.x.atan2(toward.y) + turn;
+        let mut check = crate::bauten::check_site(world, kind, at, Some(player));
+        if check.is_ok() && !crate::bauten::affordable(&session.local_inventory(), kind) {
+            check = Err("Nicht genug Rohstoffe");
+        }
+        let ground = check.unwrap_or_else(|_| world.terrain.height_at(at.x, at.y));
+        session.world_mut().set_build_preview(ctx, Some((kind, vec3(at.x, ground, at.y), yaw, check.is_ok())));
+        self.build_site = Some((at, yaw, check));
+    }
+
+    /// Baumenü: die drei Gebäude mit Beschreibung, Kosten und Ertrag.
+    fn build_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
+        let inventory = self.session.as_ref().map(|s| s.local_inventory()).unwrap_or_default();
+        let mut chosen = None;
+        let mut close = false;
+        ui::center_panel(egui_ctx, "baumenue", 820.0, |ui| {
+            ui::heading(ui, "Bauen");
+            ui.label(RichText::new("Wähle ein Gebäude und stelle es auf der Insel auf. Fertige Gebäude liefern dir regelmäßig Rohstoffe.").size(15.0).color(ui::TEXT.gamma_multiply(0.8)));
+            ui.add_space(10.0);
+            ui.columns(BuildingKind::ALL.len(), |columns| {
+                for (column, kind) in columns.iter_mut().zip(BuildingKind::ALL) {
+                    let affordable = crate::bauten::affordable(&inventory, kind);
+                    egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(8.0).inner_margin(12.0).show(column, |ui| {
+                        ui.set_min_height(230.0);
+                        ui.label(RichText::new(kind.label()).size(22.0).strong().color(ui::ACCENT));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(kind.description()).size(14.0));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Kosten").size(13.0).color(ui::TEXT.gamma_multiply(0.7)));
+                        for &(item, amount) in kind.cost() {
+                            let have = inventory.count(item);
+                            let color = if have >= amount { Color32::from_rgb(140, 225, 130) } else { Color32::from_rgb(240, 120, 100) };
+                            ui.label(RichText::new(format!("{amount} {}  (du hast {have})", item.label())).size(15.0).color(color));
+                        }
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(format!("Liefert 1 {} alle {:.0} s · Bauzeit {:.0} s", kind.produces().label(), PRODUCTION_SECONDS, kind.build_seconds()))
+                                .size(13.0)
+                                .color(ui::TEXT.gamma_multiply(0.75)),
+                        );
+                        ui.add_space(10.0);
+                        let label = if affordable { "Bauen" } else { "Zu wenig Rohstoffe" };
+                        if ui.add_enabled(affordable, egui::Button::new(RichText::new(label).size(17.0)).min_size(egui::vec2(ui.available_width(), 36.0))).clicked() {
+                            chosen = Some(kind);
+                        }
+                    });
+                }
+            });
+            ui.add_space(10.0);
+            if ui::big_button(ui, "Schließen").clicked() {
+                close = true;
+            }
+        });
+        if let Some(kind) = chosen {
+            self.start_placing(ctx, kind);
+        } else if close {
+            self.toggle_build_menu(ctx);
+        }
     }
 
     fn toggle_map(&mut self, ctx: &mut Context) {
@@ -273,8 +393,13 @@ impl Playground {
 
     /// Mauszeiger festhalten, solange man spielt und kein Fenster (Inventar, Karte, Chat) offen ist.
     fn refresh_cursor(&self, ctx: &mut Context) {
-        ctx.cursor_locked =
-            self.screen == Screen::Playing && !self.free_camera && !self.inventory_open && !self.map_open && !self.chat.open && !ctx.is_headless();
+        ctx.cursor_locked = self.screen == Screen::Playing
+            && !self.free_camera
+            && !self.inventory_open
+            && !self.build_menu_open
+            && !self.map_open
+            && !self.chat.open
+            && !ctx.is_headless();
     }
 
     fn handle_game_keys(&mut self, ctx: &mut Context) {
@@ -291,6 +416,16 @@ impl Playground {
                 }
                 if escape && self.map_open {
                     self.toggle_map(ctx);
+                    return;
+                }
+                // B: Baumenü (bzw. Platzieren abbrechen)
+                if (escape || ctx.input.key_pressed(KeyCode::KeyB)) && self.build_mode.is_some() {
+                    self.build_mode = None;
+                    self.refresh_cursor(ctx);
+                    return;
+                }
+                if (escape && self.build_menu_open) || (ctx.input.key_pressed(KeyCode::KeyB) && !self.free_camera) {
+                    self.toggle_build_menu(ctx);
                     return;
                 }
                 if (ctx.input.key_pressed(KeyCode::Enter) || ctx.input.key_pressed(KeyCode::NumpadEnter)) && !self.free_camera {
@@ -310,6 +445,31 @@ impl Playground {
                 }
                 if ctx.input.key_pressed(KeyCode::KeyI) && !self.free_camera {
                     self.toggle_inventory(ctx);
+                }
+                // Platzieren: Q/E oder Mausrad drehen, Linksklick bauen, Rechtsklick abbrechen
+                if let Some((kind, turn)) = self.build_mode {
+                    let step = 15f32.to_radians();
+                    let scroll = ctx.input.scroll();
+                    let mut turn = turn;
+                    if ctx.input.key_pressed(KeyCode::KeyQ) || scroll > 0.1 {
+                        turn -= step;
+                    }
+                    if ctx.input.key_pressed(KeyCode::KeyE) || scroll < -0.1 {
+                        turn += step;
+                    }
+                    self.build_mode = Some((kind, turn));
+                    if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
+                        ctx.cursor_locked = true;
+                    } else if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) {
+                        if let (Some((at, yaw, Ok(_))), Some(session)) = (self.build_site, &mut self.session) {
+                            session.request_build(ctx, kind, at, yaw);
+                            self.build_mode = None;
+                        }
+                    } else if ctx.input.mouse_pressed(MouseButton::Right) {
+                        self.build_mode = None;
+                    }
+                    self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
+                    return;
                 }
                 // Auswahlleiste: Tasten 1–8 oder Mausrad
                 let digits = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8];
@@ -469,6 +629,18 @@ impl Playground {
 
     /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff oder Tier anvisiert ist.
     fn aim_hud(&self, egui_ctx: &egui::Context) {
+        // Beim Platzieren: was gebaut wird und ob es hier geht
+        if let (Some((kind, _)), Some((_, _, check))) = (self.build_mode, self.build_site) {
+            let center = egui_ctx.content_rect().center();
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, kind.label(), egui::FontId::proportional(20.0), Color32::WHITE);
+            let (text, color) = match check {
+                Ok(_) => ("Linksklick: hier bauen", Color32::from_rgb(140, 230, 130)),
+                Err(reason) => (reason, Color32::from_rgb(255, 130, 110)),
+            };
+            painter.text(center + egui::vec2(0.0, 54.0), Align2::CENTER_TOP, text, egui::FontId::proportional(16.0), color);
+            return;
+        }
         if let (None, Some(id), Some(session)) = (self.aim, self.aim_animal, &self.session) {
             let Some(animal) = session.world().animals.get(id as usize) else { return };
             let center = egui_ctx.content_rect().center();
@@ -811,9 +983,11 @@ impl Playground {
             });
         }
 
-        let hint = if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · I Inventar · M Karte · Enter Chat · Esc Menü"
-        } else if self.inventory_open || self.map_open || self.chat.open {
+        let hint = if self.build_mode.is_some() {
+            "Linksklick Bauen · Q/E oder Mausrad Drehen · Rechtsklick oder B Abbrechen"
+        } else if ctx.cursor_locked || self.free_camera {
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · B Bauen · I Inventar · M Karte · Enter Chat · Esc Menü"
+        } else if self.inventory_open || self.build_menu_open || self.map_open || self.chat.open {
             ""
         } else {
             "Klicken zum Spielen"
@@ -913,6 +1087,11 @@ impl Game for Playground {
             self.chat.prefill("Treffen wir uns an der Festung?");
             self.refresh_cursor(ctx);
         }
+        if let Some(position) = args.iter().position(|a| a == "--demo-bau") {
+            let name = args.get(position + 1).cloned().unwrap_or_default().to_lowercase();
+            self.demo_bau = Some((name, args.get(position + 2).and_then(|p| p.parse().ok())));
+        }
+        self.demo_build_menu = args.iter().any(|a| a == "--demo-baumenue");
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
@@ -1012,6 +1191,7 @@ impl Game for Playground {
 
     fn update(&mut self, ctx: &mut Context) {
         self.handle_game_keys(ctx);
+        self.update_build_preview(ctx);
 
         if self.screen == Screen::Gallery {
             let back = ctx.input.key_pressed(KeyCode::Escape) || self.gallery.as_ref().is_some_and(|g| g.wants_back());
@@ -1087,6 +1267,44 @@ impl Game for Playground {
                     ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
                 }
                 self.demo_crystal = Some(Some(vec3(at.x, ground + 1.5, at.y)));
+            }
+        }
+        if let (Some((name, progress)), Some(session)) = (self.demo_bau.take(), &mut self.session) {
+            use crate::bauten::{Building, BuildingKind};
+            let kind = BuildingKind::ALL.into_iter().find(|k| k.file_name().starts_with(&name)).unwrap_or(BuildingKind::Lumberjack);
+            if let Some(local) = session.local_player() {
+                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 200, stone: 200, ore: 20, ..Default::default() });
+            }
+            let world = session.world();
+            let spawn = vec2(world.spawn.x, world.spawn.z);
+            // Freien Platz nahe beim Start suchen
+            let site = (0..480).find_map(|i| {
+                let at = spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0);
+                crate::bauten::check_site(world, kind, at, None).ok().map(|y| (at, y))
+            });
+            if let (Some((at, y)), Some(local)) = (site, session.local_player()) {
+                let away = (spawn - at).normalize_or(Vec2::Y);
+                let stand = at + away * 22.0;
+                let character = world.players[&local].character;
+                let ground = world.terrain.height_at(stand.x, stand.y);
+                ctx.physics.teleport_character(character, vec3(stand.x, ground + 1.0, stand.y));
+                match progress {
+                    Some(progress) => {
+                        let building = Building { id: 1, kind, position: vec3(at.x, y, at.y), yaw: away.x.atan2(away.y) + 0.5, progress, owner: "demo".into(), produce_in: 40.0 };
+                        session.world_mut().place_building(ctx, building);
+                    }
+                    None => self.build_mode = Some((kind, 0.5)),
+                }
+                self.demo_crystal = Some(Some(vec3(at.x, y + 1.0, at.y)));
+                self.demo_yaw_offset = 0.0;
+            }
+        }
+        if let (true, Some(session)) = (self.demo_build_menu, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 27, stone: 14, ore: 3, ..Default::default() });
+                self.demo_build_menu = false;
+                self.build_menu_open = true;
+                self.refresh_cursor(ctx);
             }
         }
         if let (Some(None), Some(session)) = (self.demo_crystal, &mut self.session) {
@@ -1194,6 +1412,7 @@ impl Game for Playground {
             Screen::Connecting => self.connecting_screen(ctx, egui_ctx),
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
+            Screen::Playing if self.build_menu_open => self.build_menu(ctx, egui_ctx),
             Screen::Playing if self.map_open => {
                 if let Some(session) = &self.session {
                     if self.map_ui.show(ctx, egui_ctx, session.world(), session.local_player()) {

@@ -128,6 +128,7 @@ fn rules_for(path: &Path) -> Option<Rules> {
         "npc" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen"] }),
         // Große Bauwerke (Burg): ein Wahrzeichen, dafür viele Details
         "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[] }),
+        "bauten" => Some(Rules { max_triangles: 30_000, required_clips: &[] }),
         _ => None,
     }
 }

@@ -86,6 +86,11 @@ impl Replica {
         }
     }
 
+    /// Bittet den Server, ein Gebäude zu errichten.
+    pub fn send_build(&mut self, kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Build { kind, at, yaw }));
+    }
+
     /// Merkt sich, dass ein Treffer schon vorab gezeigt wurde.
     pub fn note_preview(&mut self, id: u32, tick: u64) {
         self.previewed.insert(id, tick);
@@ -114,6 +119,7 @@ impl Replica {
         }
 
         world.day.advance(Physics::FIXED_DT);
+        world.advance_buildings(Physics::FIXED_DT);
         if let Some(tick) = &mut self.server_tick {
             *tick += 1.0;
         }
@@ -188,6 +194,13 @@ impl Replica {
                 world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id);
             }
             ServerMessage::AnimalHit { id, health, by: _ } => world.animal_hit(ctx, id, health, true),
+            ServerMessage::BuildingPlaced(building) => world.place_building(ctx, building),
+            ServerMessage::Buildings(buildings) => {
+                for building in buildings {
+                    world.place_building(ctx, building);
+                }
+            }
+            ServerMessage::BuildRefused(reason) => world.chat_events.push(crate::world::ChatLine::notice(reason)),
         }
     }
 

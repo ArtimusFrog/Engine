@@ -94,6 +94,8 @@ pub enum SoundEvent {
     Crackle { at: Vec3 },
     /// Donner nach einem Blitz (überall zu hören).
     Thunder { volume: f32 },
+    /// Hammerschlag auf einer Baustelle bzw. Gebäude fertig (`done`)
+    Built { at: Vec3, done: bool },
 }
 
 /// Ein fliegendes Zaubergeschoss (nur Optik; ob es trifft, entscheidet der Server).
@@ -160,6 +162,10 @@ pub struct World {
     pub weather: crate::wetter::Weather,
     /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
     crystals: Vec<Vec3>,
+    /// Von Spielern errichtete Gebäude (Holzfäller, Steinbruch, Erzmine)
+    pub buildings: Vec<crate::bauten::Building>,
+    /// Baustellen, fertige Gebäude und die Bauvorschau (nur mit Fenster)
+    bau: crate::bauten::BauVisuals,
 }
 
 impl World {
@@ -193,6 +199,8 @@ impl World {
             wildlife: None,
             wachen: None,
             weather: Default::default(),
+            buildings: Vec::new(),
+            bau: Default::default(),
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -215,6 +223,37 @@ impl World {
             world.place_resource(ctx, id);
         }
         world
+    }
+
+    // ---------- Gebäude ----------
+
+    /// Ein Gebäude aufstellen (neu gebaut, aus dem Spielstand oder vom Server gemeldet).
+    pub fn place_building(&mut self, ctx: &mut Context, building: crate::bauten::Building) {
+        if self.buildings.iter().any(|b| b.id == building.id) {
+            return;
+        }
+        crate::bauten::add_colliders(ctx, &building);
+        if !ctx.is_headless() {
+            let by_entity = &self.by_entity;
+            self.bau.add_site(ctx, &building, &|id| !by_entity.contains_key(&id));
+        }
+        self.buildings.push(building);
+    }
+
+    /// Baufortschritt, ein Takt (auf Server und Clients gleich schnell).
+    pub fn advance_buildings(&mut self, dt: f32) {
+        for building in &mut self.buildings {
+            if building.progress < 1.0 {
+                building.progress = (building.progress + dt / building.kind.build_seconds()).min(1.0);
+            }
+        }
+    }
+
+    /// Vorschau beim Platzieren (Art, Ort, Drehung, passt?) – `None` blendet sie aus.
+    pub fn set_build_preview(&mut self, ctx: &mut Context, preview: Option<(crate::bauten::BuildingKind, Vec3, f32, bool)>) {
+        if !ctx.is_headless() {
+            self.bau.set_ghost(ctx, preview);
+        }
     }
 
     // ---------- Tiere ----------
@@ -860,6 +899,7 @@ impl World {
         if let Some(wachen) = &mut self.wachen {
             messen("wachen", || wachen.update(ctx, &self.day));
         }
+        self.bau.update(ctx, &self.buildings, &mut self.sound_events);
         self.update_bolts(ctx);
         messen("tiere", || {
             for animal in &mut self.animals {
