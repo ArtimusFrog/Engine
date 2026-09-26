@@ -115,20 +115,22 @@ pub fn load_variants(ctx: &mut Context, folder: &str, name: &str, scale: Vec3, s
 struct Rules {
     max_triangles: usize,
     required_clips: &'static [&'static str],
+    /// So weit darf das Modell unter den Boden reichen (Sockel, Fundament, eingesunkene Felsen).
+    below_ground: f32,
 }
 
 fn rules_for(path: &Path) -> Option<Rules> {
     let folder = path.parent()?.file_name()?.to_str()?;
     match folder {
-        "natur" => Some(Rules { max_triangles: 5000, required_clips: &[] }),
-        "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"] }),
-        "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"] }),
-        "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[] }),
+        "natur" => Some(Rules { max_triangles: 5000, required_clips: &[], below_ground: 0.05 }),
+        "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"], below_ground: 0.05 }),
+        "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"], below_ground: 0.05 }),
+        "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[], below_ground: 0.05 }),
         // Figuren, die nicht gespielt werden (Wachen): stehen und gehen
-        "npc" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen"] }),
+        "npc" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen"], below_ground: 0.05 }),
         // Große Bauwerke (Burg): ein Wahrzeichen, dafür viele Details
-        "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[] }),
-        "bauten" => Some(Rules { max_triangles: 30_000, required_clips: &[] }),
+        "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[], below_ground: 0.05 }),
+        "bauten" => Some(Rules { max_triangles: 30_000, required_clips: &[], below_ground: 3.0 }),
         _ => None,
     }
 }
@@ -155,7 +157,7 @@ pub fn check_model(path: &Path, model: &Model) -> Vec<String> {
         max = max.max(v.position.into());
     }
     if triangles > 0 {
-        if min.y.abs() > 0.05 {
+        if min.y > 0.05 || min.y < -rules.below_ground {
             problems.push(format!("Ursprung nicht am Boden (Unterkante bei {:.2} m)", min.y));
         }
         let center = (min + max) * 0.5;
