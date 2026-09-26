@@ -94,6 +94,11 @@ impl Replica {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Td(befehl)));
     }
 
+    /// Runenstein schmieden oder einsetzen (der Server prüft Ort und Inventar).
+    pub fn send_runen(&mut self, befehl: crate::protocol::RunenBefehl) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Runen(befehl)));
+    }
+
     /// Schickt einen Befehl aus dem Admin-Panel an den Server.
     pub fn send_admin(&mut self, command: AdminCommand) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Admin(command)));
@@ -202,10 +207,12 @@ impl Replica {
                     world.inventories.insert(local, inventory);
                 }
             }
-            ServerMessage::SpellCast { by, origin, target, hit } => {
-                // Die eigene Zauber-Animation lief schon beim Klicken.
-                world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id);
+            ServerMessage::SpellCast { by, origin, target, hit, art } => {
+                // Die eigene Animation lief schon beim Klicken.
+                world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id, art);
             }
+            ServerMessage::SpielerGetroffen { player, schaden } => world.spieler_getroffen(player, schaden),
+            ServerMessage::SpielerGefallen { player, von } => world.spieler_gefallen(player, &von),
             ServerMessage::AnimalHit { id, health, by: _ } => world.animal_hit(ctx, id, health, true),
             ServerMessage::BuildingPlaced(building) => world.place_building(ctx, building),
             ServerMessage::Buildings(buildings) => {
@@ -229,6 +236,12 @@ impl Replica {
             world.feinde = std::mem::take(&mut snapshot.enemies);
             world.set_weather(snapshot.weather);
             world.td_uebernehmen(std::mem::take(&mut snapshot.td));
+            // Eigene Lebenspunkte (Mitspieler kommen mit der Interpolation)
+            if let Some(state) = self.local_id.and_then(|id| snapshot.players.iter().find(|p| p.id == id)) {
+                if let Some(avatar) = world.players.get_mut(&state.id) {
+                    avatar.leben = state.leben as f32;
+                }
+            }
         }
         world.ereignisse.append(&mut snapshot.ereignisse);
         world.strikes.append(&mut snapshot.strikes);
@@ -331,6 +344,7 @@ impl Replica {
             ctx.physics.move_character_to(avatar.character, position);
             avatar.facing = facing;
             avatar.tool = target.tool;
+            avatar.leben = target.leben as f32;
         }
 
         // Objekte, die nur im älteren Snapshot vorkommen, sind inzwischen zur Ruhe gekommen.

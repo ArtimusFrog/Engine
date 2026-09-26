@@ -160,7 +160,7 @@ impl EnemyKind {
     }
 
     /// Darstellungsgröße (Felslinge sind kleine Golems)
-    fn groesse(self) -> f32 {
+    pub(crate) fn groesse(self) -> f32 {
         match self {
             EnemyKind::Felsling => 0.55,
             EnemyKind::Spinnling => 0.28,
@@ -245,7 +245,7 @@ impl EnemyKind {
     }
 
     /// Marschtempo (m/s); eine Gruppe läuft so schnell wie ihr langsamstes Mitglied.
-    fn speed(self) -> f32 {
+    pub(crate) fn speed(self) -> f32 {
         match self {
             EnemyKind::Golem => 2.0,
             EnemyKind::Felsling => 2.4,
@@ -263,7 +263,7 @@ impl EnemyKind {
     }
 
     /// Angriffsreichweite (m) und Pause zwischen zwei Angriffen (s).
-    fn attack(self) -> (f32, f32) {
+    pub(crate) fn attack(self) -> (f32, f32) {
         match self {
             EnemyKind::Archer => (22.0, 2.6),
             EnemyKind::Warlock => (17.0, 3.2),
@@ -284,7 +284,7 @@ impl EnemyKind {
     }
 
     /// Schaden eines Angriffs auf Soldaten und Barrikaden (Welle 1).
-    fn schlag(self) -> f32 {
+    pub(crate) fn schlag(self) -> f32 {
         match self {
             EnemyKind::Knight => 14.0,
             EnemyKind::Archer => 8.0,
@@ -970,7 +970,8 @@ impl Heer {
     #[allow(clippy::too_many_arguments)]
     fn neues_mitglied(&mut self, kind: EnemyKind, boss: bool, welle: u32, zaeh: f32, staerke: f32, row: f32, side: f32) -> Member {
         let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1).max(1);
+        // IDs ab `wildnis::WILD_ID` gehören den Lagern der Wildnis
+        self.next_id = if self.next_id >= crate::wildnis::WILD_ID - 1 { 1 } else { self.next_id + 1 };
         let max_health = kind.max_health() * zaeh * if boss && !kind.ist_boss_art() { 6.0 } else { 1.0 };
         Member {
             id,

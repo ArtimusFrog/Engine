@@ -36,6 +36,9 @@ pub struct WorldSave {
     /// Wer sein Startgold schon bekommen hat
     #[serde(default)]
     pub startgold: std::collections::BTreeSet<String>,
+    /// Siedlungsplätze mit eingesetztem Runenstein: wem sie gehören (je Straße)
+    #[serde(default)]
+    pub runen: Vec<Option<String>>,
 }
 
 /// Schlüssel für Inventare: Name ohne Groß/klein-Unterschied.
@@ -62,6 +65,7 @@ impl WorldSave {
             damaged: world.resources.iter().filter(|(_, r)| r.is_present() && r.health < r.spec.max_health).map(|(&id, r)| (id, r.health)).collect(),
             buildings: world.buildings.clone(),
             startgold: Default::default(),
+            runen: Vec::new(),
         }
     }
 

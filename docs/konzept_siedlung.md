@@ -5,6 +5,8 @@ bis 90 m), ohne Bäume und Felsen im Kern, mit einem Dorfweg vom Straßenende bi
 
 ## Die Dorfhalle
 
+- Vorher: einen **Runenstein** in den Schutzstein des Platzes setzen (E) – vier Runenfragmente aus den
+  Lagern der Wildnis, vereint am Runenbrunnen der Burg (siehe konzept_runensteine.md).
 - Jeder Spieler baut genau **eine** Dorfhalle, jeder Siedlungsplatz trägt genau **eine** Siedlung.
   Wer am Ende einer Straße siedelt, verteidigt diese Straße (Fenster T).
 - Stufen: **Dorfhalle** (70 m Bauradius, 30 Holz + 15 Stein) → **Rathaus** (95 m, schaltet die Erzmine

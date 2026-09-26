@@ -1,11 +1,13 @@
-//! Spielfigur: der Magier aus Blender (`art/modelle/figuren/magier.py` → `figuren/magier.gltf`)
-//! mit Skelett-Animationen: Idle, Laufen, Rennen, Springen, Hieb, Werfen, Zaubern, Abbauen.
-//! In der rechten Hand hält er je nach Werkzeug den Stab oder die Spitzhacke (zwei starre
-//! Anbauteile im Modell, von denen immer nur eines sichtbar ist).
+//! Spielfiguren aus Blender: der Magier (`art/modelle/figuren/magier.py` → `figuren/magier.gltf`)
+//! und der Zwerg (`zwerg.py` → `figuren/zwerg.gltf`), mit Skelett-Animationen: Idle, Laufen,
+//! Rennen, Springen, Hieb, Werfen, Zaubern, Abbauen, Hacken.
+//! In der rechten Hand hält die Figur je nach Auswahl die Waffe (Stab bzw. Kriegshammer), die
+//! Spitzhacke oder die Axt (starre Anbauteile im Modell, von denen immer nur eines sichtbar ist).
 //!
-//! Die Figur hat echte Maße (etwa 1,85 m, mit Hut mehr) und wird nicht skaliert.
+//! Die Figuren haben echte Maße und werden nicht skaliert.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use engine::prelude::*;
 
@@ -14,32 +16,53 @@ use crate::protocol::{CharacterClass, Tool};
 
 /// Die Kapsel hat ihren Mittelpunkt auf halber Höhe (1,8 m), das Modell steht mit den Füßen im Ursprung.
 const FEET_OFFSET: f32 = -0.9;
-/// So schnell wandern die Füße in den Animationen nach hinten (m/s, siehe art/lib/figuren.py) –
-/// danach richtet sich das Abspieltempo, damit nichts rutscht.
-const WALK_SPEED: f32 = 1.7;
-const RUN_SPEED: f32 = 3.8;
 
-/// Der Magier wird nur einmal pro Programmlauf eingelesen.
-fn model() -> Option<Arc<Model>> {
-    static MODEL: OnceLock<Option<Arc<Model>>> = OnceLock::new();
-    MODEL
-        .get_or_init(|| {
-            let path = asset_files::asset_dir()?.join("figuren").join("magier.gltf");
+/// Modelldatei einer Klasse.
+fn datei(class: CharacterClass) -> &'static str {
+    match class {
+        CharacterClass::Zwerg => "zwerg",
+        _ => "magier",
+    }
+}
+
+/// So schnell wandern die Füße in den Animationen nach hinten (m/s, siehe art/lib/figuren.py) –
+/// danach richtet sich das Abspieltempo, damit nichts rutscht. Der Zwerg hat kürzere Beine.
+fn schritt(class: CharacterClass) -> (f32, f32) {
+    match class {
+        CharacterClass::Zwerg => (1.15, 2.6),
+        _ => (1.7, 3.8),
+    }
+}
+
+/// Jede Figur wird nur einmal pro Programmlauf eingelesen (fehlt der Zwerg, nimmt er den Magier).
+fn model(class: CharacterClass) -> Option<Arc<Model>> {
+    static MODELS: OnceLock<Mutex<HashMap<&'static str, Option<Arc<Model>>>>> = OnceLock::new();
+    let name = datei(class);
+    let geladen = MODELS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("Figurenliste gesperrt")
+        .entry(name)
+        .or_insert_with(|| {
+            let path = asset_files::asset_dir()?.join("figuren").join(format!("{name}.gltf"));
             match Model::from_file(&path) {
                 Ok(model) => Some(Arc::new(model)),
                 Err(message) => {
-                    log::error!("Spielfigur fehlt: {message}");
+                    log::error!("Spielfigur {name} fehlt: {message}");
                     None
                 }
             }
         })
-        .clone()
+        .clone();
+    if geladen.is_none() && class != CharacterClass::Mage {
+        return model(CharacterClass::Mage);
+    }
+    geladen
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Chop,
-    Cast,
     /// Mit der Spitzhacke auf ein Vorkommen schlagen
     Mine,
 }
@@ -58,20 +81,20 @@ pub struct Puppet {
     speed: f32,
     acting: bool,
     tool: Option<Tool>,
+    schritt: (f32, f32),
 }
 
 impl Puppet {
     /// Hängt die Figur an das Objekt der Spielfigur (`root` = Mittelpunkt der Kapsel).
-    /// Alle Klassen sehen im Moment gleich aus: der Magier.
-    pub fn new(ctx: &mut Context, _class: CharacterClass, root: EntityId) -> Puppet {
-        let animator = model().map(|model| {
+    pub fn new(ctx: &mut Context, class: CharacterClass, root: EntityId) -> Puppet {
+        let animator = model(class).map(|model| {
             let mut animator = Animator::new(model);
             animator.play("Idle", true, 0.0);
             animator
         });
         let mesh = match &animator {
-            // Ein gemeinsames Mesh für alle Spieler; die Grafikkarte verformt es je Figur.
-            Some(animator) => ctx.assets.named_mesh("figur_magier_gpu", || animator.model().skinned_gpu_mesh(None)),
+            // Ein gemeinsames Mesh je Figur für alle Spieler; die Grafikkarte verformt es je Figur.
+            Some(animator) => ctx.assets.named_mesh(&format!("figur_{}_gpu", datei(class)), || animator.model().skinned_gpu_mesh(None)),
             None => {
                 ctx.scene.get_mut(root).visible = true;
                 ctx.assets.cube()
@@ -87,19 +110,21 @@ impl Puppet {
             figure.joints = animator.palette();
         }
         let figure = ctx.scene.spawn(figure);
-        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None };
+        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None, schritt: schritt(class) };
         puppet.set_tool(Tool::default());
         puppet
     }
 
-    /// Zeigt das Werkzeug in der Hand: Stab oder Spitzhacke.
+    /// Zeigt, was in der Hand liegt: Waffe (Stab oder Hammer) bei den Fähigkeiten, sonst das Werkzeug.
     pub fn set_tool(&mut self, tool: Tool) {
         if self.tool == Some(tool) {
             return;
         }
         self.tool = Some(tool);
         if let Some(animator) = &mut self.animator {
-            animator.set_visible("Stab", tool == Tool::Staff);
+            let waffe = matches!(tool, Tool::Faehigkeit(_));
+            animator.set_visible("Stab", waffe);
+            animator.set_visible("Hammer", waffe);
             animator.set_visible("Spitzhacke", tool == Tool::Pickaxe);
             animator.set_visible("Axt", tool == Tool::Axe);
         }
@@ -110,15 +135,21 @@ impl Puppet {
         ctx.scene.get_mut(self.figure).visible = visible && self.animator.is_some();
     }
 
-    /// Spielt eine einmalige Aktion ab: Hieb mit dem Stab (Holz hacken) oder Zaubern.
+    /// Spielt eine einmalige Aktion ab: Holz hacken oder abbauen.
     pub fn act(&mut self, action: Action) {
+        match action {
+            Action::Chop => self.act_clip("Hacken", 1.3),
+            Action::Mine => self.act_clip("Abbauen", 1.25),
+        }
+    }
+
+    /// Spielt einen Clip einmal ab (fehlt er, eine ähnliche Bewegung).
+    pub fn act_clip(&mut self, clip: &str, speed: f32) {
         let Some(animator) = &mut self.animator else { return };
-        let (clip, fallback, speed) = match action {
-            Action::Chop => ("Hacken", "Hieb", 1.3),
-            Action::Cast => ("Zaubern", "Werfen", 1.35),
-            Action::Mine => ("Abbauen", "Hieb", 1.25),
+        let fallback = match clip {
+            "Hacken" | "Abbauen" => "Hieb",
+            _ => "Werfen",
         };
-        // Ältere Modelle ohne die Animation: eine ähnliche Bewegung nehmen.
         if !animator.play(clip, false, 0.08) {
             animator.play(fallback, false, 0.08);
         }
@@ -136,6 +167,7 @@ impl Puppet {
         // Geglättet, sonst flackert die Animation bei ungleichmäßigen Bildraten.
         self.speed += (horizontal.min(20.0) - self.speed) * (dt * 10.0).min(1.0);
         let airborne = position.y + FEET_OFFSET - ground > 0.35;
+        let (walk, run) = self.schritt;
 
         if self.acting && animator.finished() {
             self.acting = false;
@@ -146,10 +178,10 @@ impl Puppet {
                 animator.set_speed(1.0);
             } else if self.speed > 3.4 {
                 animator.play("Rennen", true, 0.2);
-                animator.set_speed((self.speed / RUN_SPEED).clamp(0.7, 2.2));
+                animator.set_speed((self.speed / run).clamp(0.7, 3.0));
             } else if self.speed > 0.4 {
                 animator.play("Laufen", true, 0.2);
-                animator.set_speed((self.speed / WALK_SPEED).clamp(0.5, 2.0));
+                animator.set_speed((self.speed / walk).clamp(0.5, 3.0));
             } else {
                 animator.play("Idle", true, 0.25);
                 animator.set_speed(1.0);

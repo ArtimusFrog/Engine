@@ -3,7 +3,6 @@
 use engine::prelude::*;
 
 use crate::client::Replica;
-use crate::characters::Action;
 use crate::protocol::{Hello, Inventory, PlayerId, PlayerInput, HOST_PLAYER, PROTOCOL_ID};
 use crate::save;
 use crate::server::Authority;
@@ -99,10 +98,22 @@ impl Session {
         }
     }
 
-    /// Zauber-Animation der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
-    pub fn preview_cast(&mut self) {
+    /// Animation einer Fähigkeit der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
+    pub fn preview_cast(&mut self, art: crate::faehigkeiten::Faehigkeit) {
         if let Some(local) = self.replica.as_ref().and_then(Replica::local_id) {
-            self.world.play_action(local, Action::Cast);
+            self.world.play_faehigkeit(local, art);
+        }
+    }
+
+    /// Runenstein schmieden oder einsetzen (beim Host/Einzelspieler direkt, sonst an den Server).
+    pub fn runen(&mut self, ctx: &mut Context, befehl: crate::protocol::RunenBefehl) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_runen(befehl);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.runen(ctx, &mut self.world, local, befehl) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
         }
     }
 
@@ -251,7 +262,7 @@ mod tests {
                 jump: self.autopilot && ctx.time.tick % 120 == 60,
                 harvest: self.harvest,
                 // Zum Zaubern den Stab nehmen, sonst die Spitzhacke
-                tool: if self.cast.is_some() || self.staff { Tool::Staff } else { self.tool },
+                tool: if self.cast.is_some() || self.staff { Tool::ANGRIFF } else { self.tool },
                 cast: self.cast.take(),
                 ..Default::default()
             };
@@ -510,7 +521,24 @@ mod tests {
         bauen(&mut pair, BuildingKind::Dorfhalle, mitte);
         assert!(pair.server.session.world().buildings.is_empty(), "Bau ohne Rohstoffe");
 
+        // Ohne Runenstein im Schutzstein keine Dorfhalle
         pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 60, stone: 25, ..Default::default() });
+        bauen(&mut pair, BuildingKind::Dorfhalle, mitte);
+        assert!(pair.server.session.world().buildings.is_empty(), "Dorfhalle ohne Runenstein");
+        // Runenstein am Schutzstein einsetzen (der Client schickt den Befehl, der Server prüft)
+        pair.server.session.world_mut().inventories.insert(id, Inventory { wood: 60, stone: 25, runensteine: 1, ..Default::default() });
+        let stein = pair.server.session.world().schutzsteine[0];
+        pair.server_ctx.physics.teleport_character(character, stein + vec3(3.0, 1.5, 0.0));
+        pair.run(40);
+        let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
+        pair.client.session.runen(&mut client_ctx, crate::protocol::RunenBefehl::Einsetzen(0));
+        pair.client_ctx = client_ctx;
+        pair.run(30);
+        assert_eq!(pair.server.session.world().td.runen.first().cloned().flatten().as_deref(), Some("testerin"), "Runenstein nicht eingesetzt");
+        assert_eq!(pair.client.session.world().td.runen.first().cloned().flatten().as_deref(), Some("testerin"), "Client weiß nichts vom Runenstein");
+        assert_eq!(pair.client.session.local_inventory().runensteine, 0, "Runenstein nicht verbraucht");
+        pair.server_ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+        pair.run(40);
         bauen(&mut pair, BuildingKind::Dorfhalle, mitte);
         assert_eq!(pair.server.session.world().buildings.len(), 1, "Server baut die Dorfhalle nicht");
         assert_eq!(pair.client.session.world().buildings.len(), 1, "Client sieht die Baustelle nicht");
@@ -551,6 +579,37 @@ mod tests {
         ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
         let genug = Inventory { wood: 500, stone: 500, ore: 100, gold: 1000, ..Default::default() };
         session.world_mut().inventories.insert(local, genug);
+
+        // Ohne Runenstein im Schutzstein keine Dorfhalle
+        session.request_build(&mut ctx, BuildingKind::Dorfhalle, mitte, 0.0);
+        assert!(session.world().buildings.is_empty(), "Dorfhalle ohne Runenstein");
+        // Runenstein: vier Fragmente am Runenbrunnen der Burg vereinen …
+        let hin = |ctx: &mut Context, session: &Session, ziel: Vec3| {
+            let character = session.world().players[&local].character;
+            ctx.physics.teleport_character(character, ziel);
+        };
+        let brunnen = session.world().runenbrunnen;
+        hin(&mut ctx, &session, brunnen + vec3(7.5, 1.5, 0.0));
+        session.world_mut().inventories.get_mut(&local).unwrap().runenfragmente = 3;
+        session.runen(&mut ctx, crate::protocol::RunenBefehl::Schmieden);
+        assert_eq!(session.local_inventory().runensteine, 0, "Runenstein aus drei Fragmenten");
+        session.world_mut().inventories.get_mut(&local).unwrap().runenfragmente = 5;
+        session.runen(&mut ctx, crate::protocol::RunenBefehl::Schmieden);
+        assert_eq!((session.local_inventory().runensteine, session.local_inventory().runenfragmente), (1, 1), "Schmieden am Runenbrunnen");
+        // … nicht aus der Ferne einsetzen, am Schutzstein schon
+        session.runen(&mut ctx, crate::protocol::RunenBefehl::Einsetzen(1));
+        assert!(session.world().td.runen.get(1).cloned().flatten().is_none(), "Runenstein aus der Ferne eingesetzt");
+        let stein = session.world().schutzsteine[1];
+        hin(&mut ctx, &session, stein + vec3(3.0, 1.5, 0.0));
+        session.runen(&mut ctx, crate::protocol::RunenBefehl::Einsetzen(1));
+        assert_eq!(session.world().td.runen.get(1).cloned().flatten().as_deref(), Some("nils"), "Runenstein nicht eingesetzt");
+        // Nur ein Siedlungsplatz je Spieler
+        session.world_mut().inventories.get_mut(&local).unwrap().runensteine = 1;
+        let stein2 = session.world().schutzsteine[2];
+        hin(&mut ctx, &session, stein2 + vec3(3.0, 1.5, 0.0));
+        session.runen(&mut ctx, crate::protocol::RunenBefehl::Einsetzen(2));
+        assert!(session.world().td.runen.get(2).cloned().flatten().is_none(), "zweiter Siedlungsplatz");
+        hin(&mut ctx, &session, vec3(stand.x, y, stand.y));
 
         // Nicht irgendwo: nur auf einem Siedlungsplatz
         session.request_build(&mut ctx, BuildingKind::Dorfhalle, mitte + vec2(30.0, 0.0), 0.0);
@@ -605,6 +664,41 @@ mod tests {
         assert!(session.world().dorfhalle_von("nils").is_none(), "Dorfhalle steht noch");
         assert_eq!(session.world().buildings.len(), vorher - 2, "Gebäude im Radius stehen noch");
         assert!(session.world().dorfhalle_von("anna").is_some(), "fremde Siedlung mit zerstört");
+    }
+
+    #[test]
+    fn wildnis_greift_an_und_der_zwerg_wehrt_sich() {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Gimli".into(), class: CharacterClass::Zwerg };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let local = session.local_player().unwrap();
+        assert!(session.world().wildnis.lager.len() >= 6, "zu wenige Lager: {}", session.world().wildnis.lager.len());
+        assert_eq!(session.world().players[&local].leben, 150.0, "Zwerg hat nicht 150 Leben");
+        let lager = session.world().wildnis.lager[0].mitte;
+        let hin = |ctx: &mut Context, session: &Session, p: Vec2| {
+            let y = session.world().terrain.height_at(p.x, p.y) + 1.2;
+            ctx.physics.teleport_character(session.world().players[&local].character, vec3(p.x, y, p.y));
+        };
+        let lp = |session: &Session| -> u32 {
+            session.world().wildnis.states().iter().filter(|s| vec2(s.position.x, s.position.z).distance(lager) < 25.0).map(|s| s.lp).sum()
+        };
+        // Erdbeben mitten im Lager: trifft die Bewohner ringsum
+        hin(&mut ctx, &session, lager + vec2(1.5, 0.0));
+        let vorher = lp(&session);
+        let ziel = session.world().player_position(&ctx, local).unwrap();
+        let erdbeben = PlayerInput { tool: Tool::Faehigkeit(2), cast: Some(ziel), ..Default::default() };
+        session.fixed_update(&mut ctx, erdbeben).unwrap();
+        for _ in 0..40 {
+            ctx.time.tick += 1;
+            session.fixed_update(&mut ctx, PlayerInput { tool: Tool::Faehigkeit(2), ..Default::default() }).unwrap();
+        }
+        assert!(lp(&session) < vorher, "Erdbeben trifft niemanden ({vorher} Lebenspunkte vorher)");
+        // Das Lager wehrt sich
+        for _ in 0..240 {
+            ctx.time.tick += 1;
+            session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
+        }
+        assert!(!session.world().treffer.is_empty(), "Lager greift nicht an");
     }
 
     #[test]

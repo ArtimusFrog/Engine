@@ -11,14 +11,16 @@ use crate::protocol::{CharacterClass, Inventory, NetId, ObjectKind, PlayerId, Pl
 
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_SPEED: f32 = 9.0;
-/// Takte zwischen zwei Zaubern desselben Spielers (0,7 s).
-pub const CAST_COOLDOWN_TICKS: u64 = 42;
-/// So weit fliegt ein Zauber (Meter).
+/// So weit reicht das Zielen mit Fähigkeiten höchstens (Meter).
 pub const CAST_RANGE: f32 = 45.0;
-/// Tempo des Zaubergeschosses (m/s).
-pub const BOLT_SPEED: f32 = 34.0;
-/// So lange holt der Magier aus, bevor das Geschoss losfliegt (Sekunden, passt zur Animation).
-pub const CAST_DELAY: f32 = 0.22;
+/// So nah muss man am Runenbrunnen bzw. am Schutzstein stehen (Meter über den Rand hinaus).
+pub const RUNEN_REICHWEITE: f32 = 7.0;
+/// So hoch schwebt ein eingesetzter Runenstein über dem Fuß des Schutzsteins (Meter).
+const RUNE_HOEHE: f32 = 7.6;
+/// Nach so vielen Takten ohne Treffer heilen Spieler sich (8 s) …
+pub const HEILEN_NACH: u64 = 8 * 60;
+/// … um diesen Anteil ihrer Lebenspunkte je Sekunde.
+pub const HEILEN_ANTEIL: f32 = 0.05;
 /// Takte zwischen zwei Axthieben auf einen Baum (so lang wie die Animation „Hacken“).
 pub const HARVEST_COOLDOWN_TICKS: u64 = 36;
 /// Takte zwischen zwei Schlägen mit der Spitzhacke (so lang wie die Animation „Abbauen“).
@@ -35,12 +37,22 @@ pub struct Avatar {
     pub facing: f32,
     /// Werkzeug in der Hand (aus der Auswahlleiste).
     pub tool: Tool,
-    pub last_cast_tick: u64,
+    /// Takt, in dem jede der drei Fähigkeiten zuletzt eingesetzt wurde
+    pub abklingen: [u64; 3],
     pub last_harvest_tick: u64,
     pub name: String,
     pub class: CharacterClass,
     /// Admin: fliegt frei durch Wände
     pub noclip: bool,
+    /// Lebenspunkte (beim Client aus den Schnappschüssen) und wann zuletzt getroffen (Takt)
+    pub leben: f32,
+    pub getroffen: u64,
+}
+
+impl Avatar {
+    pub fn max_leben(&self) -> f32 {
+        self.class.max_leben() as f32
+    }
 }
 
 pub struct NetObject {
@@ -100,14 +112,24 @@ pub enum SoundEvent {
     Built { at: Vec3, done: bool },
 }
 
-/// Ein fliegendes Zaubergeschoss (nur Optik; ob es trifft, entscheidet der Server).
+/// Ein fliegendes Geschoss einer Fähigkeit (nur Optik; ob es trifft, entscheidet der Server).
 struct Bolt {
     entity: EntityId,
     origin: Vec3,
     target: Vec3,
-    /// Sekunden seit dem Zaubern (erst nach `CAST_DELAY` fliegt es los).
+    /// Sekunden seit dem Einsetzen (erst nach dem Ausholen fliegt es los).
     age: f32,
     hit: bool,
+    art: crate::faehigkeiten::Faehigkeit,
+}
+
+/// Eine Wirkung um die Figur oder vor ihr (Frostnova, Erdbeben, Hammerschlag), nur Optik.
+struct Wirkung {
+    art: crate::faehigkeiten::Faehigkeit,
+    mitte: Vec3,
+    richtung: Vec3,
+    /// Restzeit bis zur Wirkung (Ausholen)
+    warten: f32,
 }
 
 /// Eine Zeile im Chat: von einem Spieler oder ein Hinweis (`from` = None, z. B. „… ist beigetreten“).
@@ -199,6 +221,18 @@ pub struct World {
     pub ereignisse: Vec<crate::td::Ereignis>,
     /// Brand- und Giftfelder am Boden, Runen- und Frostfelder (Mitte, Radius, Restzeit, Art)
     felder: Vec<(Vec3, f32, f32, u8)>,
+    /// Lager in der Wildnis (Bewohner rechnet nur der Server; die Lagerplätze kennen alle)
+    pub wildnis: crate::wildnis::Wildnis,
+    /// Wirkungen von Fähigkeiten, die noch gezeigt werden (nur mit Fenster)
+    wirkungen: Vec<Wirkung>,
+    /// Runenbrunnen im Burghof (Mitte am Boden) und sein schwebender Kristall
+    pub runenbrunnen: Vec3,
+    runenkristall: Option<EntityId>,
+    /// Runensteine, die in den Schutzsteinen sitzen (je Siedlungsplatz, nur mit Fenster)
+    runen_teile: Vec<Vec<EntityId>>,
+    /// Treffer an Spielern und Gefallene seit dem letzten Bild (die Oberfläche holt sie ab)
+    pub treffer: Vec<(PlayerId, u16)>,
+    pub gefallen: Vec<(PlayerId, String)>,
 }
 
 impl World {
@@ -216,6 +250,16 @@ impl World {
             .map(|(strasse, achse)| crate::heer::Route::new(achse, island::festung_hoehe(), strasse, |p| island.terrain.height_at(p.x, p.y)))
             .collect();
         let animals = animals::populate(&island.terrain, island.spawn, island::SEED, island::moisture);
+        // Lager der Wildnis: weit weg von Siedlungsplätzen, Startlager und Sehenswürdigkeiten
+        let meiden: Vec<(Vec2, f32)> = island
+            .siedlungen
+            .iter()
+            .map(|&(mitte, _)| (mitte, island::SIEDLUNG_RAND + 25.0))
+            .chain([(vec2(island.spawn.x, island.spawn.z), 130.0)])
+            .chain(island.places.labels.iter().map(|&(_, p)| (p, 45.0)))
+            .collect();
+        let lager = crate::wildnis::Wildnis::plaetze(&island.terrain, &meiden, &island.strassen, 9);
+        let wildnis = crate::wildnis::Wildnis::new(lager, &|p| island.terrain.height_at(p.x, p.y));
         let mut world = World {
             players: HashMap::new(),
             objects: BTreeMap::new(),
@@ -259,7 +303,23 @@ impl World {
             berichte: Vec::new(),
             ereignisse: Vec::new(),
             felder: Vec::new(),
+            wildnis,
+            wirkungen: Vec::new(),
+            runenbrunnen: crate::orte::runenbrunnen_ort(),
+            runenkristall: None,
+            runen_teile: Vec::new(),
+            treffer: Vec::new(),
+            gefallen: Vec::new(),
         };
+        // Lager der Wildnis: Feuer, Zelte, Kisten (mit Kollision) und ihr Name auf der Karte
+        if !ctx.is_headless() {
+            let lager: Vec<(Vec2, &'static str)> = world.wildnis.lager.iter().map(|l| (l.mitte, l.art().name)).collect();
+            for (mitte, name) in lager {
+                crate::orte::build_wildlager(ctx, &world.terrain, mitte, &mut world.places);
+                world.places.labels.push((name, mitte));
+            }
+            world.runenkristall = crate::orte::build_runenbrunnen(ctx, world.runenbrunnen, &mut world.places);
+        }
         // Schutzsteine am Ende jeder Heerstraße (etwas hinter dem Ende, quer zur Straße)
         for (ende, richtung) in world.heer.enden() {
             let p = vec2(ende.x, ende.z) + richtung * 5.0;
@@ -277,6 +337,22 @@ impl World {
                 world.places.lights.push((boden + Vec3::Y * 6.0, vec3(0.6, 1.4, 2.4), 12.0));
             }
             world.schutzstein_teile.push(teile);
+            // Der eingesetzte Runenstein: schwebt über dem Schutzstein (erst sichtbar, wenn einer drin ist)
+            let mut rune = Vec::new();
+            if !ctx.is_headless() {
+                if let Some(&(mesh, glow)) = crate::asset_files::load_variants(ctx, "gebaeude", "runenstein", Vec3::ONE, 0.0).first() {
+                    let transform = Transform::from_position(boden + Vec3::Y * RUNE_HOEHE);
+                    let mut e = Entity::new("Runenstein", mesh).with_transform(transform);
+                    e.visible = false;
+                    rune.push(ctx.scene.spawn(e));
+                    if let Some(glow) = glow {
+                        let mut e = Entity::new("Runenstein (leuchtet)", glow).with_transform(transform).with_material(Material::Emissive { glow: 3.0 });
+                        e.visible = false;
+                        rune.push(ctx.scene.spawn(e));
+                    }
+                }
+            }
+            world.runen_teile.push(rune);
         }
         if !ctx.is_headless() {
             for &(mitte, _) in &world.siedlungsplaetze {
@@ -289,7 +365,13 @@ impl World {
             let terrain = &world.terrain;
             crate::strassenbild::bauen(ctx, &|p| terrain.height_at(p.x, p.y), &strassen, &mut world.places.lights);
         }
+        let lagerplaetze: Vec<Vec2> = world.wildnis.lager.iter().map(|l| l.mitte).collect();
         for (id, spec) in island.resources {
+            // In den Lagern der Wildnis steht nichts im Weg
+            let p = spec.transform.position;
+            if lagerplaetze.iter().any(|m| m.distance(vec2(p.x, p.z)) < 12.0) {
+                continue;
+            }
             let health = spec.max_health;
             world.resources.insert(
                 id,
@@ -485,11 +567,13 @@ impl World {
                 character,
                 facing: 0.0,
                 tool: Tool::default(),
-                last_cast_tick: 0,
+                abklingen: [0; 3],
                 last_harvest_tick: 0,
                 name: name.to_string(),
                 class,
                 noclip: false,
+                leben: class.max_leben() as f32,
+                getroffen: 0,
             },
         );
         self.inventories.entry(id).or_default();
@@ -541,9 +625,6 @@ impl World {
     pub fn play_action(&mut self, player: PlayerId, action: Action) {
         if let Some(puppet) = self.puppets.get_mut(&player) {
             puppet.act(action);
-            if action == Action::Cast {
-                self.sound_events.push(SoundEvent::Cast { player });
-            }
         }
     }
 
@@ -585,23 +666,41 @@ impl World {
         (from + direction * nearest, animal)
     }
 
-    /// Ein Spieler zaubert (nur Optik): Animation, Klang und das fliegende Geschoss.
-    pub fn cast_spell(&mut self, ctx: &mut Context, player: PlayerId, origin: Vec3, target: Vec3, hit: bool, animate: bool) {
-        if animate {
-            self.play_action(player, Action::Cast);
-        } else {
+    /// Die Figur eines Spielers holt zu einer Fähigkeit aus (Animation und Klang, nur Optik).
+    pub fn play_faehigkeit(&mut self, player: PlayerId, art: crate::faehigkeiten::Faehigkeit) {
+        if let Some(puppet) = self.puppets.get_mut(&player) {
+            let (clip, tempo) = art.animation();
+            puppet.act_clip(clip, tempo);
+        }
+        if matches!(art.form(), crate::faehigkeiten::Form::Geschoss { .. } | crate::faehigkeiten::Form::UmSich { .. }) {
             self.sound_events.push(SoundEvent::Cast { player });
+        }
+    }
+
+    /// Ein Spieler setzt eine Fähigkeit ein (nur Optik): Animation, Klang und das fliegende Geschoss
+    /// bzw. die Wirkung um die Figur oder vor ihr.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cast_spell(&mut self, ctx: &mut Context, player: PlayerId, origin: Vec3, target: Vec3, hit: bool, animate: bool, art: crate::faehigkeiten::Faehigkeit) {
+        if animate {
+            self.play_faehigkeit(player, art);
         }
         if ctx.is_headless() {
             return;
         }
-        let mut entity = Entity::new("Zauber", ctx.assets.sphere())
-            .with_transform(Transform::from_position(origin).with_scale(Vec3::splat(0.0)))
-            .with_color(vec4(0.14, 0.2, 1.0, 1.0))
-            .with_material(Material::Emissive { glow: 1.6 });
-        entity.visible = false;
-        let entity = ctx.scene.spawn(entity);
-        self.bolts.push(Bolt { entity, origin, target, age: 0.0, hit });
+        match art.form() {
+            crate::faehigkeiten::Form::Geschoss { .. } => {
+                let farbe = art.farbe();
+                let mesh = if art == crate::faehigkeiten::Faehigkeit::Wurfhammer { ctx.assets.cube() } else { ctx.assets.sphere() };
+                let mut entity = Entity::new("Geschoss", mesh)
+                    .with_transform(Transform::from_position(origin).with_scale(Vec3::splat(0.0)))
+                    .with_color((farbe * 0.35).extend(1.0))
+                    .with_material(Material::Emissive { glow: if art == crate::faehigkeiten::Faehigkeit::Wurfhammer { 0.3 } else { 1.6 } });
+                entity.visible = false;
+                let entity = ctx.scene.spawn(entity);
+                self.bolts.push(Bolt { entity, origin, target, age: 0.0, hit, art });
+            }
+            _ => self.wirkungen.push(Wirkung { art, mitte: target, richtung: (target - origin).with_y(0.0).normalize_or(Vec3::NEG_Z), warten: art.ausholen() }),
+        }
     }
 
     /// Ein Tier wurde getroffen: Lebensstand übernehmen und – falls gewünscht – Effekte zeigen.
@@ -630,21 +729,28 @@ impl World {
         self.sound_events.push(SoundEvent::Impact { at: center, animal: true, killed });
     }
 
-    /// Zaubergeschosse bewegen, leuchten lassen und am Ziel verpuffen lassen.
+    /// Geschosse bewegen, leuchten lassen und am Ziel verpuffen oder explodieren lassen.
     fn update_bolts(&mut self, ctx: &mut Context) {
+        use crate::faehigkeiten::{Faehigkeit, Form};
         let dt = ctx.time.delta;
         let mut finished = Vec::new();
         for (index, bolt) in self.bolts.iter_mut().enumerate() {
             bolt.age += dt;
+            let farbe = bolt.art.farbe();
             let length = bolt.origin.distance(bolt.target).max(0.01);
-            let flight = bolt.age - CAST_DELAY;
+            let flight = bolt.age - bolt.art.ausholen();
+            let tempo = match bolt.art.form() {
+                Form::Geschoss { tempo, .. } => tempo,
+                _ => 30.0,
+            };
+            let magie = bolt.art != Faehigkeit::Wurfhammer;
             if flight < 0.0 {
                 // Ausholen: Funken sammeln sich an der Stabspitze.
-                if self.effects_rng.chance(0.6) {
+                if magie && self.effects_rng.chance(0.6) {
                     ctx.particles.burst(Burst {
                         position: bolt.origin,
                         count: 2,
-                        color: vec3(0.5, 0.6, 1.0),
+                        color: farbe,
                         color_variation: 0.3,
                         speed: 0.8,
                         direction: Vec3::ZERO,
@@ -655,53 +761,115 @@ impl World {
                         grow: 0.0,
                         round: true,
                     });
+                    ctx.lights.push(PointLight { position: bolt.origin, color: farbe * 2.0 * (bolt.age / bolt.art.ausholen()), radius: 4.0 });
                 }
-                ctx.lights.push(PointLight { position: bolt.origin, color: vec3(0.6, 0.7, 2.0) * (bolt.age / CAST_DELAY), radius: 4.0 });
                 continue;
             }
-            let progress = (flight * BOLT_SPEED / length).min(1.0);
-            let position = bolt.origin.lerp(bolt.target, progress);
+            let progress = (flight * tempo / length).min(1.0);
+            // Der Wurfhammer fliegt in einem flachen Bogen
+            let bogen = if magie { 0.0 } else { (progress * std::f32::consts::PI).sin() * length * 0.06 };
+            let position = bolt.origin.lerp(bolt.target, progress) + Vec3::Y * bogen;
             let pulse = 1.0 + (bolt.age * 40.0).sin() * 0.15;
             if let Some(entity) = ctx.scene.try_get_mut(bolt.entity) {
                 entity.visible = true;
                 entity.transform.position = position;
-                entity.transform.scale = Vec3::splat(0.42 * pulse);
+                match bolt.art {
+                    Faehigkeit::Wurfhammer => {
+                        entity.transform.scale = vec3(0.16, 0.5, 0.16);
+                        entity.transform.rotation = Quat::from_rotation_y(bolt.age * 3.0) * Quat::from_rotation_x(bolt.age * 18.0);
+                    }
+                    Faehigkeit::Feuerball => entity.transform.scale = Vec3::splat(0.62 * pulse),
+                    _ => entity.transform.scale = Vec3::splat(0.42 * pulse),
+                }
             }
-            ctx.lights.push(PointLight { position, color: vec3(0.7, 0.8, 3.0), radius: 7.0 });
-            // Leuchtspur
-            ctx.particles.burst(Burst {
-                position,
-                count: 5,
-                color: vec3(0.45, 0.4, 1.0),
-                color_variation: 0.4,
-                speed: 0.6,
-                direction: Vec3::ZERO,
-                size: 0.14,
-                life: 0.45,
-                gravity: -0.2,
-                glow: 4.0,
-                grow: 0.0,
-                round: true,
-            });
+            if magie {
+                ctx.lights.push(PointLight { position, color: farbe * 3.0, radius: 7.0 });
+                ctx.particles.burst(Burst {
+                    position,
+                    count: if bolt.art == Faehigkeit::Feuerball { 9 } else { 5 },
+                    color: farbe,
+                    color_variation: 0.4,
+                    speed: 0.6,
+                    direction: Vec3::ZERO,
+                    size: if bolt.art == Faehigkeit::Feuerball { 0.24 } else { 0.14 },
+                    life: 0.45,
+                    gravity: -0.4,
+                    glow: 4.0,
+                    grow: if bolt.art == Faehigkeit::Feuerball { 1.0 } else { 0.0 },
+                    round: true,
+                });
+            }
             if progress >= 1.0 {
                 finished.push(index);
-                if !bolt.hit {
-                    // Verpufft am Boden, an einem Baum oder in der Luft.
-                    ctx.particles.burst(Burst {
-                        position,
-                        count: 16,
-                        color: vec3(0.55, 0.6, 1.0),
-                        color_variation: 0.3,
-                        speed: 2.5,
-                        direction: Vec3::Y * 0.3,
-                        size: 0.08,
-                        life: 0.6,
-                        gravity: 1.0,
-                        glow: 4.0,
-                        grow: 0.0,
-                        round: true,
-                    });
-                    self.sound_events.push(SoundEvent::Impact { at: position, animal: false, killed: false });
+                match bolt.art {
+                    Faehigkeit::Feuerball => {
+                        // Explosion: Feuerkugel, Funken, Rauch
+                        ctx.particles.burst(Burst {
+                            position,
+                            count: 70,
+                            color: vec3(1.0, 0.5, 0.15),
+                            color_variation: 0.35,
+                            speed: 6.0,
+                            direction: Vec3::Y * 0.4,
+                            size: 0.22,
+                            life: 0.8,
+                            gravity: -0.5,
+                            glow: 5.0,
+                            grow: 1.5,
+                            round: true,
+                        });
+                        ctx.particles.burst(Burst {
+                            position,
+                            count: 24,
+                            color: vec3(0.3, 0.28, 0.26),
+                            color_variation: 0.2,
+                            speed: 2.0,
+                            direction: Vec3::Y,
+                            size: 0.4,
+                            life: 1.6,
+                            gravity: -0.6,
+                            glow: 0.0,
+                            grow: 2.0,
+                            round: true,
+                        });
+                        ctx.lights.push(PointLight { position, color: vec3(6.0, 3.0, 1.0), radius: 12.0 });
+                        self.sound_events.push(SoundEvent::Impact { at: position, animal: bolt.hit, killed: false });
+                    }
+                    _ if !bolt.hit => {
+                        // Verpufft am Boden, an einem Baum oder in der Luft.
+                        ctx.particles.burst(Burst {
+                            position,
+                            count: 16,
+                            color: if magie { farbe } else { vec3(0.6, 0.55, 0.45) },
+                            color_variation: 0.3,
+                            speed: 2.5,
+                            direction: Vec3::Y * 0.3,
+                            size: 0.08,
+                            life: 0.6,
+                            gravity: 1.0,
+                            glow: if magie { 4.0 } else { 0.0 },
+                            grow: 0.0,
+                            round: true,
+                        });
+                        self.sound_events.push(SoundEvent::Impact { at: position, animal: false, killed: false });
+                    }
+                    Faehigkeit::Wurfhammer => {
+                        ctx.particles.burst(Burst {
+                            position,
+                            count: 14,
+                            color: vec3(1.0, 0.9, 0.5),
+                            color_variation: 0.2,
+                            speed: 4.0,
+                            direction: Vec3::Y * 0.5,
+                            size: 0.06,
+                            life: 0.4,
+                            gravity: 3.0,
+                            glow: 4.0,
+                            grow: 0.0,
+                            round: true,
+                        });
+                    }
+                    _ => {}
                 }
             }
         }
@@ -709,6 +877,106 @@ impl World {
             let bolt = self.bolts.swap_remove(index);
             ctx.scene.despawn(bolt.entity);
         }
+        // Wirkungen um die Figur (Frostnova, Erdbeben) und vor ihr (Hammerschlag)
+        let mut i = 0;
+        while i < self.wirkungen.len() {
+            self.wirkungen[i].warten -= dt;
+            if self.wirkungen[i].warten > 0.0 {
+                i += 1;
+                continue;
+            }
+            let w = self.wirkungen.swap_remove(i);
+            let farbe = w.art.farbe();
+            let boden = |p: Vec3, terrain: &Terrain| vec3(p.x, terrain.height_at(p.x, p.z) + 0.15, p.z);
+            match w.art.form() {
+                Form::UmSich { radius } => {
+                    let staub = w.art == Faehigkeit::Erdbeben;
+                    for k in 0..32 {
+                        let a = std::f32::consts::TAU * k as f32 / 32.0;
+                        let aussen = vec3(a.cos(), 0.0, a.sin());
+                        for &(anteil, menge) in &[(0.35, 1), (0.7, 2), (1.0, 2)] {
+                            let p = boden(w.mitte + aussen * radius * anteil, &self.terrain);
+                            ctx.particles.burst(Burst {
+                                position: p,
+                                count: menge,
+                                color: farbe,
+                                color_variation: 0.25,
+                                speed: if staub { 2.5 } else { 3.5 },
+                                direction: aussen * 0.6 + Vec3::Y * if staub { 0.9 } else { 0.4 },
+                                size: if staub { 0.3 } else { 0.16 },
+                                life: if staub { 1.2 } else { 0.9 },
+                                gravity: if staub { 2.5 } else { -0.3 },
+                                glow: if staub { 0.0 } else { 4.0 },
+                                grow: if staub { 1.5 } else { 0.3 },
+                                round: true,
+                            });
+                        }
+                    }
+                    if staub {
+                        // Felsbrocken springen aus dem Boden
+                        for _ in 0..14 {
+                            let a = self.effects_rng.range(0.0, std::f32::consts::TAU);
+                            let r = self.effects_rng.range(0.5, radius);
+                            let p = boden(w.mitte + vec3(a.cos(), 0.0, a.sin()) * r, &self.terrain);
+                            ctx.particles.burst(Burst {
+                                position: p,
+                                count: 3,
+                                color: vec3(0.45, 0.38, 0.3),
+                                color_variation: 0.2,
+                                speed: 5.0,
+                                direction: Vec3::Y,
+                                size: 0.18,
+                                life: 0.9,
+                                gravity: 9.0,
+                                glow: 0.0,
+                                grow: 0.0,
+                                round: false,
+                            });
+                        }
+                        self.sound_events.push(SoundEvent::Thunder { volume: 0.35 });
+                    } else {
+                        ctx.lights.push(PointLight { position: w.mitte + Vec3::Y, color: vec3(1.5, 2.5, 4.0), radius: radius * 1.6 });
+                    }
+                    self.sound_events.push(SoundEvent::Impact { at: w.mitte, animal: false, killed: false });
+                }
+                Form::Nahkampf { weite, winkel } => {
+                    // Funkenbogen vor der Figur
+                    let quer = vec3(-w.richtung.z, 0.0, w.richtung.x);
+                    for k in 0..12 {
+                        let t = (k as f32 / 11.0 - 0.5) * 2.0 * winkel.to_radians() * 0.8;
+                        let d = w.richtung * t.cos() + quer * t.sin();
+                        ctx.particles.burst(Burst {
+                            position: w.mitte - w.richtung * weite * 0.5 + d * weite * 0.8 + Vec3::Y * 0.3,
+                            count: 2,
+                            color: farbe,
+                            color_variation: 0.2,
+                            speed: 2.5,
+                            direction: d + Vec3::Y * 0.3,
+                            size: 0.08,
+                            life: 0.35,
+                            gravity: 3.0,
+                            glow: 3.0,
+                            grow: 0.0,
+                            round: true,
+                        });
+                    }
+                    self.sound_events.push(SoundEvent::Impact { at: w.mitte, animal: false, killed: false });
+                }
+                Form::Geschoss { .. } => {}
+            }
+        }
+    }
+
+    /// Ein Spieler wurde getroffen (für roten Rand und Klang).
+    pub fn spieler_getroffen(&mut self, player: PlayerId, schaden: u16) {
+        self.treffer.push((player, schaden));
+    }
+
+    /// Ein Spieler ist gefallen (Meldung; aufstehen lässt ihn der Server).
+    pub fn spieler_gefallen(&mut self, player: PlayerId, von: &str) {
+        let name = self.players.get(&player).map(|a| a.name.clone()).unwrap_or_default();
+        self.chat_events.push(ChatLine::notice(format!("{name} wurde von {von} besiegt und erwacht am Startpunkt.")));
+        self.gefallen.push((player, von.to_string()));
     }
 
     pub fn player_position(&self, ctx: &Context, id: PlayerId) -> Option<Vec3> {
@@ -1176,6 +1444,30 @@ impl World {
                     e.visible = sichtbar;
                 }
             }
+        }
+        // Eingesetzte Runensteine schweben über ihrem Schutzstein und drehen sich langsam
+        let zeit = ctx.time.elapsed;
+        for platz in 0..self.runen_teile.len() {
+            let aktiv = self.td.runen.get(platz).is_some_and(|r| r.is_some()) && self.dorfhalle_auf_platz(platz).is_none();
+            let Some(&fuss) = self.schutzsteine.get(platz) else { continue };
+            let ort = fuss + Vec3::Y * (RUNE_HOEHE + (zeit * 1.3 + platz as f32).sin() * 0.25);
+            for &teil in &self.runen_teile[platz] {
+                if let Some(e) = ctx.scene.try_get_mut(teil) {
+                    e.visible = aktiv;
+                    e.transform.position = ort;
+                    e.transform.rotation = Quat::from_rotation_y(zeit * 0.6);
+                }
+            }
+            if aktiv {
+                ctx.lights.push(PointLight { position: ort, color: vec3(0.8, 1.6, 3.0), radius: 10.0 });
+            }
+        }
+        // Der Kristall über dem Runenbrunnen
+        if let Some(kristall) = self.runenkristall.and_then(|k| ctx.scene.try_get_mut(k)) {
+            let ort = self.runenbrunnen + Vec3::Y * (crate::orte::RUNENKRISTALL_HOEHE + (zeit * 0.9).sin() * 0.3);
+            kristall.transform.position = ort;
+            kristall.transform.rotation = Quat::from_rotation_y(zeit * 0.5);
+            ctx.lights.push(PointLight { position: ort, color: vec3(0.8, 1.5, 3.2), radius: 14.0 });
         }
         if !ctx.is_headless() {
             for ereignis in std::mem::take(&mut self.ereignisse) {

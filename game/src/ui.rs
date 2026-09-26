@@ -345,6 +345,14 @@ pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
     let v = |x: f32, y: f32| c + egui::vec2(x * s, y * s);
     let outline = Stroke::new(1.5 * s, Color32::from_black_alpha(120));
     match item {
+        Item::Runenfragment | Item::Runenstein => {
+            // Blauer Kristall mit Rune (gemalt, falls das Symbol fehlt)
+            let n = if item == Item::Runenstein { 1.0 } else { 0.7 };
+            let punkte = vec![v(0.0, -16.0 * n), v(11.0 * n, -4.0), v(7.0 * n, 14.0 * n), v(-7.0 * n, 14.0 * n), v(-11.0 * n, -4.0)];
+            painter.add(egui::Shape::convex_polygon(punkte, Color32::from_rgb(70, 130, 220), outline));
+            painter.line_segment([v(0.0, -8.0 * n), v(0.0, 8.0 * n)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
+            painter.line_segment([v(-5.0 * n, -2.0), v(5.0 * n, 3.0)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
+        }
         Item::Gold => {
             // Drei gestapelte Goldmünzen
             for (i, dy) in [9.0f32, 2.0, -5.0].into_iter().enumerate() {

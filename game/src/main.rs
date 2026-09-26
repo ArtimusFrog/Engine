@@ -6,6 +6,7 @@ mod asset_files;
 mod blender;
 mod characters;
 mod chat;
+mod faehigkeiten;
 mod client;
 mod inventar;
 mod hauptmenue;
@@ -34,6 +35,7 @@ mod settings;
 mod ui;
 mod viewer;
 mod wetter;
+mod wildnis;
 mod world;
 
 use engine::prelude::*;

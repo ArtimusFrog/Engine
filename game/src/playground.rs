@@ -57,6 +57,11 @@ pub struct Playground {
     aim_animal: Option<u16>,
     last_harvest: f32,
     last_cast: f32,
+    /// Wann jede der drei Fähigkeiten wieder bereit ist (Spielzeit in Sekunden)
+    bereit_ab: [f32; 3],
+    /// Wann die eigene Figur zuletzt getroffen wurde und wann sie gefallen ist (durch wen)
+    getroffen_um: f32,
+    gefallen: Option<(f32, String)>,
     /// Inventar-Fenster offen (Taste I)?
     inventory_open: bool,
     /// Baumenü offen (Taste B)?
@@ -114,6 +119,11 @@ pub struct Playground {
     demo_troops: bool,
     /// Nur zum Testen: Figur auf die Südstraße stellen, den Truppen entgegen (`--demo-kampf`)
     demo_fight: bool,
+    /// Nur zum Testen: vor ein Lager der Wildnis (`--demo-lager N`) bzw. an den Runenbrunnen (`--demo-brunnen`)
+    demo_lager: Option<usize>,
+    /// Nur zum Testen: dabei regelmäßig die Fähigkeit N (0–2) aufs Lager einsetzen (`--demo-angriff N`)
+    demo_angriff: Option<u8>,
+    demo_brunnen: bool,
     /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
     demo_towers: bool,
     /// Nur zum Testen: Wellen gleich bei dieser Nummer beginnen lassen (`--demo-welle N`)
@@ -158,6 +168,9 @@ impl Playground {
             aim_animal: None,
             last_harvest: 0.0,
             last_cast: -10.0,
+            bereit_ab: [0.0; 3],
+            getroffen_um: -10.0,
+            gefallen: None,
             inventory_open: false,
             build_menu_open: false,
             build_tab: 0,
@@ -189,6 +202,9 @@ impl Playground {
             demo_build_menu: false,
             demo_troops: false,
             demo_fight: false,
+            demo_lager: None,
+            demo_angriff: None,
+            demo_brunnen: false,
             demo_towers: false,
             demo_wave: None,
             demo_yaw_offset: -0.75,
@@ -308,6 +324,47 @@ impl Playground {
     /// Werkzeug in der Hand (aus der Auswahlleiste).
     fn tool(&self) -> Tool {
         Tool::HOTBAR.get(self.hotbar_slot).copied().unwrap_or_default()
+    }
+
+    /// Die Klasse der eigenen Figur.
+    fn klasse(&self) -> crate::protocol::CharacterClass {
+        self.session
+            .as_ref()
+            .and_then(|s| s.local_player().and_then(|id| s.world().players.get(&id)))
+            .map_or(self.settings.character, |a| a.class)
+    }
+
+    /// Setzt die Fähigkeit auf Platz `platz` ein, sobald sie bereit ist (Ziel: das Fadenkreuz).
+    fn faehigkeit_nutzen(&mut self, ctx: &Context, platz: u8) {
+        let fach = (platz as usize).min(2);
+        if ctx.time.elapsed < self.bereit_ab[fach] {
+            return;
+        }
+        let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
+        let Some((target, _)) = self.spell_aim(ctx) else { return };
+        self.bereit_ab[fach] = ctx.time.elapsed + art.abklingen() as f32 * Physics::FIXED_DT + 0.05;
+        self.last_cast = ctx.time.elapsed;
+        self.cast_requested = Some(target);
+        if let Some(session) = &mut self.session {
+            session.preview_cast(art);
+        }
+    }
+
+    /// Was E hier mit Runen tun würde: am Runenbrunnen schmieden oder in einen Schutzstein einsetzen.
+    fn runen_hier(&self, ctx: &Context) -> Option<crate::protocol::RunenBefehl> {
+        let session = self.session.as_ref()?;
+        let world = session.world();
+        let p = world.player_position(ctx, session.local_player()?)?;
+        let nah = |q: Vec3| vec2(p.x, p.z).distance(vec2(q.x, q.z)) < crate::world::RUNEN_REICHWEITE + 3.0;
+        if nah(world.runenbrunnen) {
+            return Some(crate::protocol::RunenBefehl::Schmieden);
+        }
+        world
+            .schutzsteine
+            .iter()
+            .enumerate()
+            .find(|&(i, &stein)| nah(stein) && world.dorfhalle_auf_platz(i).is_none())
+            .map(|(i, _)| crate::protocol::RunenBefehl::Einsetzen(i as u8))
     }
 
     /// Schlägt auf den anvisierten Rohstoff, sobald die Abklingzeit um ist. Vorkommen gehen
@@ -499,6 +556,12 @@ impl Playground {
                 }
                 if ui.button(RichText::new("+500 Gold").size(15.0)).clicked() {
                     commands.push(AdminCommand::Gold(500));
+                }
+                if ui.button(RichText::new("+4 Runenfragmente").size(15.0)).clicked() {
+                    commands.push(AdminCommand::Runenfragmente);
+                }
+                if ui.button(RichText::new("Lager neu besetzen").size(15.0)).clicked() {
+                    commands.push(AdminCommand::LagerNeu);
                 }
             });
             ui.horizontal_wrapped(|ui| {
@@ -761,6 +824,15 @@ impl Playground {
                     self.toggle_map(ctx);
                     return;
                 }
+                // E am Runenbrunnen oder an einem Schutzstein: Runenstein schmieden bzw. einsetzen
+                if ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none() && self.building_window.is_none() && self.aim_building.is_none() {
+                    if let Some(befehl) = self.runen_hier(ctx) {
+                        if let Some(session) = &mut self.session {
+                            session.runen(ctx, befehl);
+                        }
+                        return;
+                    }
+                }
                 // E: Turmfenster für das anvisierte Gebäude (Esc/E schließt)
                 if (escape && self.building_window.is_some()) || (ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none()) {
                     self.building_window = if self.building_window.is_some() { None } else { self.aim_building };
@@ -864,23 +936,16 @@ impl Playground {
                     let count = Tool::HOTBAR.len();
                     self.hotbar_slot = if scroll < 0.0 { (self.hotbar_slot + 1) % count } else { (self.hotbar_slot + count - 1) % count };
                 }
-                // Linksklick: Werkzeug benutzen – mit dem Stab zaubern, mit der Spitzhacke abbauen (gedrückt halten).
-                let cast_cooldown = crate::world::CAST_COOLDOWN_TICKS as f32 * Physics::FIXED_DT + 0.05;
+                // Linksklick: Werkzeug benutzen – abbauen (gedrückt halten) oder die Fähigkeit einsetzen
+                // (den Standardangriff auf Taste 3 kann man gedrückt halten, die anderen je Klick).
                 if !ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Left) && !self.free_camera && !self.inventory_open && !self.map_open {
                     ctx.cursor_locked = true;
                 } else if ctx.cursor_locked && matches!(self.tool(), Tool::Pickaxe | Tool::Axe) && ctx.input.mouse(MouseButton::Left) {
                     self.harvest_aimed(ctx);
-                } else if ctx.cursor_locked
-                    && self.tool() == Tool::Staff
-                    && ctx.input.mouse_pressed(MouseButton::Left)
-                    && ctx.time.elapsed - self.last_cast >= cast_cooldown
-                {
-                    if let Some((target, _)) = self.spell_aim(ctx) {
-                        self.last_cast = ctx.time.elapsed;
-                        self.cast_requested = Some(target);
-                        if let Some(session) = &mut self.session {
-                            session.preview_cast();
-                        }
+                } else if let (true, Tool::Faehigkeit(platz)) = (ctx.cursor_locked, self.tool()) {
+                    let klick = if platz == 0 { ctx.input.mouse(MouseButton::Left) } else { ctx.input.mouse_pressed(MouseButton::Left) };
+                    if klick {
+                        self.faehigkeit_nutzen(ctx, platz);
                     }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
@@ -956,7 +1021,7 @@ impl Playground {
         }
         self.aim_animal = self.spell_aim(ctx).and_then(|(_, animal)| animal);
         self.aim_enemy = None;
-        if self.tool() == Tool::Staff {
+        if matches!(self.tool(), Tool::Faehigkeit(_)) {
             if let Some(session) = &self.session {
                 self.aim_enemy = session
                     .world()
@@ -1097,7 +1162,7 @@ impl Playground {
                     zustaende.push(name);
                 }
             }
-            let zeile = if zustaende.is_empty() { "Linksklick: Zauber".to_string() } else { zustaende.join(" · ") };
+            let zeile = if zustaende.is_empty() { format!("Linksklick: {}", self.tool().label(self.klasse())) } else { zustaende.join(" · ") };
             painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, zeile, egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
             ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, health as f32 / 100.0, 1.0);
             if let Some(text) = kind.eigenschaft() {
@@ -1122,7 +1187,7 @@ impl Playground {
             let center = egui_ctx.content_rect().center();
             let painter = egui_ctx.layer_painter(egui::LayerId::background());
             painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, animal.kind.label(), egui::FontId::proportional(18.0), Color32::WHITE);
-            let action = "Linksklick: Zauber";
+            let action = &if matches!(self.tool(), Tool::Faehigkeit(_)) { format!("Linksklick: {}", self.tool().label(self.klasse())) } else { "Tasten 3–5: Fähigkeiten".to_string() };
             painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, action, egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
             let fraction = animal.health as f32 / animal.kind.max_health() as f32;
             ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, fraction, 1.0);
@@ -1138,7 +1203,7 @@ impl Playground {
             let verb = if needed == Tool::Axe { "Linksklick: Holz hacken" } else { "Linksklick: Abbauen" };
             (verb, Color32::from_white_alpha(200))
         } else {
-            hint = format!("{} nehmen: Taste {}", needed.label(), needed.slot() + 1);
+            hint = format!("{} nehmen: Taste {}", needed.label(self.klasse()), needed.slot() + 1);
             (hint.as_str(), Color32::from_rgb(255, 170, 90))
         };
         let big = egui::FontId::proportional(18.0);
@@ -1185,6 +1250,20 @@ impl Playground {
             ui.add_space(22.0);
             ui.spacing_mut().item_spacing.y = 10.0;
             let width = 320.0;
+            // Figurenwahl: Magier oder Zwerg
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Figur:").size(18.0).color(crate::inventar::MUTED));
+                for class in crate::protocol::CharacterClass::ALL {
+                    let gewaehlt = self.settings.character == class;
+                    let text = RichText::new(class.label()).size(20.0).strong();
+                    if ui.selectable_label(gewaehlt, text).clicked() && !gewaehlt {
+                        self.settings.character = class;
+                        self.settings.save();
+                    }
+                }
+            });
+            ui.label(RichText::new(self.settings.character.beschreibung()).size(14.0).color(crate::inventar::MUTED));
+            ui.add_space(6.0);
             if epic_button(ui, "Einzelspieler", width).clicked() {
                 action = Some(Mode::Offline);
             }
@@ -1278,6 +1357,9 @@ impl Playground {
                             ui.selectable_value(&mut s.character, class, class.label());
                         }
                     });
+                ui.end_row();
+                ui.label("");
+                ui.label(RichText::new(s.character.beschreibung()).size(13.0).color(ui::TEXT.gamma_multiply(0.7)));
                 ui.end_row();
 
                 ui.label("Mausempfindlichkeit");
@@ -1388,7 +1470,99 @@ impl Playground {
         }
     }
 
+    /// Lebensbalken unten links, roter Rand bei Treffern, Meldung nach dem Fallen, Hinweis an
+    /// Runenbrunnen und Schutzstein.
+    fn lebens_hud(&self, ctx: &Context, egui_ctx: &egui::Context) {
+        let Some(session) = &self.session else { return };
+        let world = session.world();
+        let Some(local) = session.local_player() else { return };
+        let Some(avatar) = world.players.get(&local) else { return };
+        let (leben, max) = (avatar.leben.max(0.0), avatar.max_leben());
+        let anteil = (leben / max).clamp(0.0, 1.0);
+        egui::Area::new(egui::Id::new("leben")).anchor(Align2::LEFT_BOTTOM, [16.0, -16.0]).interactable(false).show(egui_ctx, |ui| {
+            egui::Frame::new().fill(Color32::from_black_alpha(170)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.label(RichText::new(format!("{} · {}", avatar.name, avatar.class.label())).size(14.0).color(ui::TEXT.gamma_multiply(0.85)));
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(230.0, 18.0), egui::Sense::hover());
+                let painter = ui.painter();
+                painter.rect_filled(rect, 4.0, Color32::from_rgb(40, 14, 14));
+                let mut fill = rect;
+                fill.set_width(rect.width() * anteil);
+                let farbe = if anteil > 0.5 { Color32::from_rgb(200, 45, 45) } else if anteil > 0.25 { Color32::from_rgb(225, 120, 40) } else { Color32::from_rgb(240, 60, 40) };
+                painter.rect_filled(fill, 4.0, farbe);
+                let mut glanz = fill;
+                glanz.set_height(5.0);
+                painter.rect_filled(glanz, 3.0, Color32::from_white_alpha(45));
+                painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, Color32::from_rgb(120, 90, 60)), egui::StrokeKind::Outside);
+                let text = format!("{:.0} / {:.0}", leben.ceil(), max);
+                painter.text(rect.center() + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &text, egui::FontId::proportional(13.0), Color32::BLACK);
+                painter.text(rect.center(), Align2::CENTER_CENTER, &text, egui::FontId::proportional(13.0), Color32::WHITE);
+            });
+        });
+        // Roter Rand nach einem Treffer
+        let seit = ctx.time.elapsed - self.getroffen_um;
+        if seit < 0.6 {
+            let alpha = ((1.0 - seit / 0.6) * 110.0) as u8;
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            let screen = egui_ctx.content_rect();
+            for i in 0..6 {
+                let rand = screen.shrink(i as f32 * 9.0);
+                painter.rect_stroke(rand, 0.0, egui::Stroke::new(9.0, Color32::from_rgba_unmultiplied(170, 10, 10, alpha / (i + 1))), egui::StrokeKind::Inside);
+            }
+        }
+        // Nach dem Fallen
+        if let Some((um, von)) = &self.gefallen {
+            if ctx.time.elapsed - um < 4.0 {
+                let mitte = egui_ctx.content_rect().center() - egui::vec2(0.0, 120.0);
+                let painter = egui_ctx.layer_painter(egui::LayerId::background());
+                painter.text(mitte + egui::vec2(2.0, 2.0), Align2::CENTER_CENTER, "Du wurdest besiegt", egui::FontId::proportional(38.0), Color32::BLACK);
+                painter.text(mitte, Align2::CENTER_CENTER, "Du wurdest besiegt", egui::FontId::proportional(38.0), Color32::from_rgb(230, 70, 60));
+                let zeile = format!("von: {von} · Du erwachst an deinem Startpunkt");
+                painter.text(mitte + egui::vec2(0.0, 36.0), Align2::CENTER_CENTER, zeile, egui::FontId::proportional(17.0), Color32::from_white_alpha(220));
+            }
+        }
+        // Am Runenbrunnen oder an einem Schutzstein: was E hier tut
+        if self.build_mode.is_none() && self.aim_building.is_none() {
+            if let Some(befehl) = self.runen_hier(ctx) {
+                let inventar = session.local_inventory();
+                let me = crate::save::player_key(&avatar.name);
+                let (zeile, bereit) = match befehl {
+                    crate::protocol::RunenBefehl::Schmieden => {
+                        let n = inventar.runenfragmente;
+                        let noetig = crate::protocol::FRAGMENTE_JE_STEIN;
+                        (format!("Runenbrunnen · E: Runenstein schmieden ({n}/{noetig} Runenfragmente)"), n >= noetig)
+                    }
+                    crate::protocol::RunenBefehl::Einsetzen(platz) => match world.td.runen.get(platz as usize).cloned().flatten() {
+                        Some(besitzer) if besitzer == me => ("Dein Siedlungsplatz · B: Dorfhalle bauen".to_string(), true),
+                        Some(besitzer) => (format!("Siedlungsplatz von {besitzer}"), false),
+                        None => (format!("Schutzstein · E: Runenstein einsetzen ({} Runenstein)", inventar.runensteine), inventar.runensteine > 0),
+                    },
+                };
+                let mitte = egui_ctx.content_rect().center() + egui::vec2(0.0, 120.0);
+                let painter = egui_ctx.layer_painter(egui::LayerId::background());
+                let farbe = if bereit { Color32::from_rgb(150, 215, 255) } else { Color32::from_white_alpha(200) };
+                painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), Color32::BLACK);
+                painter.text(mitte, Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), farbe);
+            }
+        }
+    }
+
     fn hud(&mut self, ctx: &Context, egui_ctx: &egui::Context) {
+        // Treffer und Gefallene der eigenen Figur abholen
+        if let Some(session) = &mut self.session {
+            let local = session.local_player();
+            let world = session.world_mut();
+            for (player, _) in std::mem::take(&mut world.treffer) {
+                if Some(player) == local {
+                    self.getroffen_um = ctx.time.elapsed;
+                }
+            }
+            for (player, von) in std::mem::take(&mut world.gefallen) {
+                if Some(player) == local {
+                    self.gefallen = Some((ctx.time.elapsed, von));
+                }
+            }
+        }
         let Some(session) = &self.session else { return };
         let local = session.local_player();
 
@@ -1440,7 +1614,10 @@ impl Playground {
         if !self.inventory_open {
             self.inventory_ui.hud(egui_ctx, &session.local_inventory());
         }
-        self.inventory_ui.hotbar(egui_ctx, self.hotbar_slot);
+        let jetzt = ctx.time.elapsed;
+        let abklingen = self.bereit_ab.map(|t| (t - jetzt).max(0.0));
+        self.inventory_ui.hotbar(egui_ctx, self.hotbar_slot, self.klasse(), abklingen);
+        self.lebens_hud(ctx, egui_ctx);
 
         // Status oben rechts
         egui::Area::new(egui::Id::new("status"))
@@ -1485,7 +1662,7 @@ impl Playground {
         let hint = if self.build_mode.is_some() {
             "Linksklick Bauen · Q/E oder Mausrad Drehen · Rechtsklick oder B Abbrechen"
         } else if ctx.cursor_locked || self.free_camera {
-            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · B Bauen · R Siedlung · T Verteidigung · I Inventar · M Karte · Enter Chat · Esc Menü"
+            "WASD Laufen · Shift Rennen · Leertaste Springen · 1–2 Werkzeug · 3–5 Fähigkeiten · Linksklick Benutzen · E Benutzen · B Bauen · R Siedlung · T Verteidigung · I Inventar · M Karte · Esc Menü"
         } else if self.inventory_open || self.build_menu_open || self.map_open || self.chat.open || self.td_open || self.admin_open || self.building_window.is_some() {
             ""
         } else {
@@ -1493,7 +1670,7 @@ impl Playground {
         };
         // Über der Auswahlleiste
         egui::Area::new(egui::Id::new("hinweis"))
-            .anchor(Align2::CENTER_BOTTOM, [0.0, if ctx.cursor_locked { -118.0 } else { -122.0 }])
+            .anchor(Align2::CENTER_BOTTOM, [0.0, if ctx.cursor_locked { -132.0 } else { -136.0 }])
             .interactable(false)
             .show(egui_ctx, |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -1566,7 +1743,7 @@ impl Game for Playground {
         self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
         self.demo_cast = args.iter().any(|a| a == "--demo-zaubern");
         if self.demo_cast {
-            self.hotbar_slot = Tool::Staff.slot();
+            self.hotbar_slot = Tool::ANGRIFF.slot();
         }
         // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
         // Nur für Screenshots: Karte offen bzw. ein paar Chatzeilen
@@ -1594,6 +1771,13 @@ impl Game for Playground {
         self.demo_troops = args.iter().any(|a| a == "--demo-truppen" || a == "--demo-kampf");
         self.admin_open = args.iter().any(|a| a == "--demo-admin");
         self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
+        if let Some(i) = args.iter().position(|a| a == "--demo-lager") {
+            self.demo_lager = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
+        }
+        self.demo_brunnen = args.iter().any(|a| a == "--demo-brunnen");
+        if let Some(i) = args.iter().position(|a| a == "--demo-angriff") {
+            self.demo_angriff = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
+        }
         self.demo_towers = args.iter().any(|a| a == "--demo-tuerme");
         self.demo_fallen = args.iter().any(|a| a == "--demo-fallen");
         if let Some(position) = args.iter().position(|a| a == "--demo-siedlung") {
@@ -1956,6 +2140,47 @@ impl Game for Playground {
                 self.demo_yaw_offset = 0.0;
             }
         }
+        if let (Some(index), Some(session)) = (self.demo_lager, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_lager = None;
+                let world = session.world();
+                if let Some(lager) = world.wildnis.lager.get(index.min(world.wildnis.lager.len().saturating_sub(1))) {
+                    let mitte = lager.mitte;
+                    let weg = (mitte - vec2(world.spawn.x, world.spawn.z)).normalize_or(Vec2::X);
+                    let stand = mitte - weg * if self.demo_angriff.is_some() { 9.0 } else { 24.0 };
+                    let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+                    let character = world.players[&local].character;
+                    ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+                    self.hotbar_slot = Tool::ANGRIFF.slot();
+                    self.demo_crystal = Some(Some(vec3(mitte.x, lager.hoehe + 1.0, mitte.y)));
+                    self.demo_yaw_offset = 0.0;
+                }
+            }
+        }
+        if let (Some(platz), Some(Some(ziel))) = (self.demo_angriff, self.demo_crystal) {
+            self.hotbar_slot = Tool::Faehigkeit(platz).slot();
+            if ctx.time.elapsed - self.last_cast > 1.6 {
+                let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
+                self.last_cast = ctx.time.elapsed;
+                self.cast_requested = Some(ziel);
+                if let Some(session) = &mut self.session {
+                    session.preview_cast(art);
+                }
+            }
+        }
+        if let (true, Some(session)) = (self.demo_brunnen, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_brunnen = false;
+                let world = session.world();
+                let brunnen = world.runenbrunnen;
+                let stand = brunnen + crate::island::burg_drehung() * vec3(0.0, 1.2, 14.0);
+                let character = world.players[&local].character;
+                ctx.physics.teleport_character(character, stand);
+                self.demo_crystal = Some(Some(brunnen + Vec3::Y * 3.0));
+                self.demo_yaw_offset = 0.0;
+                session.world_mut().inventories.entry(local).or_default().runenfragmente = 4;
+            }
+        }
         if let (true, Some(session)) = (self.demo_fight, &mut self.session) {
             if let Some(local) = session.local_player() {
                 self.demo_fight = false;
@@ -1964,7 +2189,7 @@ impl Game for Playground {
                 let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
                 let character = world.players[&local].character;
                 ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
-                self.hotbar_slot = Tool::Staff.slot();
+                self.hotbar_slot = Tool::ANGRIFF.slot();
                 self.demo_crystal = Some(Some(vec3(0.0, crate::island::festung_hoehe() + 6.0, 40.0)));
                 self.demo_yaw_offset = 0.0;
             }
@@ -2022,7 +2247,7 @@ impl Game for Playground {
                     if ctx.time.elapsed - self.last_cast > 1.0 {
                         self.last_cast = ctx.time.elapsed;
                         self.cast_requested = Some(target);
-                        session.preview_cast();
+                        session.preview_cast(crate::faehigkeiten::Faehigkeit::von(crate::protocol::CharacterClass::Mage, 0));
                         log::debug!("Demo-Zauber: Bild {}, {:.2} s", ctx.time.frame, ctx.time.elapsed);
                     }
                 }

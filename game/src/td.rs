@@ -170,6 +170,9 @@ pub struct TdStand {
     pub turm_stats: Vec<(u32, u32, u32)>,
     /// … und Schaden und Kills je Spieler (seit Welle 1)
     pub beitrag: Vec<(String, u32, u32)>,
+    /// Siedlungsplätze (Reihenfolge wie `strassen`), in deren Schutzstein ein Runenstein sitzt: wem sie gehören
+    #[serde(default)]
+    pub runen: Vec<Option<String>>,
 }
 
 impl TdStand {

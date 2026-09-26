@@ -349,6 +349,11 @@ pub fn siedlung_pruefen(world: &crate::world::World, kind: BuildingKind, at: Vec
             if world.dorfhalle_auf_platz(platz).is_some() {
                 return Err("Dieser Siedlungsplatz ist schon vergeben");
             }
+            match world.td.runen.get(platz).and_then(|r| r.as_deref()) {
+                Some(besitzer) if besitzer == owner => {}
+                Some(_) => return Err("Dieser Siedlungsplatz gehört einem anderen Spieler"),
+                None => return Err("Erst einen Runenstein in den Schutzstein setzen (E am Schutzstein)"),
+            }
             Ok(())
         }
         BuildingKind::Lumberjack | BuildingKind::Quarry | BuildingKind::Mine => {

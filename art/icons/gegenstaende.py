@@ -320,10 +320,10 @@ def erz():
     brocken.rotation_euler.z = 0.4
 
 
-def _aus_magier(knoten, drehung, nur_oben=None):
-    """Holt ein Anbauteil (Stab, Spitzhacke) aus dem fertigen Magier-Modell – so sieht das Symbol
-    genau aus wie im Spiel. `drehung` legt es schräg ins Bild."""
-    bpy.ops.import_scene.gltf(filepath=str(REPO / "game" / "assets" / "figuren" / "magier.gltf"))
+def _aus_magier(knoten, drehung, nur_oben=None, figur="magier"):
+    """Holt ein Anbauteil (Stab, Spitzhacke, Hammer) aus dem fertigen Figurenmodell – so sieht das
+    Symbol genau aus wie im Spiel. `drehung` legt es schräg ins Bild."""
+    bpy.ops.import_scene.gltf(filepath=str(REPO / "game" / "assets" / "figuren" / f"{figur}.gltf"))
     for obj in bpy.context.scene.objects:
         if obj.type == "ARMATURE":
             obj.data.pose_position = "REST"
@@ -397,10 +397,204 @@ def gold():
     objekt("Muenze", bm, metall, rand)
 
 
+def leucht(name, farbe, staerke=4.0):
+    """Leuchtendes Material (Magie, Glut, Funken)."""
+    mat = bpy.data.materials.new(name)
+    setze(mat, use_nodes=True)
+    knoten, links = mat.node_tree.nodes, mat.node_tree.links
+    for k in list(knoten):
+        knoten.remove(k)
+    ausgabe = knoten.new("ShaderNodeOutputMaterial")
+    emission = knoten.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = linear(farbe)
+    emission.inputs["Strength"].default_value = staerke
+    links.new(emission.outputs["Emission"], ausgabe.inputs["Surface"])
+    return mat
+
+
+def glimmen(name, farbe, staerke=0.6):
+    """Schattiertes Material, das zusätzlich leicht von innen leuchtet (Zauberkugeln)."""
+    mat = material(name, farbe, rau=0.35, glanz=0.8)
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    if "Emission Color" in bsdf.inputs:
+        bsdf.inputs["Emission Color"].default_value = linear(farbe)
+        bsdf.inputs["Emission Strength"].default_value = staerke
+    return mat
+
+
+def kugel(radius, ort, mat, name="Kugel", unterteilung=3, groesse=(1, 1, 1)):
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=unterteilung, radius=radius)
+    bewegen(bm, ort, (0, 0, 0), groesse)
+    return objekt(name, bm, mat, glatt=True)
+
+
+def kegel(radius, laenge, ort, drehung, mat, ecken=6, name="Kegel"):
+    bm = zylinder(radius, laenge, ecken, 0.0)
+    bewegen(bm, (0, 0, laenge / 2))
+    bewegen(bm, ort, drehung)
+    return objekt(name, bm, mat)
+
+
+def brocken(radius, ort, mat, seed, streckung=(1, 1, 1), name="Brocken"):
+    """Kantiger Stein: Ikosaeder, ein paar Schnitte, leicht verbeult."""
+    zufall = random.Random(seed)
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=radius)
+    for _ in range(4):
+        n = Vector((zufall.uniform(-1, 1), zufall.uniform(-1, 1), zufall.uniform(-1, 1))).normalized()
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=n * radius * zufall.uniform(0.55, 0.8), plane_no=n, clear_outer=True)
+        rand = [e for e in bm.edges if e.is_boundary]
+        if rand:
+            bmesh.ops.holes_fill(bm, edges=rand, sides=0)
+    bewegen(bm, ort, (zufall.uniform(0, 90), zufall.uniform(0, 90), zufall.uniform(0, 90)), streckung)
+    return objekt(name, bm, mat)
+
+
+def runenfragment():
+    """Drei kantige Splitter eines Runensteins, in einem leuchtet eine Rune."""
+    stein = material("Runenstein", "#5F6C94", rau=0.55, muster=True, muster_farbe="#8290B8", muster_skala=10.0)
+    rune = leucht("Rune", "#6FC8FF", 2.2)
+    for i, (ort, r, streckung) in enumerate((((0.0, 0.0, 0.0), 0.62, (0.8, 0.55, 1.25)), ((-0.62, 0.2, -0.35), 0.36, (1.0, 0.8, 0.9)),
+                                             ((0.6, 0.1, -0.42), 0.3, (0.9, 1.0, 0.8)))):
+        brocken(r, ort, stein, 11 + i, streckung, "Splitter")
+    for dz, breite, drehung in ((0.2, 0.06, 0), (-0.05, 0.28, 30)):
+        bm = zylinder(0.1, 1.0, 4)
+        bewegen(bm, (0, -0.36, dz), (90, drehung, 45), (breite, 1.0, 0.06 if breite > 0.1 else 0.45))
+        objekt("Rune", bm, rune)
+
+
+def runenstein():
+    """Sechskantiger Runenstein mit Goldband und leuchtenden Runen (wie das Modell im Spiel)."""
+    stein = material("Runenstein", "#5F6C94", rau=0.5, muster=True, muster_farbe="#7F8DB5", muster_skala=8.0)
+    metall = material("Gold", "#E8B53A", rau=0.25, glanz=0.6)
+    rune = leucht("Rune", "#6FC8FF", 2.2)
+    bm = zylinder(0.55, 1.4, 6, 0.42)
+    bewegen(bm, (0, 0, 0))
+    objekt("Stein", bm, stein)
+    for z, r in ((0.7, 0.44), (-0.7, 0.55)):
+        kegel(r, 0.35 if z > 0 else 0.25, (0, 0, z), (0, 0, 0) if z > 0 else (180, 0, 0), stein, 6, "Spitze")
+    bm = zylinder(0.53, 0.09, 6)
+    bewegen(bm, (0, 0, 0.1))
+    objekt("Band", bm, metall)
+    for k in range(3):
+        w = math.tau * (k + 0.5) / 6 - math.pi / 2
+        bm = zylinder(0.1, 1.0, 4)
+        bewegen(bm, (math.cos(w) * 0.47, math.sin(w) * 0.47, -0.3), (90, 0, math.degrees(w) + 90), (0.35, 0.06, 0.35))
+        objekt("Rune", bm, rune)
+        bm = zylinder(0.1, 1.0, 4)
+        bewegen(bm, (math.cos(w) * 0.47, math.sin(w) * 0.47, -0.25), (90, 45, math.degrees(w) + 90), (0.05, 0.06, 0.25))
+        objekt("Rune", bm, rune)
+    for i, w in enumerate((0.6, 2.4, 4.4)):
+        kugel(0.08, (math.cos(w) * 0.85, math.sin(w) * 0.85, -0.2 + i * 0.35), rune, "Funke", 1, (0.8, 0.8, 1.6))
+
+
+def faehigkeit_arkangeschoss():
+    """Leuchtende Kugel reiner Magie mit einer Spur kleinerer Kugeln und Funken."""
+    kern = glimmen("Arkan", "#6A5CFF", 0.7)
+    hell = leucht("ArkanHell", "#C8C0FF", 2.2)
+    kugel(0.42, (0.3, 0, 0.3), kern)
+    kugel(0.22, (0.3, -0.2, 0.3), hell)
+    for i, (x, z, r) in enumerate(((-0.25, -0.2, 0.2), (-0.62, -0.5, 0.13), (-0.88, -0.74, 0.08))):
+        kugel(r, (x, 0.05 * i, z), kern)
+    zufall = random.Random(5)
+    for _ in range(9):
+        kugel(0.035, (zufall.uniform(-0.8, 0.8), zufall.uniform(-0.2, 0.2), zufall.uniform(-0.8, 0.8)), hell, "Funke", 1)
+
+
+def faehigkeit_feuerball():
+    """Glühender Feuerball mit Flammenzungen nach hinten."""
+    glut = glimmen("Glut", "#FF7A1E", 0.8)
+    kern = leucht("Kern", "#FFD060", 2.2)
+    flamme = leucht("Flamme", "#E8401A", 1.6)
+    kugel(0.48, (0.3, 0, 0.3), glut)
+    kugel(0.3, (0.35, -0.15, 0.35), kern)
+    zufall = random.Random(8)
+    for i in range(9):
+        w = math.radians(200 + i * 10 + zufall.uniform(-6, 6))
+        laenge = zufall.uniform(0.7, 1.15)
+        kegel(0.2 - 0.01 * i, laenge, (0.3 + math.cos(w) * 0.25, 0.1, 0.3 + math.sin(w) * 0.25), (0, math.degrees(-w) - 90, 0), flamme, 6, "Zunge")
+
+
+def faehigkeit_frostnova():
+    """Ein Ring aus Eisstacheln, die aus der Mitte nach außen brechen, darüber ein Eiskristall."""
+    eis = material("Eis", "#6FB8E8", rau=0.2, glanz=1.0)
+    frost = leucht("Frost", "#4FA8E0", 1.3)
+    for i in range(12):
+        w = math.tau * i / 12
+        laenge = 0.55 if i % 2 else 0.85
+        kegel(0.13, laenge, (math.cos(w) * 0.45, math.sin(w) * 0.45, -0.3), (0, 70, math.degrees(w)), eis, 5, "Stachel")
+    bm = zylinder(0.95, 0.06, 32)
+    bewegen(bm, (0, 0, -0.4))
+    objekt("Frostboden", bm, frost)
+    for k in range(3):
+        bm = zylinder(0.06, 1.1, 4)
+        bewegen(bm, (0, 0, 0.35), (90, 60 * k, 0))
+        objekt("Kristall", bm, eis)
+    kugel(0.14, (0, 0, 0.35), frost)
+
+
+def faehigkeit_hammerschlag():
+    """Der Kriegshammer des Zwergs im Schlag, mit Funken am Kopf."""
+    s = 0.7071
+    _aus_magier("Hammer", Matrix(((-s, 0, -s), (0, 1, 0), (s, 0, -s))).to_4x4(), figur="zwerg")
+    funke = leucht("Funke", "#FFC040", 2.0)
+    # Funken sprühen vom Hammerkopf (das äußerste Ende in Schlagrichtung) nach außen
+    hammer = bpy.data.objects["Hammer"]
+    achse = Vector((s, 0, s))
+    kopf = max((Vector(v.co) for v in hammer.data.vertices), key=lambda p: p.dot(achse))
+    zufall = random.Random(3)
+    for i in range(9):
+        w = math.radians(-35 + i * 14)
+        richtung = Vector((math.cos(w) * s - math.sin(w) * s, 0, math.cos(w) * s + math.sin(w) * s))
+        kegel(0.022, zufall.uniform(0.12, 0.22), kopf + richtung * 0.05 + Vector((0, -0.12, 0)), (0, math.degrees(math.atan2(richtung.x, richtung.z)), 0), funke, 4, "Funke")
+
+
+def faehigkeit_wurfhammer():
+    """Ein fliegender Hammer mit Wirbelspuren."""
+    _aus_magier("Hammer", Matrix.Rotation(math.radians(120), 4, "Y"), figur="zwerg")
+    spur = leucht("Spur", "#BBD8FF", 1.4)
+    for i, r in enumerate((0.55, 0.7)):
+        bm = bmesh.new()
+        ringe = []
+        for k in range(13):
+            w = math.radians(120 + k * 12 + i * 10)
+            ringe.append([bm.verts.new(Vector((math.cos(w) * r, dy, math.sin(w) * r))) for dy in (-0.02, 0.02)])
+        for a, b in zip(ringe, ringe[1:]):
+            bm.faces.new((a[0], b[0], b[1], a[1]))
+        bewegen(bm, (0, -0.2, 0), (0, 0, 0), (1, 1, 1))
+        objekt("Spur", bm, spur)
+
+
+def faehigkeit_erdbeben():
+    """Aufgebrochener Boden mit glühenden Rissen und hochspringenden Felsbrocken."""
+    erde = material("Erde", "#6E5238", rau=0.9, muster=True, muster_farbe="#8A6A48", muster_skala=6.0)
+    fels = material("Fels", "#8C8478", rau=0.8)
+    riss = leucht("Riss", "#FF7A2A", 2.0)
+    zufall = random.Random(4)
+    for i in range(6):
+        w = math.tau * i / 6 + zufall.uniform(-0.2, 0.2)
+        bm = zylinder(0.55, 0.22, 3)
+        bewegen(bm, (math.cos(w) * 0.5, math.sin(w) * 0.5, -0.55 + zufall.uniform(-0.05, 0.12)), (zufall.uniform(-10, 10), zufall.uniform(-10, 10), math.degrees(w)), (1.0, 0.8, 1.0))
+        objekt("Scholle", bm, erde)
+    for i in range(6):
+        w = math.tau * (i + 0.5) / 6
+        bm = zylinder(0.03, 0.9, 4)
+        bewegen(bm, (math.cos(w) * 0.45, math.sin(w) * 0.45, -0.52), (90, 0, math.degrees(w) + 90), (1, 1, 1))
+        objekt("Riss", bm, riss)
+    for i, (x, y, z, r) in enumerate(((0.0, 0.0, 0.15, 0.24), (-0.5, 0.1, 0.45, 0.16), (0.55, -0.1, 0.35, 0.18), (0.2, 0.2, 0.75, 0.12), (-0.25, -0.2, 0.8, 0.1))):
+        brocken(r, (x, y, z), fels, 30 + i)
+
+
 GEGENSTAENDE = {"gold": gold, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
-                "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab}
+                "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab, "runenfragment": runenfragment, "runenstein": runenstein,
+                "faehigkeit_arkangeschoss": faehigkeit_arkangeschoss, "faehigkeit_feuerball": faehigkeit_feuerball,
+                "faehigkeit_frostnova": faehigkeit_frostnova, "faehigkeit_hammerschlag": faehigkeit_hammerschlag,
+                "faehigkeit_wurfhammer": faehigkeit_wurfhammer, "faehigkeit_erdbeben": faehigkeit_erdbeben}
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
-BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25)}
+BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
+         "faehigkeit_arkangeschoss": (0.0, -1.0, 0.2), "faehigkeit_feuerball": (0.0, -1.0, 0.2), "faehigkeit_hammerschlag": (0.0, -1.0, 0.2),
+         "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
 
 
 # ---------------------------------------------------------------------------

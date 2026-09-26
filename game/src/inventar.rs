@@ -70,7 +70,9 @@ impl Icons {
     fn load(ctx: &egui::Context) -> Icons {
         let mut icons = Icons { large: HashMap::new(), small: HashMap::new() };
         let Some(dir) = crate::asset_files::asset_dir() else { return icons };
-        let files = Item::ALL.iter().map(|i| i.icon_file()).chain(Tool::HOTBAR.iter().map(|t| t.icon_file()));
+        let werkzeuge = [Tool::Pickaxe, Tool::Axe].map(|t| t.icon_file(crate::protocol::CharacterClass::Mage));
+        let faehigkeiten = crate::protocol::CharacterClass::ALL.into_iter().flat_map(crate::faehigkeiten::Faehigkeit::der_klasse).map(|f| f.icon_file());
+        let files = Item::ALL.iter().map(|i| i.icon_file()).chain(werkzeuge).chain(faehigkeiten);
         for file in files {
             let path = dir.join("icons").join(format!("{file}.png"));
             let image = match Image::load_png(&path) {
@@ -239,8 +241,9 @@ impl InventoryUi {
         close
     }
 
-    /// Auswahlleiste unten in der Mitte: Werkzeuge auf den Plätzen 1–8, der gewählte leuchtet.
-    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize) {
+    /// Auswahlleiste unten in der Mitte: Werkzeuge und die drei Fähigkeiten der Figur, der gewählte
+    /// Platz leuchtet. `abklingen`: Restzeit der Fähigkeiten in Sekunden (0 = bereit).
+    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize, class: crate::protocol::CharacterClass, abklingen: [f32; 3]) {
         self.icons(ctx);
         let icons = self.icons.as_ref().expect("Symbole geladen");
         const SLOTS: usize = 8;
@@ -275,8 +278,22 @@ impl InventoryUi {
                 }
                 if let Some(tool) = tool {
                     let tint = if active { Color32::WHITE } else { Color32::from_gray(185) };
-                    if !icons.paint_file(painter, slot_rect.shrink(3.0), tool.icon_file(), tint) {
-                        painter.text(slot_rect.center(), Align2::CENTER_CENTER, &tool.label()[..1], FontId::proportional(20.0), PARCHMENT);
+                    if !icons.paint_file(painter, slot_rect.shrink(3.0), tool.icon_file(class), tint) {
+                        let erster: String = tool.label(class).chars().take(1).collect();
+                        painter.text(slot_rect.center(), Align2::CENTER_CENTER, erster, FontId::proportional(20.0), PARCHMENT);
+                    }
+                    // Abklingzeit: dunkler Schleier von oben und die Sekunden
+                    if let Tool::Faehigkeit(platz) = tool {
+                        let rest = abklingen[(platz as usize).min(2)];
+                        if rest > 0.0 {
+                            let gesamt = tool.faehigkeit(class).map_or(1.0, |f| f.abklingen() as f32 / 60.0);
+                            let mut schleier = slot_rect.shrink(3.0);
+                            schleier.set_height(schleier.height() * (rest / gesamt).clamp(0.0, 1.0));
+                            painter.rect_filled(schleier, 3.0, Color32::from_black_alpha(165));
+                            let text = if rest >= 1.0 { format!("{rest:.0}") } else { format!("{rest:.1}") };
+                            painter.text(slot_rect.center() + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &text, FontId::proportional(17.0), Color32::BLACK);
+                            painter.text(slot_rect.center(), Align2::CENTER_CENTER, &text, FontId::proportional(17.0), Color32::WHITE);
+                        }
                     }
                 }
                 // Tastennummer oben links
@@ -288,8 +305,14 @@ impl InventoryUi {
             // Name des Werkzeugs über der Leiste
             if let Some(tool) = Tool::HOTBAR.get(selected) {
                 let above = egui::pos2(rect.center().x, rect.top() - 6.0);
-                painter.text(above + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, tool.label(), FontId::proportional(15.0), Color32::BLACK);
-                painter.text(above, Align2::CENTER_BOTTOM, tool.label(), FontId::proportional(15.0), GOLD_LIGHT);
+                painter.text(above + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, tool.label(class), FontId::proportional(15.0), Color32::BLACK);
+                painter.text(above, Align2::CENTER_BOTTOM, tool.label(class), FontId::proportional(15.0), GOLD_LIGHT);
+                // Bei Fähigkeiten: die Werte darunter (klein, über dem Namen)
+                if let Some(f) = tool.faehigkeit(class) {
+                    let zeile = egui::pos2(rect.center().x, rect.top() - 24.0);
+                    painter.text(zeile + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, f.werte_zeile(), FontId::proportional(12.5), Color32::BLACK);
+                    painter.text(zeile, Align2::CENTER_BOTTOM, f.werte_zeile(), FontId::proportional(12.5), PARCHMENT);
+                }
             }
         });
     }

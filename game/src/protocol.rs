@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0018;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0019;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -59,43 +59,68 @@ pub enum AdminCommand {
     Gold(u32),
     /// Zu einer Welle springen (die nächste ist dann diese + 1)
     SpringeZuWelle(u32),
+    /// Vier Runenfragmente für den, der den Befehl gibt (zum Testen)
+    Runenfragmente,
+    /// Alle Lager der Wildnis sofort wieder besetzen
+    LagerNeu,
 }
 
-/// Werkzeuge in der Auswahlleiste. Jeder Spieler hat sie von Anfang an.
+/// Runen: Fragmente am Runenbrunnen der Burg zu einem Runenstein vereinen, einen Runenstein in
+/// den Schutzstein eines Siedlungsplatzes setzen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunenBefehl {
+    Schmieden,
+    Einsetzen(u8),
+}
+
+/// So viele Runenfragmente ergeben einen Runenstein.
+pub const FRAGMENTE_JE_STEIN: u32 = 4;
+
+/// Was in der Auswahlleiste liegt: zwei Werkzeuge und die drei Fähigkeiten der Figur.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tool {
     /// Baut Stein- und Erzvorkommen ab.
     #[default]
     Pickaxe,
-    /// Zaubert (Angriff auf Tiere).
-    Staff,
     /// Fällt Bäume.
     Axe,
+    /// Fähigkeit 0, 1 oder 2 der Klasse (siehe `faehigkeiten.rs`)
+    Faehigkeit(u8),
 }
 
 impl Tool {
     /// Belegung der Auswahlleiste (Platz 1, 2, …).
-    pub const HOTBAR: [Tool; 3] = [Tool::Pickaxe, Tool::Axe, Tool::Staff];
+    pub const HOTBAR: [Tool; 5] = [Tool::Pickaxe, Tool::Axe, Tool::Faehigkeit(0), Tool::Faehigkeit(1), Tool::Faehigkeit(2)];
+    /// Der Standardangriff (Taste 3)
+    pub const ANGRIFF: Tool = Tool::Faehigkeit(0);
 
     /// Platz in der Auswahlleiste (0 = Taste 1).
     pub fn slot(self) -> usize {
         Tool::HOTBAR.iter().position(|&t| t == self).unwrap_or(0)
     }
 
-    pub fn label(self) -> &'static str {
+    /// Die Fähigkeit in der Hand (für die Klasse der Figur).
+    pub fn faehigkeit(self, class: CharacterClass) -> Option<crate::faehigkeiten::Faehigkeit> {
+        match self {
+            Tool::Faehigkeit(platz) => Some(crate::faehigkeiten::Faehigkeit::von(class, platz)),
+            _ => None,
+        }
+    }
+
+    pub fn label(self, class: CharacterClass) -> &'static str {
         match self {
             Tool::Pickaxe => "Spitzhacke",
-            Tool::Staff => "Zauberstab",
             Tool::Axe => "Axt",
+            Tool::Faehigkeit(_) => self.faehigkeit(class).map_or("", |f| f.label()),
         }
     }
 
     /// Symbol in `game/assets/icons/`.
-    pub fn icon_file(self) -> &'static str {
+    pub fn icon_file(self, class: CharacterClass) -> &'static str {
         match self {
             Tool::Pickaxe => "spitzhacke",
-            Tool::Staff => "zauberstab",
             Tool::Axe => "axt",
+            Tool::Faehigkeit(_) => self.faehigkeit(class).map_or("", |f| f.icon_file()),
         }
     }
 }
@@ -115,6 +140,8 @@ pub struct PlayerState {
     /// Letzte Eingabe dieses Spielers, die im Zustand schon enthalten ist.
     pub last_input: u32,
     pub tool: Tool,
+    /// Lebenspunkte (die höchsten stehen in `CharacterClass::max_leben`)
+    pub leben: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -167,9 +194,13 @@ pub enum ServerMessage {
     ResourceStates { gone: Vec<u32>, damaged: Vec<(u32, u8)> },
     /// Das eigene Inventar hat sich geändert.
     Inventory(Inventory),
-    /// Ein Spieler wirkt einen Zauber: ein Geschoss fliegt von `origin` nach `target`.
-    /// `hit`: trifft es dort ein Tier (dann folgt `AnimalHit`)?
-    SpellCast { by: PlayerId, origin: Vec3, target: Vec3, hit: bool },
+    /// Ein Spieler setzt eine Fähigkeit ein: Geschosse fliegen von `origin` nach `target`;
+    /// bei Nahkampf und Wirkungen um sich ist `target` die Mitte. `hit`: trifft sie etwas?
+    SpellCast { by: PlayerId, origin: Vec3, target: Vec3, hit: bool, art: crate::faehigkeiten::Faehigkeit },
+    /// Ein Spieler wurde getroffen (roter Rand, Klang)
+    SpielerGetroffen { player: PlayerId, schaden: u16 },
+    /// Ein Spieler ist gefallen und steht an seinem Startpunkt wieder auf
+    SpielerGefallen { player: PlayerId, von: String },
     /// Ein Tier wurde getroffen und hat noch `health` Leben (0 = erlegt).
     AnimalHit { id: u16, health: u8, by: PlayerId },
     /// Chatnachricht eines Spielers (vom Server geprüft).
@@ -202,6 +233,8 @@ pub enum ClientMessage {
     Admin(AdminCommand),
     /// Verteidigung: Turm aufwerten, abreißen, Zielmodus, Welle rufen, Straße wählen
     Td(crate::td::TdBefehl),
+    /// Runenstein schmieden oder in einen Schutzstein setzen
+    Runen(RunenBefehl),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -252,6 +285,11 @@ pub struct Inventory {
     /// Gold: Kopfgeld, Wellenbonus – die Währung für Türme und Fallen
     #[serde(default)]
     pub gold: u32,
+    /// Runenfragmente (Beute aus den Lagern der Wildnis) und fertige Runensteine
+    #[serde(default)]
+    pub runenfragmente: u32,
+    #[serde(default)]
+    pub runensteine: u32,
 }
 
 /// Alles, was im Inventar liegen kann.
@@ -264,10 +302,12 @@ pub enum Item {
     Meat,
     Pelt,
     Wool,
+    Runenfragment,
+    Runenstein,
 }
 
 impl Item {
-    pub const ALL: [Item; 7] = [Item::Gold, Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
+    pub const ALL: [Item; 9] = [Item::Gold, Item::Runenstein, Item::Runenfragment, Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -278,6 +318,8 @@ impl Item {
             Item::Meat => "Fleisch",
             Item::Pelt => "Fell",
             Item::Wool => "Wolle",
+            Item::Runenfragment => "Runenfragment",
+            Item::Runenstein => "Runenstein",
         }
     }
 
@@ -291,6 +333,8 @@ impl Item {
             Item::Meat => "fleisch",
             Item::Pelt => "fell",
             Item::Wool => "wolle",
+            Item::Runenfragment => "runenfragment",
+            Item::Runenstein => "runenstein",
         }
     }
 
@@ -307,6 +351,8 @@ impl Item {
             Item::Ore => "Rohstoff · Metall",
             Item::Meat => "Tierbeute · Nahrung",
             Item::Pelt | Item::Wool => "Tierbeute · Handwerksmaterial",
+            Item::Runenfragment => "Magie · Beute aus der Wildnis",
+            Item::Runenstein => "Magie · öffnet einen Siedlungsplatz",
         }
     }
 
@@ -319,6 +365,8 @@ impl Item {
             Item::Meat => "Rohes Fleisch von erlegten Tieren.",
             Item::Pelt => "Warmes Fell von Hase, Fuchs, Reh, Wolf oder Bär.",
             Item::Wool => "Weiche Schafwolle.",
+            Item::Runenfragment => "Splitter eines alten Schutzsteins, erbeutet in den Lagern der Wildnis. Der Runenbrunnen in der Burg vereint vier davon zu einem Runenstein.",
+            Item::Runenstein => "Setze ihn in den Schutzstein am Ende einer Heerstraße (E): Dann gehört dir der Siedlungsplatz und du kannst deine Dorfhalle bauen.",
         }
     }
 }
@@ -341,6 +389,8 @@ impl Inventory {
             Item::Meat => self.meat,
             Item::Pelt => self.pelt,
             Item::Wool => self.wool,
+            Item::Runenfragment => self.runenfragmente,
+            Item::Runenstein => self.runensteine,
         }
     }
 
@@ -353,6 +403,8 @@ impl Inventory {
             Item::Meat => &mut self.meat,
             Item::Pelt => &mut self.pelt,
             Item::Wool => &mut self.wool,
+            Item::Runenfragment => &mut self.runenfragmente,
+            Item::Runenstein => &mut self.runensteine,
         };
         *slot += amount;
     }
@@ -367,6 +419,8 @@ impl Inventory {
             Item::Meat => &mut self.meat,
             Item::Pelt => &mut self.pelt,
             Item::Wool => &mut self.wool,
+            Item::Runenfragment => &mut self.runenfragmente,
+            Item::Runenstein => &mut self.runensteine,
         };
         if *slot < amount {
             return false;
@@ -394,11 +448,12 @@ pub enum CharacterClass {
     #[default]
     Mage,
     Rogue,
+    Zwerg,
 }
 
 impl CharacterClass {
     /// Wählbare Figuren.
-    pub const ALL: [CharacterClass; 1] = [CharacterClass::Mage];
+    pub const ALL: [CharacterClass; 2] = [CharacterClass::Mage, CharacterClass::Zwerg];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -406,6 +461,23 @@ impl CharacterClass {
             CharacterClass::Barbarian => "Barbar",
             CharacterClass::Mage => "Magier",
             CharacterClass::Rogue => "Schurkin",
+            CharacterClass::Zwerg => "Zwerg",
+        }
+    }
+
+    /// Lebenspunkte bei voller Gesundheit.
+    pub fn max_leben(self) -> u16 {
+        match self {
+            CharacterClass::Zwerg => 150,
+            _ => 100,
+        }
+    }
+
+    /// Kurze Beschreibung für die Figurenwahl.
+    pub fn beschreibung(self) -> &'static str {
+        match self {
+            CharacterClass::Zwerg => "Zäh und stark im Nahkampf: Hammerschlag, Wurfhammer und Erdbeben. 150 Leben.",
+            _ => "Kämpft aus der Ferne: Arkangeschoss, Feuerball und Frostnova. 100 Leben.",
         }
     }
 }

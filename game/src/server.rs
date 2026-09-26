@@ -13,7 +13,9 @@ use crate::protocol::*;
 use crate::heer::{Blocker, Quelle, Ziel};
 use crate::save::{player_key, WorldSave};
 use crate::td::{Ereignis, TdBefehl, TdStand};
-use crate::world::{World, BOLT_SPEED, CAST_COOLDOWN_TICKS, CAST_DELAY, CAST_RANGE, HARVEST_COOLDOWN_TICKS, MINE_COOLDOWN_TICKS};
+use crate::faehigkeiten::{Faehigkeit, Form};
+use crate::wildnis::Treffer;
+use crate::world::{World, HARVEST_COOLDOWN_TICKS, HEILEN_ANTEIL, HEILEN_NACH, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -35,14 +37,27 @@ struct RemoteClient {
     credit: u32,
 }
 
-/// Ein Zauber ist unterwegs und trifft in Takt `due` das Tier `animal`.
+/// Was ein Geschoss getroffen hat.
+#[derive(Clone, Copy, Debug)]
+enum Getroffen {
+    Tier(u16),
+    /// Einheit der Festung
+    Feind(u16),
+    /// Bewohner eines Lagers der Wildnis
+    Wild(u16),
+}
+
+/// Eine Fähigkeit wirkt in Takt `due`: Geschoss am Ziel, Hammer niedergesaust, Nova ausgelöst.
 struct PendingHit {
     due: u64,
-    /// Tier oder (bei `enemy`) Einheit der Festung
-    animal: u16,
-    enemy: bool,
+    art: Faehigkeit,
     by: PlayerId,
+    /// Wo die Figur stand bzw. das Geschoss losflog, und wohin sie zielte
     from: Vec3,
+    richtung: Vec3,
+    /// Einschlag (Geschoss) bzw. Mitte der Wirkung (um sich)
+    punkt: Vec3,
+    ziel: Option<Getroffen>,
 }
 
 pub struct Authority {
@@ -71,6 +86,10 @@ pub struct Authority {
     strassen_spieler: Vec<Option<String>>,
     /// Wer sein Startgold schon bekommen hat (nach Namen)
     startgold: BTreeSet<String>,
+    /// Siedlungsplätze mit eingesetztem Runenstein: wem sie gehören (je Straße)
+    runen: Vec<Option<String>>,
+    /// Zufall für Beute (Runenfragmente)
+    rng: Rng,
 }
 
 impl Authority {
@@ -91,6 +110,8 @@ impl Authority {
             ereignisse: Vec::new(),
             strassen_spieler: Vec::new(),
             startgold: BTreeSet::new(),
+            runen: Vec::new(),
+            rng: Rng::new(0xB0_07E),
         }
     }
 
@@ -139,11 +160,26 @@ impl Authority {
         world.advance_buildings(Physics::FIXED_DT);
         self.produce(world);
         world.think_animals(ctx);
+        self.heilen(ctx, world);
+        self.wildnis_takt(ctx, world);
         self.verteidigen(ctx, world);
         for strike in std::mem::take(&mut self.neue_strikes) {
             let entry = (strike.kind, strike.from, strike.target);
             self.strikes.push(entry);
             world.strikes.push(entry);
+            // Truppen der Festung, die einen Spieler angreifen, treffen ihn auch
+            if strike.ziel == Ziel::Spieler {
+                let naechster = world
+                    .players
+                    .iter()
+                    .filter(|(_, a)| !a.noclip && a.leben > 0.0)
+                    .map(|(&id, a)| (id, ctx.physics.character_position(a.character).distance(strike.target)))
+                    .filter(|&(_, d)| d < 4.0)
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                if let Some((id, _)) = naechster {
+                    self.spieler_schaden(ctx, world, id, strike.schaden * 0.5, strike.kind.label());
+                }
+            }
         }
         self.land_hits(ctx, world);
         if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
@@ -223,63 +259,268 @@ impl Authority {
         self.send_inventory(player, inventory);
     }
 
-    /// Ein Zauber Richtung `target`. Der Server rechnet selbst nach, was getroffen wird;
-    /// der Client liefert nur die Richtung (und höchstens `CAST_RANGE` weit).
+    /// Die Fähigkeit in der Hand Richtung `target`. Der Server rechnet selbst nach, was getroffen
+    /// wird; der Client liefert nur die Richtung. Abklingzeit, Reichweite und Wirkung stehen in
+    /// `faehigkeiten.rs`.
     fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
         let Some(avatar) = world.players.get_mut(&player) else { return };
-        if avatar.tool != Tool::Staff || ctx.time.tick < avatar.last_cast_tick + CAST_COOLDOWN_TICKS || !target.is_finite() {
+        let Tool::Faehigkeit(platz) = avatar.tool else { return };
+        let art = Faehigkeit::von(avatar.class, platz);
+        let fach = (platz as usize).min(2);
+        let bereit = avatar.abklingen[fach] == 0 || ctx.time.tick >= avatar.abklingen[fach] + art.abklingen();
+        if !bereit || avatar.leben <= 0.0 || !target.is_finite() {
             return;
         }
-        avatar.last_cast_tick = ctx.time.tick;
-        let Some(origin) = world.cast_origin(ctx, player, target) else { return };
-        let direction = (target - origin).normalize_or(Vec3::NEG_Z);
-        let range = origin.distance(target).min(CAST_RANGE) + 0.5;
-        let (mut point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
-        // Einheiten der Festung haben keine Kollision: eigener Strahltest
-        let mut target = animal.map(|a| (a, false));
-        if let Some((enemy, distance)) = world.heer.ray_hit(origin, direction, origin.distance(point)) {
-            point = origin + direction * distance;
-            target = Some((enemy, true));
-        }
-
-        world.cast_spell(ctx, player, origin, point, target.is_some(), true);
-        self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: target.is_some() });
-        if let Some((animal, enemy)) = target {
-            let flight = CAST_DELAY + origin.distance(point) / BOLT_SPEED;
-            let due = ctx.time.tick + (flight / Physics::FIXED_DT).round() as u64;
-            self.pending_hits.push(PendingHit { due, animal, enemy, by: player, from: origin });
+        avatar.abklingen[fach] = ctx.time.tick;
+        let center = ctx.physics.character_position(avatar.character);
+        let facing = avatar.facing;
+        let ausholen = (art.ausholen() / Physics::FIXED_DT).round() as u64;
+        match art.form() {
+            Form::Geschoss { tempo, .. } => {
+                let Some(origin) = world.cast_origin(ctx, player, target) else { return };
+                let direction = (target - origin).normalize_or(Vec3::NEG_Z);
+                let range = origin.distance(target).min(art.reichweite()) + 0.5;
+                let (mut point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
+                let mut ziel = animal.map(Getroffen::Tier);
+                // Einheiten der Festung und der Lager haben keine Kollision: eigene Strahltests
+                if let Some((enemy, distance)) = world.heer.ray_hit(origin, direction, origin.distance(point)) {
+                    point = origin + direction * distance;
+                    ziel = Some(Getroffen::Feind(enemy));
+                }
+                if let Some((wild, distance)) = world.wildnis.ray_hit(origin, direction, origin.distance(point)) {
+                    point = origin + direction * distance;
+                    ziel = Some(Getroffen::Wild(wild));
+                }
+                world.cast_spell(ctx, player, origin, point, ziel.is_some(), true, art);
+                self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: ziel.is_some(), art });
+                let flight = origin.distance(point) / tempo;
+                let due = ctx.time.tick + ausholen + (flight / Physics::FIXED_DT).round() as u64;
+                self.pending_hits.push(PendingHit { due, art, by: player, from: origin, richtung: direction, punkt: point, ziel });
+            }
+            Form::Nahkampf { weite, .. } => {
+                let zu = (target - center).with_y(0.0);
+                let richtung = if zu.length_squared() > 0.01 { zu.normalize() } else { vec3(facing.sin(), 0.0, -facing.cos()) };
+                let mitte = center + richtung * weite * 0.6;
+                world.cast_spell(ctx, player, center, mitte, false, true, art);
+                self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: mitte, hit: false, art });
+                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung, punkt: mitte, ziel: None });
+            }
+            Form::UmSich { .. } => {
+                let fuesse = center - Vec3::Y * 0.9;
+                world.cast_spell(ctx, player, center, fuesse, false, true, art);
+                self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: fuesse, hit: false, art });
+                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung: Vec3::NEG_Z, punkt: fuesse, ziel: None });
+            }
         }
     }
 
-    /// Zauber, die jetzt ankommen: Schaden, bei erlegten Tieren Beute für den Zaubernden.
+    /// Fähigkeiten, die jetzt wirken: Schaden an Tieren, Truppen der Festung und Lagerbewohnern,
+    /// bei erlegten Tieren Beute für den Spieler.
     fn land_hits(&mut self, ctx: &mut Context, world: &mut World) {
         let tick = ctx.time.tick;
         let (landed, waiting): (Vec<_>, Vec<_>) = self.pending_hits.drain(..).partition(|h| h.due <= tick);
         self.pending_hits = waiting;
         for hit in landed {
-            if hit.enemy {
-                let name = world.players.get(&hit.by).map(|a| player_key(&a.name)).unwrap_or_default();
-                let zauber = crate::heer::Hit { schaden: 20.0, art: crate::tuerme::DamageKind::Arcane, ..Default::default() };
-                world.heer.damage(hit.animal, zauber, Quelle { name: &name, turm: None });
-                continue;
-            }
-            let Some(animal) = world.animals.get_mut(hit.animal as usize) else { continue };
-            if !animal.is_alive() {
-                continue;
-            }
-            let kind = animal.kind;
-            let health = animal.hit(hit.from);
-            world.animal_hit(ctx, hit.animal, health, true);
-            self.broadcast(ServerMessage::AnimalHit { id: hit.animal, health, by: hit.by });
-            if health == 0 {
-                let inventory = world.inventories.entry(hit.by).or_default();
-                for &(item, amount) in kind.loot() {
-                    inventory.add_item(item, amount);
+            let art = hit.art;
+            let (bremse, stun, brand, dauer) = art.wirkung();
+            let schaden = art.schaden();
+            // Was getroffen wird
+            let mut tiere: Vec<u16> = Vec::new();
+            let mut feinde: Vec<u16> = Vec::new();
+            let mut wilde: Vec<u16> = Vec::new();
+            let lebende_tiere = || world.animals.iter().enumerate().filter(|(_, a)| a.is_alive());
+            match art.form() {
+                Form::Geschoss { flaeche, .. } if flaeche > 0.0 => {
+                    tiere = lebende_tiere().filter(|(_, a)| a.hit_sphere().0.distance(hit.punkt) <= flaeche + a.hit_sphere().1).map(|(i, _)| i as u16).collect();
+                    feinde = world.heer.within(hit.punkt, flaeche, crate::heer::Filter::ALLE);
+                    wilde = world.wildnis.within(hit.punkt, flaeche);
                 }
-                let inventory = *inventory;
-                self.send_inventory(hit.by, inventory);
+                Form::Geschoss { .. } => match hit.ziel {
+                    Some(Getroffen::Tier(id)) => tiere.push(id),
+                    Some(Getroffen::Feind(id)) => feinde.push(id),
+                    Some(Getroffen::Wild(id)) => wilde.push(id),
+                    None => {}
+                },
+                Form::Nahkampf { weite, winkel } => {
+                    let cos = winkel.to_radians().cos();
+                    tiere = lebende_tiere()
+                        .filter(|(_, a)| {
+                            let d = (a.hit_sphere().0 - hit.from).with_y(0.0);
+                            d.length() <= weite + a.hit_sphere().1 && d.normalize_or_zero().dot(hit.richtung) >= cos
+                        })
+                        .map(|(i, _)| i as u16)
+                        .collect();
+                    feinde = world.heer.im_kegel(hit.from, hit.richtung, weite, cos, crate::heer::Filter::NAHKAMPF).into_iter().map(|(id, _)| id).collect();
+                    wilde = world.wildnis.im_kegel(hit.from, hit.richtung, weite, cos);
+                }
+                Form::UmSich { radius } => {
+                    tiere = lebende_tiere().filter(|(_, a)| a.hit_sphere().0.distance(hit.punkt) <= radius + a.hit_sphere().1).map(|(i, _)| i as u16).collect();
+                    let filter = if art == Faehigkeit::Erdbeben { crate::heer::Filter::BODEN } else { crate::heer::Filter::ALLE };
+                    feinde = world.heer.within(hit.punkt, radius, filter);
+                    wilde = world.wildnis.within(hit.punkt, radius);
+                }
+            }
+            let name = world.players.get(&hit.by).map(|a| player_key(&a.name)).unwrap_or_default();
+            for id in feinde {
+                let treffer = crate::heer::Hit { schaden, art: art.art(), bremse, brand, dauer, stun, ..Default::default() };
+                world.heer.damage(id, treffer, Quelle { name: &name, turm: None });
+            }
+            for id in wilde {
+                world.wildnis.damage(id, Treffer { schaden, art: art.art(), bremse, stun, brand, dauer }, &name, Some(hit.by));
+            }
+            for id in tiere {
+                let Some(animal) = world.animals.get_mut(id as usize) else { continue };
+                if !animal.is_alive() {
+                    continue;
+                }
+                let kind = animal.kind;
+                let health = animal.hit(hit.from);
+                world.animal_hit(ctx, id, health, true);
+                self.broadcast(ServerMessage::AnimalHit { id, health, by: hit.by });
+                if health == 0 {
+                    let inventory = world.inventories.entry(hit.by).or_default();
+                    for &(item, amount) in kind.loot() {
+                        inventory.add_item(item, amount);
+                    }
+                    let inventory = *inventory;
+                    self.send_inventory(hit.by, inventory);
+                }
             }
         }
+    }
+
+    // ---------- Leben der Spieler, Wildnis, Runen ----------
+
+    /// Ein Spieler nimmt Schaden. Fällt er, steht er mit vollen Leben an seinem Startpunkt wieder
+    /// auf (vor der eigenen Dorfhalle, sonst im Startlager).
+    fn spieler_schaden(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, schaden: f32, von: &str) {
+        let Some(avatar) = world.players.get_mut(&player) else { return };
+        if avatar.noclip || avatar.leben <= 0.0 || schaden <= 0.0 {
+            return;
+        }
+        avatar.leben -= schaden;
+        avatar.getroffen = ctx.time.tick;
+        let wert = schaden.round().max(1.0) as u16;
+        world.spieler_getroffen(player, wert);
+        self.broadcast(ServerMessage::SpielerGetroffen { player, schaden: wert });
+        let Some(avatar) = world.players.get_mut(&player) else { return };
+        if avatar.leben > 0.0 {
+            return;
+        }
+        avatar.leben = avatar.max_leben();
+        let (character, name) = (avatar.character, avatar.name.clone());
+        let start = world.startpunkt(&name);
+        ctx.physics.teleport_character(character, start);
+        log::info!("{name} wurde von {von} besiegt");
+        world.spieler_gefallen(player, von);
+        self.broadcast(ServerMessage::SpielerGefallen { player, von: von.to_string() });
+    }
+
+    /// Wer eine Weile nicht getroffen wurde, heilt sich langsam.
+    fn heilen(&mut self, ctx: &Context, world: &mut World) {
+        for avatar in world.players.values_mut() {
+            if avatar.leben < avatar.max_leben() && ctx.time.tick > avatar.getroffen + HEILEN_NACH {
+                avatar.leben = (avatar.leben + avatar.max_leben() * HEILEN_ANTEIL * Physics::FIXED_DT).min(avatar.max_leben());
+            }
+        }
+    }
+
+    /// Ein Takt der Wildnis: Lagerbewohner bewegen sich und greifen an; Besiegte bringen Gold und
+    /// mit etwas Glück ein Runenfragment.
+    fn wildnis_takt(&mut self, ctx: &mut Context, world: &mut World) {
+        let spieler: Vec<(PlayerId, Vec3)> = world
+            .players
+            .iter()
+            .filter(|(_, a)| !a.noclip && a.leben > 0.0)
+            .map(|(&id, a)| (id, ctx.physics.character_position(a.character)))
+            .collect();
+        let terrain = &world.terrain;
+        let angriffe = world.wildnis.tick(Physics::FIXED_DT, &spieler, &|p| terrain.height_at(p.x, p.y));
+        for a in angriffe {
+            let entry = (a.kind, a.von, a.ziel);
+            self.strikes.push(entry);
+            world.strikes.push(entry);
+            self.spieler_schaden(ctx, world, a.spieler, a.schaden, a.kind.label());
+        }
+        world.wildnis.besetzt.clear();
+        for g in std::mem::take(&mut world.wildnis.gefallen) {
+            let mut beute = vec![(Item::Gold, crate::wildnis::gold(g.gefahr, g.anfuehrer))];
+            let fragment = self.rng.chance(crate::wildnis::fragment_chance(g.gefahr, g.anfuehrer));
+            if fragment {
+                beute.push((Item::Runenfragment, 1));
+            }
+            self.give(world, &g.von, &beute);
+            if fragment {
+                let wer = world.players.values().find(|a| player_key(&a.name) == g.von).map_or(g.von.clone(), |a| a.name.clone());
+                let text = format!("{wer} erbeutet ein Runenfragment ({}, {}).", g.kind.label(), g.lager);
+                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                self.broadcast(ServerMessage::Notice(text));
+                let ereignis = Ereignis::Heilung(g.ort + Vec3::Y);
+                world.ereignisse.push(ereignis);
+                self.ereignisse.push(ereignis);
+            }
+        }
+    }
+
+    /// Runen: am Runenbrunnen vier Fragmente zu einem Runenstein vereinen, einen Runenstein in
+    /// den Schutzstein eines freien Siedlungsplatzes setzen (dann gehört er dem Spieler).
+    pub fn runen(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, befehl: RunenBefehl) -> Result<(), String> {
+        let Some(avatar) = world.players.get(&player) else { return Err("Unbekannter Spieler".into()) };
+        let (key, name) = (player_key(&avatar.name), avatar.name.clone());
+        let ort = ctx.physics.character_position(avatar.character);
+        let flach = |a: Vec3, b: Vec3| vec2(a.x, a.z).distance(vec2(b.x, b.z));
+        match befehl {
+            RunenBefehl::Schmieden => {
+                if flach(ort, world.runenbrunnen) > RUNEN_REICHWEITE + 4.0 {
+                    return Err("Zu weit vom Runenbrunnen entfernt".into());
+                }
+                let inventory = world.inventories.entry(player).or_default();
+                if !inventory.remove_item(Item::Runenfragment, FRAGMENTE_JE_STEIN) {
+                    return Err(format!("Du brauchst {FRAGMENTE_JE_STEIN} Runenfragmente (Beute aus den Lagern der Wildnis)"));
+                }
+                inventory.add_item(Item::Runenstein, 1);
+                let inventory = *inventory;
+                self.send_inventory(player, inventory);
+                let text = format!("{name} vereint am Runenbrunnen vier Fragmente zu einem Runenstein!");
+                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                self.broadcast(ServerMessage::Notice(text));
+                let ereignis = Ereignis::Puls(world.runenbrunnen + Vec3::Y * 1.5, 8.0);
+                world.ereignisse.push(ereignis);
+                self.ereignisse.push(ereignis);
+            }
+            RunenBefehl::Einsetzen(platz) => {
+                let platz = platz as usize;
+                let Some(&stein) = world.schutzsteine.get(platz) else { return Err("Diesen Siedlungsplatz gibt es nicht".into()) };
+                if flach(ort, stein) > RUNEN_REICHWEITE + 4.0 {
+                    return Err("Zu weit vom Schutzstein entfernt".into());
+                }
+                self.runen.resize(world.schutzsteine.len(), None);
+                if let Some(besitzer) = &self.runen[platz] {
+                    return Err(if *besitzer == key { "Dieser Siedlungsplatz gehört dir schon".into() } else { format!("Dieser Siedlungsplatz gehört schon {besitzer}") });
+                }
+                if self.runen.iter().any(|r| r.as_deref() == Some(key.as_str())) {
+                    return Err("Du hast schon einen Siedlungsplatz".into());
+                }
+                let inventory = world.inventories.entry(player).or_default();
+                if !inventory.remove_item(Item::Runenstein, 1) {
+                    return Err("Du brauchst einen Runenstein (vier Runenfragmente am Runenbrunnen der Burg)".into());
+                }
+                let inventory = *inventory;
+                self.send_inventory(player, inventory);
+                self.runen[platz] = Some(key);
+                let strasse = world.heer.strassen_namen().get(platz).copied().unwrap_or("?");
+                let text = format!("{name} setzt einen Runenstein in den Schutzstein der Straße {strasse} – der Siedlungsplatz gehört jetzt {name}.");
+                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                self.broadcast(ServerMessage::Notice(text));
+                let ereignis = Ereignis::Puls(stein + Vec3::Y * 2.0, 10.0);
+                world.ereignisse.push(ereignis);
+                self.ereignisse.push(ereignis);
+                let stand = self.td_stand(world, false);
+                world.td_uebernehmen(stand);
+                self.save(world);
+            }
+        }
+        Ok(())
     }
 
     // ---------- Gebäude ----------
@@ -349,6 +590,17 @@ impl Authority {
             AdminCommand::SpringeZuWelle(w) => {
                 world.heer.clear();
                 world.heer.springe_zu_welle(w.min(200));
+            }
+            AdminCommand::Runenfragmente => {
+                let inventory = world.inventories.entry(player).or_default();
+                inventory.runenfragmente += FRAGMENTE_JE_STEIN;
+                let inventory = *inventory;
+                self.send_inventory(player, inventory);
+            }
+            AdminCommand::LagerNeu => {
+                let terrain = &world.terrain;
+                world.wildnis.alle_neu(&|p| terrain.height_at(p.x, p.y));
+                world.wildnis.besetzt.clear();
             }
         }
     }
@@ -462,6 +714,7 @@ impl Authority {
         world.ereignisse.extend(ereignisse.iter().copied());
         self.ereignisse.extend(ereignisse);
         world.feinde = world.heer.states();
+        world.feinde.extend(world.wildnis.states());
         let stand = self.td_stand(world, ctx.time.tick % 60 == 0);
         world.td_uebernehmen(stand);
     }
@@ -492,6 +745,7 @@ impl Authority {
             barrikaden: self.verteidigung.barrikaden(),
             turm_stats: if mit_stats { heer.turm_stats.iter().map(|(&id, &(s, k))| (id, k, s.round() as u32)).collect() } else { Vec::new() },
             beitrag: if mit_stats { heer.beitrag.iter().map(|(n, &(s, k))| (n.clone(), s.round() as u32, k)).collect() } else { Vec::new() },
+            runen: (0..world.schutzsteine.len()).map(|i| self.runen.get(i).cloned().flatten()).collect(),
         }
     }
 
@@ -747,6 +1001,7 @@ impl Authority {
         let mut builds = Vec::new();
         let mut admins = Vec::new();
         let mut changes: Vec<(ClientId, TdBefehl)> = Vec::new();
+        let mut runen: Vec<(ClientId, RunenBefehl)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -754,6 +1009,7 @@ impl Authority {
                     Some(ClientMessage::Build { kind, at, yaw }) => builds.push((id, kind, at, yaw)),
                     Some(ClientMessage::Admin(command)) => admins.push((id, command)),
                     Some(ClientMessage::Td(befehl)) => changes.push((id, befehl)),
+                    Some(ClientMessage::Runen(befehl)) => runen.push((id, befehl)),
                     _ => {}
                 }
             }
@@ -782,6 +1038,12 @@ impl Authority {
         }
         for (id, befehl) in changes {
             let result = self.td(ctx, world, id, befehl);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, befehl) in runen {
+            let result = self.runen(ctx, world, id, befehl);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }
@@ -826,6 +1088,16 @@ impl Authority {
         );
         self.inventories = save.inventories;
         self.startgold = save.startgold;
+        self.runen = save.runen;
+        // Ältere Stände: wer dort schon eine Dorfhalle hat, dem gehört der Siedlungsplatz
+        self.runen.resize(world.schutzsteine.len(), None);
+        for platz in 0..self.runen.len() {
+            if self.runen[platz].is_none() {
+                self.runen[platz] = world.dorfhalle_auf_platz(platz).map(|h| h.owner.clone());
+            }
+        }
+        let stand = self.td_stand(world, false);
+        world.td_uebernehmen(stand);
     }
 
     /// Gibt einem (wieder)kommenden Spieler sein altes Inventar zurück; wer zum ersten Mal da ist
@@ -852,6 +1124,7 @@ impl Authority {
         let Some(path) = &self.save_path else { return };
         let mut save = WorldSave::capture(world, self.tick, &self.inventories);
         save.startgold = self.startgold.clone();
+        save.runen = self.runen.clone();
         self.inventories = save.inventories.clone();
         match save.store(path) {
             Ok(()) => log::debug!("Spielstand gespeichert: {}", path.display()),
@@ -876,6 +1149,7 @@ impl Authority {
                     facing: avatar.facing,
                     last_input: self.clients.get(&id).map_or(0, |c| c.last_processed),
                     tool: avatar.tool,
+                    leben: avatar.leben.max(0.0).ceil() as u16,
                 }
             })
             .collect();
