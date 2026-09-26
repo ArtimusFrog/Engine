@@ -65,6 +65,8 @@ pub struct Playground {
     build_mode: Option<(crate::bauten::BuildingKind, f32)>,
     /// Bauplatz unter dem Fadenkreuz: Mitte, Drehung und ob (bzw. warum nicht) gebaut werden kann
     build_site: Option<(Vec2, f32, Result<f32, &'static str>)>,
+    /// Vorschaubilder der Gebäude (art/icons/bauten.py), beim ersten Öffnen geladen
+    build_icons: Option<std::collections::HashMap<crate::bauten::BuildingKind, egui::TextureHandle>>,
     /// Symbole und Zustand des Inventar-Fensters.
     inventory_ui: crate::inventar::InventoryUi,
     /// Gewählter Platz der Auswahlleiste (Werkzeug in der Hand).
@@ -131,6 +133,7 @@ impl Playground {
             build_menu_open: false,
             build_mode: None,
             build_site: None,
+            build_icons: None,
             inventory_ui: Default::default(),
             hotbar_slot: 0,
             chat: Default::default(),
@@ -338,6 +341,7 @@ impl Playground {
     fn build_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
         let inventory = self.session.as_ref().map(|s| s.local_inventory()).unwrap_or_default();
+        let icons = self.build_icons.get_or_insert_with(|| load_build_icons(egui_ctx)).clone();
         let mut chosen = None;
         let mut close = false;
         ui::center_panel(egui_ctx, "baumenue", 820.0, |ui| {
@@ -351,6 +355,10 @@ impl Playground {
                         ui.set_min_height(230.0);
                         ui.label(RichText::new(kind.label()).size(22.0).strong().color(ui::ACCENT));
                         ui.add_space(4.0);
+                        if let Some(icon) = icons.get(&kind) {
+                            let width = ui.available_width();
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(width, width * 0.5)));
+                        }
                         ui.label(RichText::new(kind.description()).size(14.0));
                         ui.add_space(8.0);
                         ui.label(RichText::new("Kosten").size(13.0).color(ui::TEXT.gamma_multiply(0.7)));
@@ -1435,4 +1443,30 @@ impl Game for Playground {
             }
         }
     }
+}
+
+/// Vorschaubilder für das Baumenü (`game/assets/icons/bau_<name>.png`); fehlende fallen weg.
+fn load_build_icons(ctx: &egui::Context) -> std::collections::HashMap<crate::bauten::BuildingKind, egui::TextureHandle> {
+    let mut icons = std::collections::HashMap::new();
+    let Some(dir) = crate::asset_files::asset_dir() else { return icons };
+    for kind in crate::bauten::BuildingKind::ALL {
+        let path = dir.join("icons").join(format!("bau_{}.png", kind.file_name()));
+        let mut image = match Image::load_png(&path) {
+            Ok(image) => image,
+            Err(message) => {
+                log::warn!("Vorschaubild fehlt: {message}");
+                continue;
+            }
+        };
+        // egui erwartet vormultiplizierte Farben
+        for pixel in image.rgba.chunks_exact_mut(4) {
+            let alpha = pixel[3] as f32 / 255.0;
+            for c in &mut pixel[..3] {
+                *c = (*c as f32 * alpha).round() as u8;
+            }
+        }
+        let color = egui::ColorImage::from_rgba_premultiplied([image.width as usize, image.height as usize], &image.rgba);
+        icons.insert(kind, ctx.load_texture(format!("bau_{}", kind.file_name()), color, egui::TextureOptions::LINEAR));
+    }
+    icons
 }
