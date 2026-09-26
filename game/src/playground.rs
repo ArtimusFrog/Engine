@@ -971,7 +971,9 @@ impl Playground {
                     } else {
                         Color32::from_rgb(235, 100, 90)
                     };
-                    ui.label(RichText::new(format!("{fps:.0} FPS")).size(14.0).strong().color(farbe));
+                    let scale = ctx.stats.render_scale;
+                    let text = if scale < 0.99 { format!("{fps:.0} FPS · 3D {:.0} %", scale * 100.0) } else { format!("{fps:.0} FPS") };
+                    ui.label(RichText::new(text).size(14.0).strong().color(farbe));
                     if let (Mode::Host { port }, Some(ip)) = (session.mode(), self.local_ip) {
                         ui.label(RichText::new(format!("Im Heimnetz: {ip}:{port}")).size(14.0).color(ui::TEXT.gamma_multiply(0.8)));
                     }
