@@ -80,11 +80,22 @@ pub struct Entity {
     pub material: Material,
     /// Hängt das Objekt an ein anderes: `transform` ist dann relativ zum Elternobjekt.
     pub parent: Option<EntityId>,
+    /// Knochenmatrizen für Meshes mit `MeshData::skin` (jedes Bild neu vom Animator).
+    pub joints: Vec<glam::Mat4>,
 }
 
 impl Entity {
     pub fn new(name: impl Into<String>, mesh: MeshId) -> Self {
-        Entity { name: name.into(), transform: Transform::default(), mesh, color: Vec4::ONE, visible: true, material: Material::Standard, parent: None }
+        Entity {
+            name: name.into(),
+            transform: Transform::default(),
+            mesh,
+            color: Vec4::ONE,
+            visible: true,
+            material: Material::Standard,
+            parent: None,
+            joints: Vec::new(),
+        }
     }
 
     pub fn with_transform(mut self, transform: Transform) -> Self {

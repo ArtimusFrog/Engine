@@ -9,7 +9,7 @@ use winit::window::Window;
 
 use crate::app::Context;
 use crate::assets::MeshId;
-use crate::mesh::Vertex;
+use crate::mesh::{SkinVertex, Vertex};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -17,6 +17,7 @@ const MAX_LIGHTS: usize = 8;
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 12 => Float32x2];
+const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![13 => Uint32x4, 14 => Float32x4];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
     7 => Float32x3, 8 => Float32x3, 9 => Float32x3,
@@ -71,6 +72,8 @@ pub struct RenderStats {
 
 struct GpuMesh {
     vertices: wgpu::Buffer,
+    /// Knochen und Gewichte je Eckpunkt (nur Figuren, die die Grafikkarte verformt)
+    skin: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     index_count: u32,
     version: u64,
@@ -90,6 +93,13 @@ pub(crate) struct Renderer {
     double_sided_pipeline: wgpu::RenderPipeline,
     shadow_cutout_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// Verformte Figuren: Bild und Schatten, dazu die Knochenmatrizen aller Figuren des Bildes
+    skinned_pipeline: wgpu::RenderPipeline,
+    skinned_shadow_pipeline: wgpu::RenderPipeline,
+    palette_layout: wgpu::BindGroupLayout,
+    palette_buffer: wgpu::Buffer,
+    palette_bind_group: wgpu::BindGroup,
+    palette_capacity: usize,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     shadow_bind_group: wgpu::BindGroup,
@@ -104,6 +114,8 @@ pub(crate) struct Renderer {
     adapter_name: String,
     ui: egui_wgpu::Renderer,
     stats: RenderStats,
+    /// Wartezeit auf die nächste Fläche der Grafikkarte beim letzten Bild (ms)
+    acquire_ms: f32,
 }
 
 impl Renderer {
@@ -371,6 +383,75 @@ impl Renderer {
             cache: None,
         });
 
+        // Verformte Figuren: zusätzlicher Eckpunktstrom (Knochen, Gewichte) und die Matrizen als
+        // Speicherpuffer in Gruppe 2.
+        let palette_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("knochen"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
+        let skinned_buffers = [
+            vertex_buffers[0].clone(),
+            vertex_buffers[1].clone(),
+            Some(wgpu::VertexBufferLayout { array_stride: size_of::<SkinVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &SKIN_ATTRIBUTES }),
+        ];
+        let skinned_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("verformt"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&palette_layout)],
+            immediate_size: 0,
+        });
+        let skinned_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("verformt"),
+            layout: Some(&skinned_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_skinned"), compilation_options: Default::default(), buffers: &skinned_buffers },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(config.format.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let skinned_shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("verformt schatten"),
+            bind_group_layouts: &[Some(&shadow_layout), Some(&texture_layout), Some(&palette_layout)],
+            immediate_size: 0,
+        });
+        let skinned_shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("verformt schatten"),
+            layout: Some(&skinned_shadow_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_shadow_skinned"), compilation_options: Default::default(), buffers: &skinned_buffers },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
+        let palette_capacity = 256;
+        let palette_buffer = Self::create_palette_buffer(&device, palette_capacity);
+        let palette_bind_group = Self::create_palette_bind_group(&device, &palette_layout, &palette_buffer);
+
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
             layout: Some(&pipeline_layout),
@@ -417,6 +498,12 @@ impl Renderer {
             double_sided_pipeline,
             shadow_cutout_pipeline,
             shadow_pipeline,
+            skinned_pipeline,
+            skinned_shadow_pipeline,
+            palette_layout,
+            palette_buffer,
+            palette_bind_group,
+            palette_capacity,
             globals_buffer,
             globals_bind_group,
             shadow_bind_group,
@@ -431,6 +518,7 @@ impl Renderer {
             adapter_name,
             ui,
             stats: RenderStats::default(),
+            acquire_ms: 0.0,
         }
     }
 
@@ -456,7 +544,10 @@ impl Renderer {
         if let Some(ui) = ui {
             self.upload_ui_textures(ui);
         }
-        let frame = match self.surface.get_current_texture() {
+        let acquire = std::time::Instant::now();
+        let current = self.surface.get_current_texture();
+        self.acquire_ms = acquire.elapsed().as_secs_f32() * 1000.0;
+        let frame = match current {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Dieses Bild noch zeigen, fürs nächste neu konfigurieren.
@@ -593,6 +684,10 @@ impl Renderer {
         let slots = ctx.assets.mesh_slots();
         let mut main_list: Vec<(MeshId, Instance)> = Vec::new();
         let mut shadow_list: Vec<(MeshId, Instance)> = Vec::new();
+        // Verformte Figuren gehen in eigene Listen; ihre Knochenmatrizen in `palette`
+        let mut skinned_main: Vec<(MeshId, Instance)> = Vec::new();
+        let mut skinned_shadow: Vec<(MeshId, Instance)> = Vec::new();
+        let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
         for (id, entity) in ctx.scene.iter_entities() {
             if !entity.visible {
                 continue;
@@ -620,12 +715,19 @@ impl Renderer {
                 continue;
             }
             let model = model.unwrap_or_else(|| entity.transform.matrix());
-            let item = (mesh, instance(model, entity.color, entity.material.shader_params()));
+            let gpu_skin = !entity.joints.is_empty() && self.meshes.get(mesh.0 as usize).is_some_and(|m| m.skin.is_some());
+            let mut params = entity.material.shader_params();
+            if gpu_skin {
+                params[3] = palette.len() as f32;
+                palette.extend(entity.joints.iter().map(|m| m.to_cols_array_2d()));
+            }
+            let item = (mesh, instance(model, entity.color, params));
+            let (main, shadow) = if gpu_skin { (&mut skinned_main, &mut skinned_shadow) } else { (&mut main_list, &mut shadow_list) };
             if seen {
-                main_list.push(item);
+                main.push(item);
             }
             if casts_shadow {
-                shadow_list.push(item);
+                shadow.push(item);
             }
         }
 
@@ -633,7 +735,17 @@ impl Renderer {
         let mut instances: Vec<Instance> = Vec::with_capacity(main_list.len() + shadow_list.len());
         let mut shadow_batches = batch(&mut shadow_list, &mut instances);
         let mut batches = batch(&mut main_list, &mut instances);
-        let drawn = main_list.len();
+        let skinned_shadow_batches = batch(&mut skinned_shadow, &mut instances);
+        let skinned_batches = batch(&mut skinned_main, &mut instances);
+        let drawn = main_list.len() + skinned_main.len();
+        if !palette.is_empty() {
+            if palette.len() > self.palette_capacity {
+                self.palette_capacity = palette.len().next_power_of_two();
+                self.palette_buffer = Self::create_palette_buffer(&self.device, self.palette_capacity);
+                self.palette_bind_group = Self::create_palette_bind_group(&self.device, &self.palette_layout, &self.palette_buffer);
+            }
+            self.queue.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(&palette));
+        }
 
         // Partikel als zwei eigene Stapel: kleine Würfel und runde Puffs
         for (round, mesh) in [(false, ctx.assets.cube()), (true, ctx.assets.sphere())] {
@@ -672,6 +784,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.shadow_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &shadow_batches, true);
+            self.draw_skinned(&mut pass, &skinned_shadow_batches, true);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -701,8 +814,12 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &batches, false);
+            self.draw_skinned(&mut pass, &skinned_batches, false);
         }
-        self.stats = RenderStats { instances: drawn, draw_calls: batches.len() + shadow_batches.len() };
+        self.stats = RenderStats {
+            instances: drawn,
+            draw_calls: batches.len() + shadow_batches.len() + skinned_batches.len() + skinned_shadow_batches.len(),
+        };
 
         // Benutzeroberfläche über die 3D-Szene legen.
         if let Some(ui) = ui {
@@ -740,6 +857,11 @@ impl Renderer {
 
     pub fn stats(&self) -> RenderStats {
         self.stats
+    }
+
+    /// Wie lange das letzte Bild auf eine freie Fläche der Grafikkarte gewartet hat (ms).
+    pub fn last_acquire_ms(&self) -> f32 {
+        self.acquire_ms
     }
 
     /// VSync an: Bildrate folgt dem Monitor, kein Tearing. Aus: so schnell wie möglich.
@@ -786,6 +908,51 @@ impl Renderer {
         }
     }
 
+    /// Zeichnet verformte Figuren (eigene Pipeline, Knochenmatrizen in Gruppe 2).
+    fn draw_skinned(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], shadow: bool) {
+        if batches.is_empty() {
+            return;
+        }
+        pass.set_pipeline(if shadow { &self.skinned_shadow_pipeline } else { &self.skinned_pipeline });
+        pass.set_bind_group(2, &self.palette_bind_group, &[]);
+        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        if shadow {
+            pass.set_bind_group(1, &self.white_texture, &[]);
+        }
+        for (mesh, instances) in batches {
+            let mesh = &self.meshes[*mesh];
+            let Some(skin) = &mesh.skin else { continue };
+            if mesh.index_count == 0 {
+                continue;
+            }
+            if !shadow {
+                let texture = mesh.texture.and_then(|t| self.textures.get(t.0 as usize)).unwrap_or(&self.white_texture);
+                pass.set_bind_group(1, texture, &[]);
+            }
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_vertex_buffer(2, skin.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, instances.clone());
+        }
+    }
+
+    fn create_palette_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("knochen"),
+            size: (capacity * 64) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn create_palette_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("knochen"),
+            layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
+        })
+    }
+
     /// Lädt neue und geänderte Meshes und Texturen auf die Grafikkarte.
     fn sync_assets(&mut self, assets: &crate::assets::Assets) {
         for image in &assets.textures()[self.textures.len()..] {
@@ -824,8 +991,10 @@ impl Renderer {
                 self.queue.write_buffer(&buffer, 0, bytes);
                 buffer
             };
+            let skin_bytes: &[u8] = bytemuck::cast_slice(&mesh.skin);
             let gpu = GpuMesh {
                 vertices: buffer(vertex_bytes, wgpu::BufferUsages::VERTEX),
+                skin: (!mesh.skin.is_empty()).then(|| buffer(skin_bytes, wgpu::BufferUsages::VERTEX)),
                 indices: buffer(index_bytes, wgpu::BufferUsages::INDEX),
                 index_count: mesh.indices.len() as u32,
                 version: slot.version,

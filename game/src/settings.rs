@@ -99,7 +99,9 @@ impl Settings {
     /// Überträgt die Einstellungen auf die Engine.
     pub fn apply(&self, ctx: &mut Context) {
         ctx.camera.fov_y = self.fov_degrees.clamp(50.0, 120.0).to_radians();
-        ctx.display = Display { fullscreen: self.fullscreen, vsync: self.vsync };
+        // `--ohne-vsync`: zum Messen der echten Bildrate (Screenshots, Leistungstests)
+        let vsync = self.vsync && !std::env::args().any(|a| a == "--ohne-vsync");
+        ctx.display = Display { fullscreen: self.fullscreen, vsync };
         ctx.audio.set_master_volume(self.volume_master);
         ctx.audio.set_volume(Bus::Effects, self.volume_effects);
         ctx.audio.set_volume(Bus::Ambient, self.volume_ambient);

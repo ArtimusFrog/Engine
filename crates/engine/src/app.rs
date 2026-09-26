@@ -168,6 +168,14 @@ pub struct FrameStats {
     pub fps: f32,
     pub frame_ms: f32,
     pub render: RenderStats,
+    /// Durchschnittliche Zeit je Bild (ms): feste Takte (Spiellogik + Physik), `Game::update`,
+    /// Oberfläche, Zeichnen auf der CPU (Auswahl, Hochladen) und Warten auf das nächste Bild
+    /// der Grafikkarte (hoch = die Grafikkarte ist der Engpass).
+    pub tick_ms: f32,
+    pub update_ms: f32,
+    pub ui_ms: f32,
+    pub render_ms: f32,
+    pub gpu_wait_ms: f32,
 }
 
 /// Alles, worauf das Spiel zugreifen kann.
@@ -317,6 +325,7 @@ pub fn run(config: EngineConfig, game: impl Game) {
         accumulator: 0.0,
         fps_timer: 0.0,
         fps_frames: 0,
+        profile: [0.0; 5],
         auto_screenshot: AutoScreenshot::from_args(),
     };
     // Das Fenster entsteht gleich im gewünschten Modus – kein Umschalten nach dem ersten Bild.
@@ -392,6 +401,8 @@ struct App {
     accumulator: f32,
     fps_timer: f32,
     fps_frames: u32,
+    /// Aufsummierte Zeiten seit der letzten Anzeige (tick, update, ui, render, warten)
+    profile: [f32; 5],
     auto_screenshot: Option<AutoScreenshot>,
 }
 
@@ -410,6 +421,7 @@ impl App {
         // langsamer Rechner immer weiter auf.
         self.accumulator += self.ctx.time.delta;
         let mut steps = 0;
+        let t0 = Instant::now();
         while self.accumulator >= Physics::FIXED_DT && steps < 5 {
             self.ctx.fixed_tick(self.game.as_mut());
             self.accumulator -= Physics::FIXED_DT;
@@ -423,7 +435,9 @@ impl App {
         if self.ctx.input.key_pressed(KeyCode::F3) {
             self.ctx.show_debug = !self.ctx.show_debug;
         }
+        let t1 = Instant::now();
         self.game.update(&mut self.ctx);
+        let t2 = Instant::now();
         let (listener, right) = (self.ctx.camera.position, self.ctx.camera.right());
         self.ctx.audio.update(listener, right);
 
@@ -462,7 +476,19 @@ impl App {
             self.applied_display = self.ctx.display;
         }
 
+        let t3 = Instant::now();
         renderer.render(&self.ctx, Some(&ui_frame));
+        let t4 = Instant::now();
+        let wait = renderer.last_acquire_ms();
+        for (slot, ms) in self.profile.iter_mut().zip([
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+            (t4 - t3).as_secs_f32() * 1000.0 - wait,
+            wait,
+        ]) {
+            *slot += ms;
+        }
 
         if self.ctx.input.key_pressed(KeyCode::F12) {
             let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -476,11 +502,16 @@ impl App {
             if self.ctx.time.frame + 1 >= shot.after_frames {
                 match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &shot.path) {
                     Ok(()) => println!(
-                        "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls)",
+                        "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls; ms: Takt {:.1}, Update {:.1}, UI {:.1}, Zeichnen {:.1}, Warten {:.1})",
                         shot.path.display(),
                         self.ctx.stats.fps,
                         self.ctx.stats.render.instances,
-                        self.ctx.stats.render.draw_calls
+                        self.ctx.stats.render.draw_calls,
+                        self.ctx.stats.tick_ms,
+                        self.ctx.stats.update_ms,
+                        self.ctx.stats.ui_ms,
+                        self.ctx.stats.render_ms,
+                        self.ctx.stats.gpu_wait_ms
                     ),
                     Err(e) => eprintln!("Screenshot fehlgeschlagen: {e}"),
                 }
@@ -494,6 +525,11 @@ impl App {
             let fps = self.fps_frames as f32 / self.fps_timer;
             self.ctx.stats.fps = fps;
             self.ctx.stats.frame_ms = 1000.0 / fps;
+            let n = self.fps_frames.max(1) as f32;
+            let [tick, update, ui_ms, render, wait] = self.profile.map(|ms| ms / n);
+            (self.ctx.stats.tick_ms, self.ctx.stats.update_ms, self.ctx.stats.ui_ms, self.ctx.stats.render_ms, self.ctx.stats.gpu_wait_ms) =
+                (tick, update, ui_ms, render, wait);
+            self.profile = [0.0; 5];
             let status = if self.ctx.status.is_empty() { String::new() } else { format!(" – {}", self.ctx.status) };
             window.set_title(&format!("{}{status}", self.config.title));
             self.fps_timer = 0.0;

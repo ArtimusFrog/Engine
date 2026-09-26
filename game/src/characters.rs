@@ -54,7 +54,6 @@ pub struct Puppet {
     /// Fehlt die Modelldatei, bleibt nur die (sichtbare) Kapsel.
     animator: Option<Animator>,
     figure: EntityId,
-    mesh: MeshId,
     last_position: Option<Vec3>,
     speed: f32,
     acting: bool,
@@ -71,7 +70,8 @@ impl Puppet {
             animator
         });
         let mesh = match &animator {
-            Some(animator) => ctx.assets.add_mesh(animator.skinned_mesh(None)),
+            // Ein gemeinsames Mesh für alle Spieler; die Grafikkarte verformt es je Figur.
+            Some(animator) => ctx.assets.named_mesh("figur_magier_gpu", || animator.model().skinned_gpu_mesh(None)),
             None => {
                 ctx.scene.get_mut(root).visible = true;
                 ctx.assets.cube()
@@ -83,8 +83,11 @@ impl Puppet {
                 .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
         );
         figure.visible = animator.is_some();
+        if let Some(animator) = &animator {
+            figure.joints = animator.palette();
+        }
         let figure = ctx.scene.spawn(figure);
-        let mut puppet = Puppet { animator, figure, mesh, last_position: None, speed: 0.0, acting: false, tool: None };
+        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None };
         puppet.set_tool(Tool::default());
         puppet
     }
@@ -153,6 +156,8 @@ impl Puppet {
             }
         }
         animator.update(dt);
-        ctx.assets.update_mesh(self.mesh, animator.skinned_mesh(None));
+        if let Some(figure) = ctx.scene.try_get_mut(self.figure) {
+            figure.joints = animator.palette();
+        }
     }
 }

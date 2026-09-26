@@ -377,9 +377,11 @@ impl Playground {
 
     fn update_camera(&mut self, ctx: &mut Context) {
         let Some(session) = &self.session else {
-            // Hauptmenü: Kamera kreist langsam hoch über der Insel
+            // Hauptmenü: Kamerafahrten um die Schattenfestung und andere Orte
             if let Some(title) = &self.title {
-                title.camera(ctx);
+                if let Some(world) = &self.menu_world {
+                    title.camera(ctx, world);
+                }
             }
             return;
         };
@@ -899,7 +901,7 @@ impl Game for Playground {
             self.chat.push(ChatLine { from: Some(0), name: self.settings.name.clone(), text: "Im Gebirge im Norden, schau auf die Karte (M)".into() }, now);
             self.chat.push(ChatLine { from: Some(7), name: "Mira".into(), text: "Danke, bin unterwegs!".into() }, now);
             self.chat.start_typing();
-            self.chat.prefill("Treffen wir uns am Bergsee?");
+            self.chat.prefill("Treffen wir uns an der Festung?");
             self.refresh_cursor(ctx);
         }
         if args.iter().any(|a| a == "--demo-kristall") {
@@ -1052,7 +1054,6 @@ impl Game for Playground {
             if let (Some(at), Some(local)) = (target, session.local_player()) {
                 let ground = world.terrain.height_at(at.x, at.y);
                 let mut away = (vec2(world.spawn.x, world.spawn.z) - at).normalize_or(Vec2::Y);
-                // Den Wasserfall von bachabwärts ansehen (vom Startplatz aus verdecken ihn Hügel)
                 // Den See vom Steg aus zeigen (Figur auf dem Steg, Blick über das Wasser)
                 if name.contains("see") {
                     if let Some(&(_, base, _)) = world.places.boats.first() {
@@ -1060,17 +1061,20 @@ impl Game for Playground {
                         away = -to_lake;
                     }
                 }
-                if let (true, Some((top, foot))) = (name.contains("wasserfall"), world.places.waterfall) {
-                    away = (vec2(foot.x - top.x, foot.z - top.z)).normalize_or(Vec2::Y);
-                    away = (away + away.perp() * 0.35).normalize();
-                }
                 let mut stand = at + away * distance;
                 // Nicht im Wasser stehen: notfalls näher heran
                 while world.terrain.height_at(stand.x, stand.y) < 0.5 && stand.distance(at) > 3.0 {
                     stand -= away;
                 }
                 if let Some(character) = world.players.get(&local).map(|a| a.character) {
-                    let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+                    // Auf die feste Fläche knapp über dem Gelände stellen (Rampen, Burgböden) –
+                    // nicht aufs Dach von Hallen –, sonst aufs Gelände
+                    let top = world.terrain.height_at(stand.x, stand.y) + 12.0;
+                    let y = ctx
+                        .physics
+                        .raycast(vec3(stand.x, top, stand.y), Vec3::NEG_Y, 40.0, Some(character))
+                        .map(|(_, d)| top - d + 1.0)
+                        .unwrap_or(world.terrain.height_at(stand.x, stand.y) + 1.0);
                     ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
                 }
                 self.demo_crystal = Some(Some(vec3(at.x, ground + 1.5, at.y)));
@@ -1131,7 +1135,7 @@ impl Game for Playground {
                     session.world_mut().play_action(local, crate::characters::Action::Chop);
                 }
             }
-            session.world_mut().update_visuals(ctx);
+            crate::messung::messen("welt", || session.world_mut().update_visuals(ctx));
             self.chat.collect(session.world_mut(), ctx.time.elapsed);
             if std::mem::take(&mut self.demo_map_near) {
                 let spawn = session.world().spawn;
@@ -1140,7 +1144,8 @@ impl Game for Playground {
         } else if let Some(world) = &mut self.menu_world {
             world.update_visuals(ctx);
         }
-        self.update_camera(ctx);
+        crate::messung::messen("kamera", || self.update_camera(ctx));
+        let _klang = std::time::Instant::now();
         if let Some(sounds) = &mut self.sounds {
             if let Some(session) = &mut self.session {
                 let inventory = session.local_inventory();
@@ -1151,7 +1156,8 @@ impl Game for Playground {
                 sounds.menu(ctx);
             }
         }
-        self.update_aim(ctx);
+        crate::messung::eintragen("klang", _klang);
+        crate::messung::messen("zielen", || self.update_aim(ctx));
         ctx.status = self.status_text();
         if let Some(session) = &self.session {
             ctx.debug_lines.push(format!("Spieler: {}  Objekte: {}", session.world().players.len(), session.world().objects.len()));

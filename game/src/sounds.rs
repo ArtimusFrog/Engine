@@ -19,8 +19,6 @@ pub struct Sounds {
     crackle: SoundId,
     thunder: SoundId,
     rain: LoopId,
-    /// Rauschen des Wasserfalls (am Ort)
-    waterfall: LoopId,
     /// Musik für die Nacht und den Zauberwald (die Tagesmusik ist `music`)
     music_night: LoopId,
     music_magic: LoopId,
@@ -40,73 +38,9 @@ pub struct Sounds {
     impact: SoundId,
     pickup: SoundId,
     wind: LoopId,
-    waves: LoopId,
-    /// Wo das offene Meer ist (einmal aus der Landschaft berechnet)
-    meer: Option<Meer>,
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
-}
-
-/// Welche Stellen zum offenen Meer gehören: Wasser, das mit dem Rand der Landschaft zusammenhängt
-/// und nicht tief im Inland liegt. Seen, Bäche und Senken zählen nicht.
-struct Meer {
-    ursprung: Vec2,
-    zelle: f32,
-    n: usize,
-    maske: Vec<bool>,
-}
-
-impl Meer {
-    fn neu(terrain: &Terrain) -> Meer {
-        let zelle = 6.0;
-        let groesse = terrain.size();
-        let n = (groesse / zelle) as usize;
-        let ursprung = terrain.center() - Vec2::splat(groesse / 2.0);
-        let wasser: Vec<bool> = (0..n * n)
-            .map(|i| {
-                let (x, z) = ((i % n) as f32 + 0.5, (i / n) as f32 + 0.5);
-                terrain.height_at(ursprung.x + x * zelle, ursprung.y + z * zelle) < 0.0
-            })
-            .collect();
-        let mut maske = vec![false; n * n];
-        let mut offen = std::collections::VecDeque::new();
-        for k in 0..n {
-            for i in [k, (n - 1) * n + k, k * n, k * n + n - 1] {
-                if wasser[i] && !maske[i] {
-                    maske[i] = true;
-                    offen.push_back(i);
-                }
-            }
-        }
-        while let Some(i) = offen.pop_front() {
-            let (x, z) = (i % n, i / n);
-            for (dx, dz) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                let (nx, nz) = (x as i32 + dx, z as i32 + dz);
-                if nx < 0 || nz < 0 || nx >= n as i32 || nz >= n as i32 {
-                    continue;
-                }
-                let j = nz as usize * n + nx as usize;
-                if wasser[j] && !maske[j] {
-                    maske[j] = true;
-                    offen.push_back(j);
-                }
-            }
-        }
-        Meer { ursprung, zelle, n, maske }
-    }
-
-    fn ist_meer(&self, p: Vec2) -> bool {
-        // Tief im Inland ist es nie das Meer (auch wenn eine Senke dorthin reicht)
-        if p.length() < crate::island::ISLAND_RADIUS * 0.45 {
-            return false;
-        }
-        let q = (p - self.ursprung) / self.zelle;
-        if q.x < 0.0 || q.y < 0.0 || q.x >= self.n as f32 || q.y >= self.n as f32 {
-            return true;
-        }
-        self.maske[q.y as usize * self.n + q.x as usize]
-    }
 }
 
 /// Startet das Laden der Menümusik in einem eigenen Thread (sie ist ein ganzes Musikstück).
@@ -141,7 +75,6 @@ impl Sounds {
     pub fn new(ctx: &mut Context) -> Sounds {
         let a = &mut ctx.audio;
         let wind = sound(a, "wind", wind);
-        let waves = sound(a, "wellen", waves);
         let music = sound(a, "musik", music);
         Sounds {
             chop: sound(a, "hacken", chop),
@@ -151,10 +84,6 @@ impl Sounds {
             rock_breaks: sound(a, "fels_bricht", rock_breaks),
             crackle: sound(a, "knistern", crackle),
             thunder: sound(a, "donner", thunder),
-            waterfall: {
-                let s = sound(a, "wasserfall", waterfall);
-                a.start_loop(s, Bus::Ambient)
-            },
             music_night: {
                 let s = sound(a, "musik_nacht", music_night);
                 a.start_loop(s, Bus::Music)
@@ -179,8 +108,6 @@ impl Sounds {
             impact: sound(a, "treffer", impact),
             pickup: sound(a, "einsammeln", pickup),
             wind: a.start_loop(wind, Bus::Ambient),
-            waves: a.start_loop(waves, Bus::Ambient),
-            meer: None,
             music: a.start_loop(music, Bus::Music),
             rng: Rng::new(99),
             last_items: None,
@@ -269,47 +196,30 @@ impl Sounds {
         self.ambience(ctx, world);
     }
 
-    /// Wind je nach Höhe, Wellen nur direkt am Wasser, Wasserfall aus der Nähe, Möwen, Wölfe, Musik.
+    /// Wind je nach Höhe, Regen, Möwen, Wölfe, Musik (kein Meeresrauschen mehr).
     fn ambience(&mut self, ctx: &mut Context, world: &World) {
         let camera = ctx.camera.position;
         let terrain = &world.terrain;
         let daylight = (world.day.sun_direction().y * 3.0 + 0.3).clamp(0.0, 1.0);
 
-        // Nächstes Meer in der Nähe suchen (grob, 16 Richtungen) – Wellen hört man nur direkt an der
-        // Küste, nicht an Seen, Bächen oder Senken im Inland.
-        let meer = self.meer.get_or_insert_with(|| Meer::neu(terrain));
-        let mut water: Option<(f32, Vec3)> = None;
-        for ring in [4.0, 9.0, 15.0, 22.0] {
-            for i in 0..16 {
-                let dir = Vec2::from_angle(i as f32 / 16.0 * std::f32::consts::TAU);
-                let p = vec2(camera.x, camera.z) + dir * ring;
-                if meer.ist_meer(p) && water.is_none_or(|(d, _)| ring < d) {
-                    water = Some((ring, vec3(p.x, 0.0, p.y)));
+        // Meer in der Nähe (für die Möwen): im Inland liegt das Gelände nie unter dem Meeresspiegel
+        let mut shore_at: Option<Vec3> = None;
+        'suche: for ring in [10.0, 25.0, 45.0] {
+            for i in 0..12 {
+                let p = vec2(camera.x, camera.z) + Vec2::from_angle(i as f32 / 12.0 * std::f32::consts::TAU) * ring;
+                if terrain.height_at(p.x, p.y) < 0.0 {
+                    shore_at = Some(vec3(p.x, 0.0, p.y));
+                    break 'suche;
                 }
             }
-            if water.is_some() {
-                break;
-            }
         }
-        let over_water = meer.ist_meer(vec2(camera.x, camera.z));
-        let (shore, shore_at) = match water {
-            _ if over_water => (1.0, None),
-            Some((distance, at)) => (1.0 - distance / 28.0, Some(at)),
-            None => (0.0, None),
-        };
 
         // Wind: am Boden kaum hörbar, erst hoch oben (Gebirge, Türme) deutlicher
         let ueber_boden = (camera.y - terrain.height_at(camera.x, camera.z).max(0.0)).max(0.0);
         let wind = 0.05 + ((ueber_boden - 4.0) / 60.0).clamp(0.0, 0.15) + ((camera.y - 28.0) / 80.0).clamp(0.0, 0.25);
         ctx.audio.set_loop(self.wind, wind, None, 1.0);
-        ctx.audio.set_loop(self.waves, shore.clamp(0.0, 1.0) * 0.4, shore_at, 25.0);
         let rain = world.weather.state().rain;
         ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
-        // Wasserfall: Rauschen am Fuß, nur aus der Nähe zu hören
-        match world.places.waterfall {
-            Some((_, foot)) => ctx.audio.set_loop(self.waterfall, 0.85, Some(foot), 25.0),
-            None => ctx.audio.set_loop(self.waterfall, 0.0, None, 1.0),
-        }
 
         // Möwen rufen tagsüber an der Küste
         let dt = ctx.time.delta;
@@ -353,7 +263,7 @@ impl Sounds {
     pub fn menu(&mut self, ctx: &mut Context) {
         self.menu_music(ctx, 0.75);
         ctx.audio.set_loop(self.wind, 0.15, None, 1.0);
-        for quiet in [self.waves, self.rain, self.waterfall, self.music_night, self.music_magic] {
+        for quiet in [self.rain, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }
         ctx.audio.set_loop(self.music, if self.has_menu_music() { 0.0 } else { 0.5 }, None, 1.0);
@@ -426,22 +336,6 @@ fn rock_breaks() -> SoundBuffer {
         let grit = if pebbles.next() > 0.93 { pebbles.next() * envelope(t, 0.05, 0.4) * 0.6 } else { 0.0 };
         rumble + grit + sine(t, 60.0) * envelope(t, 0.005, 0.15) * 0.6
     })
-}
-
-/// Wasserfall: breites, kräftiges Rauschen, tief und hell gemischt (Schleife).
-fn waterfall() -> SoundBuffer {
-    let mut noise = Noise::new(41);
-    let mut low = LowPass::default();
-    let mut mid = LowPass::default();
-    let mut buffer = render(6.0, |t| {
-        let n = noise.next();
-        let deep = low.next(n, 0.04) * 3.0;
-        let body = mid.next(n, 0.25) * 0.8;
-        let splash = (n - mid.next(n, 0.25)) * 0.25;
-        (deep + body + splash) * (0.9 + 0.1 * (t * 1.7).sin())
-    });
-    make_loopable(&mut buffer, 1.0);
-    buffer
 }
 
 /// Möwe: zwei, drei schrille, abfallende Rufe.
@@ -610,19 +504,6 @@ fn wind() -> SoundBuffer {
     buffer
 }
 
-/// Wellen: Brandung rollt heran und zieht sich zurück.
-fn waves() -> SoundBuffer {
-    let mut noise = Noise::new(8);
-    let mut lp = LowPass::default();
-    let mut buffer = render(14.0, |t| {
-        let phase = (t / 4.6).fract();
-        let swell = (phase * std::f32::consts::PI).sin().powf(3.0) * (0.8 + 0.2 * (t * 0.3).sin());
-        lp.next(noise.next(), 0.04 + swell * 0.12) * (0.15 + swell) * 1.8
-    });
-    make_loopable(&mut buffer, 1.5);
-    buffer
-}
-
 /// Ruhige Musik: weiche Akkorde (Flächen) und eine gezupfte Pentatonik-Melodie.
 fn music() -> SoundBuffer {
     // Akkordfolge in D-Dur: D – Hm – G – A, je 6 Sekunden.
@@ -663,14 +544,13 @@ fn music() -> SoundBuffer {
 /// Schreibt alle erzeugten Klänge als WAV-Dateien (zum Anhören und Vergleichen):
 /// `game --klaenge-exportieren <ordner>`.
 pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let all: [(&str, fn() -> SoundBuffer); 19] = [
+    let all: [(&str, fn() -> SoundBuffer); 17] = [
         ("hacken", chop),
         ("stein", stone),
         ("erz", ore),
         ("knistern", crackle),
         ("donner", thunder),
         ("regen", rain),
-        ("wasserfall", waterfall),
         ("moewe", gull),
         ("wolfsgeheul", howl),
         ("musik_nacht", music_night),
@@ -681,7 +561,6 @@ pub fn export_all(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathB
         ("treffer", impact),
         ("einsammeln", pickup),
         ("wind", wind),
-        ("wellen", waves),
         ("musik", music),
     ];
     std::fs::create_dir_all(dir)?;
@@ -725,13 +604,12 @@ mod tests {
 
     #[test]
     fn klaenge_sind_hoerbar_und_uebersteuern_nicht() {
-        let all: [(&str, SoundBuffer); 7] = [
+        let all: [(&str, SoundBuffer); 6] = [
             ("hacken", chop()),
             ("stein", stone()),
             ("baum_faellt", tree_falls()),
             ("fels_bricht", rock_breaks()),
             ("wind", wind()),
-            ("wellen", waves()),
             ("musik", music()),
         ];
         for (name, mut buffer) in all {
@@ -748,18 +626,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod meer_test {
-    use super::*;
-
-    #[test]
-    fn wellen_nur_am_offenen_meer() {
-        let mut ctx = Context::headless();
-        let world = crate::world::World::new(&mut ctx);
-        let meer = Meer::neu(&world.terrain);
-        let r = crate::island::ISLAND_RADIUS;
-        assert!(meer.ist_meer(vec2(0.0, r * 1.2)), "draußen vor der Küste ist Meer");
-        assert!(!meer.ist_meer(crate::island::lake().0), "der Bergsee ist kein Meer");
-        assert!(!meer.ist_meer(vec2(40.0, 30.0)), "die Senke an der Festung ist kein Meer");
-    }
-}

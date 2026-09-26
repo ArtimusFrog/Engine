@@ -3,6 +3,7 @@
 //! Alles entsteht aus einem Startwert. Server und Clients bauen die Insel unabhängig
 //! voneinander und erhalten exakt dieselbe Welt – übertragen werden nur Änderungen.
 
+use engine::mesh::Vertex;
 use engine::noise::{fbm, hash01, ridged, Rng};
 use engine::prelude::*;
 
@@ -15,15 +16,9 @@ pub const SEED: u32 = 20_260_924;
 pub const WORLD_ID: u32 = SEED + 8;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 760.0;
-/// Maßstab gegenüber der ersten, kleineren Insel (330 m): Bach und See wachsen mit.
-const SCALE: f32 = ISLAND_RADIUS / 330.0;
 const TERRAIN_SIZE: f32 = 2040.0;
 /// 3 m je Zelle
 const TERRAIN_CELLS: usize = 680;
-/// Bergsee im Westen: Mitte, Radius der Wasserfläche und Höhe des Wasserspiegels.
-const LAKE_CENTER: Vec2 = vec2(-0.42 * ISLAND_RADIUS, 0.12 * ISLAND_RADIUS);
-const LAKE_RADIUS: f32 = 38.0 * SCALE;
-const LAKE_LEVEL: f32 = 6.0;
 /// Um den Startpunkt bleibt eine Lichtung frei.
 const SPAWN_CLEARING: f32 = 12.0;
 
@@ -83,9 +78,8 @@ pub const MAP_EXTENT: f32 = ISLAND_RADIUS * 1.08;
 const MAP_SIZE: usize = 2048;
 
 /// Orte, die auf der Karte beschriftet werden.
-pub fn landmarks() -> [(&'static str, Vec2); 4] {
+pub fn landmarks() -> [(&'static str, Vec2); 3] {
     [
-        ("Bergsee", LAKE_CENTER),
         (FESTUNG_NAME, Vec2::ZERO),
         (BURG_NAME, BURG_ORT),
         ("Nebelgebirge", vec2(0.05 * ISLAND_RADIUS, -0.62 * ISLAND_RADIUS)),
@@ -109,11 +103,7 @@ fn map_image(terrain: &Terrain, paths: &Paths, trees: &[Vec2]) -> Image {
                     let p = Vec2::splat(-MAP_EXTENT) + (vec2(x as f32, z as f32) + 0.5) * texel;
                     let h = terrain.height_at(p.x, p.y);
                     let n = terrain.normal_at(p.x, p.y);
-                    let linear = if in_lake(p) && h < LAKE_LEVEL {
-                        vec3(0.08, 0.3, 0.42)
-                    } else if stream_distance(p) < STREAM_BED + 0.5 {
-                        vec3(0.1, 0.36, 0.48)
-                    } else if h < 0.0 {
+                    let linear = if h < 0.0 {
                         vec3(0.2, 0.5, 0.58).lerp(vec3(0.05, 0.19, 0.32), smoothstep(0.0, 9.0, -h))
                     } else {
                         // Gelände: Farbe wie im Spiel, von Nordwesten beleuchtet, mit Höhenlinien
@@ -186,265 +176,6 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Der Silberbach: von der Quelle im Nebelgebirge durch ein Hochtal, über eine Felsstufe
-/// (Wasserfall zwischen Punkt 2 und 3) und durch die Ebene in den Bergsee.
-const STREAM: [Vec2; 7] = [
-    vec2(-120.0 * SCALE, -145.0 * SCALE),
-    vec2(-128.0 * SCALE, -118.0 * SCALE),
-    vec2(-134.0 * SCALE, -92.0 * SCALE),
-    vec2(-138.0 * SCALE, -70.0 * SCALE),
-    vec2(-140.0 * SCALE, -45.0 * SCALE),
-    vec2(-141.0 * SCALE, -18.0 * SCALE),
-    vec2(-139.0 * SCALE, 8.0 * SCALE),
-];
-/// Abschnitt mit dem Wasserfall (von STREAM[i] nach STREAM[i+1]) und wo darin die Kante liegt.
-const WATERFALL_SEGMENT: usize = 2;
-const WATERFALL_EDGE: f32 = 0.55;
-/// Halbe Breite des flachen Bachbetts und bis wohin die Ufer reichen.
-const STREAM_BED: f32 = 1.8;
-const STREAM_BANK: f32 = 6.5;
-/// Wasser über dem Bachbett.
-const STREAM_DEPTH: f32 = 0.55;
-
-/// Abstand zwischen zwei Messpunkten des Bachbetts (Meter).
-const STREAM_STEP: f32 = 1.5;
-
-/// Länge bis zum Anfang jedes Abschnitts von STREAM (und die Gesamtlänge am Ende).
-fn stream_lengths() -> [f32; 7] {
-    let mut lengths = [0.0; 7];
-    for i in 1..STREAM.len() {
-        lengths[i] = lengths[i - 1] + STREAM[i].distance(STREAM[i - 1]);
-    }
-    lengths
-}
-
-/// Punkt auf der Mittellinie nach `s` Metern.
-fn stream_point(s: f32) -> Vec2 {
-    let lengths = stream_lengths();
-    let i = (1..STREAM.len()).find(|&i| lengths[i] >= s).unwrap_or(STREAM.len() - 1) - 1;
-    let u = ((s - lengths[i]) / (lengths[i + 1] - lengths[i])).clamp(0.0, 1.0);
-    STREAM[i] + (STREAM[i + 1] - STREAM[i]) * u
-}
-
-/// Höhe des Bachbetts alle `STREAM_STEP` Meter: folgt dem tiefsten Gelände (natürliche Höhe
-/// minus 1,2 m), fällt aber stetig; an der Wasserfallkante 5 m tiefer; nie unter den See.
-fn stream_beds() -> &'static Vec<f32> {
-    static BEDS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    BEDS.get_or_init(|| {
-        let lengths = stream_lengths();
-        let total = lengths[STREAM.len() - 1];
-        let edge = lengths[WATERFALL_SEGMENT] + (lengths[WATERFALL_SEGMENT + 1] - lengths[WATERFALL_SEGMENT]) * WATERFALL_EDGE;
-        let count = (total / STREAM_STEP).ceil() as usize + 1;
-        let lowest = LAKE_LEVEL - 0.6;
-        let mut beds: Vec<f32> = Vec::with_capacity(count);
-        for k in 0..count {
-            let s = (k as f32 * STREAM_STEP).min(total);
-            let mut bed = height_raw(stream_point(s)) - 1.2;
-            if let Some(&previous) = beds.last() {
-                let falls_over_edge = s >= edge && s - STREAM_STEP < edge;
-                bed = bed.min(previous - if falls_over_edge { 5.0 } else { 0.05 });
-            }
-            beds.push(bed.max(lowest));
-        }
-        // Zum See hin sanft auslaufen
-        if let Some(last) = beds.last_mut() {
-            *last = lowest;
-        }
-        beds
-    })
-}
-
-/// Wo liegt `p` zum Bach? Abstand zur Mittellinie, Abschnitt und Lage darin (0..1).
-fn stream_nearest(p: Vec2) -> (f32, usize, f32) {
-    let mut best = (f32::MAX, 0, 0.0);
-    for i in 0..STREAM.len() - 1 {
-        let (a, b) = (STREAM[i], STREAM[i + 1]);
-        let ab = b - a;
-        let u = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
-        let d = p.distance(a + ab * u);
-        if d < best.0 {
-            best = (d, i, u);
-        }
-    }
-    best
-}
-
-/// Höhe des Bachbetts im Abschnitt `i` an der Stelle `u`.
-fn stream_bed(i: usize, u: f32) -> f32 {
-    let lengths = stream_lengths();
-    let s = lengths[i] + (lengths[i + 1] - lengths[i]) * u;
-    let beds = stream_beds();
-    let x = s / STREAM_STEP;
-    let k = (x.floor() as usize).min(beds.len() - 2);
-    let f = (x - k as f32).clamp(0.0, 1.0);
-    beds[k] + (beds[k + 1] - beds[k]) * f
-}
-
-/// Der Bach im Spiel: Wasseroberfläche und Wasserfall-Vorhang (nur mit Fenster), eine Brücke
-/// dort, wo ein Pfad ihn kreuzt, Namen für die Karte. Liefert Sperrzonen für Bäume.
-fn build_stream(ctx: &mut Context, terrain: &Terrain, paths: &Paths, places: &mut crate::orte::Places) -> Vec<(Vec2, f32)> {
-    let lengths = stream_lengths();
-    let total = lengths[STREAM.len() - 1];
-    let edge = lengths[WATERFALL_SEGMENT] + (lengths[WATERFALL_SEGMENT + 1] - lengths[WATERFALL_SEGMENT]) * WATERFALL_EDGE;
-    let (top, foot) = waterfall();
-    places.waterfall = Some((top, foot));
-    places.labels.push(("Wasserfall", vec2(foot.x, foot.z) + (vec2(foot.x, foot.z) - vec2(top.x, top.z)).normalize_or(Vec2::Y) * 4.0));
-    places.labels.push(("Silberbach", stream_point(total * 0.78) + vec2(9.0, 0.0)));
-    let water_at = |s: f32| {
-        let p = stream_point(s);
-        let (_, i, u) = stream_nearest(p);
-        vec3(p.x, stream_bed(i, u) + STREAM_DEPTH, p.y)
-    };
-    let across = |s: f32| {
-        let ahead = stream_point((s + 1.0).min(total)) - stream_point((s - 1.0).max(0.0));
-        let side = ahead.normalize_or(Vec2::X).perp();
-        vec3(side.x, 0.0, side.y)
-    };
-
-    if !ctx.is_headless() {
-        // Wasserband: oberhalb und unterhalb des Wasserfalls
-        let half = STREAM_BED + 0.7;
-        let mut water = MeshData { double_sided: true, ..Default::default() };
-        for (from, to) in [(0.0, edge - STREAM_STEP), (edge + STREAM_STEP, total)] {
-            let mut s = from;
-            while s < to {
-                let next = (s + 1.0).min(to);
-                let (a, b) = (water_at(s), water_at(next));
-                let (sa, sb) = (across(s) * half, across(next) * half);
-                water.push_triangle(a - sa, b - sb, a + sa, Vec3::ONE);
-                water.push_triangle(a + sa, b - sb, b + sb, Vec3::ONE);
-                s = next;
-            }
-        }
-        let mesh = ctx.assets.add_mesh(water);
-        ctx.scene.spawn(Entity::new("Silberbach", mesh).with_material(Material::Water));
-
-        // Wasserfall: einzelne Wasserstränge (schmale Bänder mit Lücken), oben bläulich und klar,
-        // nach unten weiß aufgeschäumt; leicht nach vorne gewölbt, von beiden Seiten sichtbar.
-        let mut curtain = MeshData { double_sided: true, ..Default::default() };
-        let side = across(edge);
-        let forward = (foot - top).with_y(0.0).normalize_or(Vec3::X);
-        let width = STREAM_BED;
-        let strands = 11;
-        let rows = 12;
-        let mut rng = Rng::new(SEED as u64 ^ 0x5A55_E4F4);
-        for k in 0..strands {
-            let center = (k as f32 + 0.5) / strands as f32 * 2.0 - 1.0 + rng.range(-0.04, 0.04);
-            let half = rng.range(0.28, 0.42) / strands as f32 * 2.0;
-            let reach = rng.range(0.25, 0.55);
-            let start_row = if rng.chance(0.25) { 1 } else { 0 };
-            let point = |u: f32, r: usize| {
-                let v = r as f32 / rows as f32;
-                let bulge = (v * std::f32::consts::PI).sin() * 0.3 + v * reach;
-                top + side * (u * width) + forward * (bulge + 0.05) + Vec3::Y * ((foot.y - top.y) * v)
-            };
-            for r in start_row..rows {
-                let v = r as f32 / rows as f32;
-                let color = vec3(0.45, 0.68, 0.85).lerp(vec3(0.95, 0.98, 1.0), smoothstep(0.1, 0.8, v)) * rng.range(0.92, 1.05);
-                let (a, b) = (point(center - half, r), point(center + half, r));
-                let (c, d) = (point(center - half * 1.1, r + 1), point(center + half * 1.1, r + 1));
-                curtain.push_triangle(a, b, c, color);
-                curtain.push_triangle(b, d, c, color);
-            }
-        }
-        let mesh = ctx.assets.add_mesh(curtain);
-        ctx.scene.spawn(Entity::new("Wasserfall", mesh).with_material(Material::Emissive { glow: 0.15 }));
-    }
-
-    // Brücke: wo ein Pfad den Bach kreuzt, sonst in der Ebene vor dem See
-    let crossing = (10..(total as usize - 10))
-        .step_by(2)
-        .map(|s| s as f32)
-        .filter(|&s| (s - edge).abs() > 12.0)
-        .find(|&s| paths.at(stream_point(s)) > 0.5)
-        .unwrap_or(total * 0.72);
-    let center = stream_point(crossing);
-    let along = across(crossing);
-    let along = vec2(along.x, along.z);
-    let end_height = |sign: f32| {
-        let q = center + along * 4.5 * sign;
-        terrain.height_at(q.x, q.y)
-    };
-    let base = vec3(center.x, end_height(1.0).min(end_height(-1.0)) - 0.1, center.y);
-    let rotation = Quat::from_rotation_y((-along.y).atan2(along.x));
-    if let Some((mesh, _)) = asset_files::load_variants(ctx, "gebaeude", "bruecke", Vec3::ONE, 0.0).first().copied() {
-        let entity = ctx.scene.spawn(Entity::new("Brücke", mesh).with_transform(Transform::from_position(base).with_rotation(rotation)));
-        // Begehbarer Bogen aus sechs geneigten Kästen
-        const LENGTH: f32 = 9.0;
-        const ARCH: f32 = 0.9;
-        for k in 0..6 {
-            let x = -LENGTH / 2.0 + LENGTH * (k as f32 + 0.5) / 6.0;
-            let y = ARCH * (1.0 - (x / (LENGTH / 2.0)).powi(2)) + 0.12;
-            let slope = (-2.0 * ARCH * x / (LENGTH / 2.0).powi(2)).atan();
-            let transform = Transform::from_position(base + rotation * vec3(x, y, 0.0)).with_rotation(rotation * Quat::from_rotation_z(slope));
-            ctx.physics.add_body(entity, &transform, BodyDesc::fixed(Shape::Box { size: vec3(LENGTH / 6.0 + 0.1, 0.16, 1.8) }));
-        }
-        places.labels.push(("Brücke", center));
-    }
-    vec![(center, 6.0), (vec2(foot.x, foot.z), 6.0)]
-}
-
-/// Schilf rund um den Bergsee und am unteren Bach, Seerosen auf dem See (nur mit Fenster,
-/// reine Deko ohne Kollision – deshalb dürfen sie vom Zufall des Rechners abhängen).
-fn plant_shores(ctx: &mut Context, terrain: &Terrain, lib: &Library, places: &crate::orte::Places) {
-    if ctx.is_headless() || lib.reeds.is_empty() {
-        return;
-    }
-    let mut rng = Rng::new(SEED as u64 ^ 0x5C41_1F);
-    let near_place = |p: Vec2| places.labels.iter().any(|&(name, at)| matches!(name, "Seeschrein" | "Brücke") && p.distance(at) < 7.0);
-    // Ufer des Bergsees: dort, wo das Gelände knapp über dem Wasser liegt
-    for k in 0..220 {
-        let w = k as f32 / 220.0 * std::f32::consts::TAU + rng.range(-0.01, 0.01);
-        let dir = Vec2::from_angle(w);
-        let Some(p) = (0..60)
-            .map(|i| LAKE_CENTER + dir * (LAKE_RADIUS - 14.0 + i as f32 * 0.5))
-            .find(|q| terrain.height_at(q.x, q.y) > LAKE_LEVEL - 0.25)
-        else {
-            continue;
-        };
-        if near_place(p) || !rng.chance(0.55) {
-            continue;
-        }
-        let spot = p + dir * rng.range(-1.2, 0.8) + dir.perp() * rng.range(-0.6, 0.6);
-        let base = vec3(spot.x, terrain.height_at(spot.x, spot.y).max(LAKE_LEVEL - 0.3), spot.y);
-        let reed = lib.reeds[rng.next_u32() as usize % lib.reeds.len()];
-        decor(ctx, reed, base, Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)), rng.range(0.8, 1.25), Vec4::ONE, GRASS);
-    }
-    // Seerosen: Flecken auf dem Wasser nahe am Ufer
-    for _ in 0..16 {
-        if lib.lilies.is_empty() {
-            break;
-        }
-        let dir = Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU));
-        let at = LAKE_CENTER + dir * rng.range(LAKE_RADIUS * 0.45, LAKE_RADIUS - 6.0);
-        if terrain.height_at(at.x, at.y) > LAKE_LEVEL - 0.4 || near_place(at) {
-            continue;
-        }
-        let lily = lib.lilies[rng.next_u32() as usize % lib.lilies.len()];
-        let transform = Transform::from_position(vec3(at.x, LAKE_LEVEL + 0.02, at.y))
-            .with_rotation(Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)))
-            .with_scale(Vec3::splat(rng.range(1.0, 1.6)));
-        ctx.scene.spawn(Entity::new("Seerosen", lily.0).with_transform(transform).with_material(Material::Foliage { sway: 0.0 }));
-    }
-    // Schilf am unteren Bach (unterhalb des Wasserfalls)
-    let lengths = stream_lengths();
-    let total = lengths[STREAM.len() - 1];
-    let mut s = lengths[WATERFALL_SEGMENT + 1];
-    while s < total - 4.0 {
-        s += rng.range(3.0, 7.0);
-        let p = stream_point(s);
-        let ahead = (stream_point((s + 1.0).min(total)) - stream_point(s - 1.0)).normalize_or(Vec2::X);
-        let side = ahead.perp() * if rng.chance(0.5) { 1.0 } else { -1.0 };
-        let spot = p + side * rng.range(STREAM_BED + 0.2, STREAM_BED + 1.4);
-        if near_place(spot) {
-            continue;
-        }
-        let base = vec3(spot.x, terrain.height_at(spot.x, spot.y), spot.y);
-        let reed = lib.reeds[rng.next_u32() as usize % lib.reeds.len()];
-        decor(ctx, reed, base, Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)), rng.range(0.7, 1.1), Vec4::ONE, GRASS);
-    }
-}
-
 /// Stellen am Meer, an denen Wellen an den Strand rollen: Punkt auf der Wasserlinie und
 /// Richtung aufs Land (x, z).
 fn find_surf(terrain: &Terrain) -> Vec<(Vec3, Vec2)> {
@@ -467,23 +198,6 @@ fn find_surf(terrain: &Terrain) -> Vec<(Vec3, Vec2)> {
         surf.push((vec3(p.x, 0.0, p.y), -dir));
     }
     surf
-}
-
-/// Wasserfall: obere Kante und Fuß (Punkte auf der Wasseroberfläche).
-pub fn waterfall() -> (Vec3, Vec3) {
-    let lengths = stream_lengths();
-    let edge = lengths[WATERFALL_SEGMENT] + (lengths[WATERFALL_SEGMENT + 1] - lengths[WATERFALL_SEGMENT]) * WATERFALL_EDGE;
-    let at = |s: f32| {
-        let p = stream_point(s);
-        let (_, i, u) = stream_nearest(p);
-        vec3(p.x, stream_bed(i, u) + STREAM_DEPTH, p.y)
-    };
-    (at(edge - STREAM_STEP), at(edge + STREAM_STEP))
-}
-
-/// Abstand zum Bach (für Pflanzen, Bodenfarbe, Karte).
-pub fn stream_distance(p: Vec2) -> f32 {
-    stream_nearest(p).0
 }
 
 // ---------------------------------------------------------------------------
@@ -683,26 +397,12 @@ fn festung_karte(p: Vec2) -> Option<Vec3> {
     })
 }
 
-/// Höhe der Landschaft an (x, z) – mit eingegrabenem Bach, dem Burgberg und dem Festungsgrund.
+/// Höhe der Landschaft an (x, z) – mit dem Burgberg und dem Festungsgrund.
 pub fn height(p: Vec2) -> f32 {
-    burgberg(p, festungsgrund(p, height_mit_bach(p)))
+    burgberg(p, festungsgrund(p, height_raw(p)))
 }
 
-fn height_mit_bach(p: Vec2) -> f32 {
-    let raw = height_raw(p);
-    let (d, i, u) = stream_nearest(p);
-    if d > STREAM_BANK + 8.0 {
-        return raw;
-    }
-    let bed = stream_bed(i, u);
-    // Wo das Gelände neben dem Bach tiefer liegt als das Wasser: sanfter Uferwall statt Damm
-    let bank = bed + STREAM_DEPTH + 0.5;
-    let raised = raw.max(raw + (bank - raw) * (1.0 - smoothstep(STREAM_BANK, STREAM_BANK + 8.0, d)));
-    let carve = 1.0 - smoothstep(STREAM_BED, STREAM_BANK, d);
-    raised + (bed - raised) * carve
-}
-
-/// Höhe der Landschaft ohne Bach.
+/// Natürliche Höhe der Landschaft.
 fn height_raw(p: Vec2) -> f32 {
     let r = ISLAND_RADIUS;
     let distance = p.length() / r;
@@ -725,14 +425,8 @@ fn height_raw(p: Vec2) -> f32 {
     let plateau = (steps.floor() + smoothstep(0.7, 1.0, steps.fract())) / 3.0 * 16.0;
     // Gewundene Täler, wo das Rauschen die Null kreuzt (im Gebirge flacher)
     let valley = (1.0 - smoothstep(0.0, 0.07, fbm(p * 0.005, 3, SEED + 15).abs())) * 6.0 * (1.0 - north * 0.7);
-    let mut inland = hills + swells.max(-2.0) + peaks + plateau - valley;
-
-    // Bergsee: Rand etwas erhöht, darin eine Mulde unter den Wasserspiegel
-    let to_lake = (p - LAKE_CENTER).length();
-    // Der See liegt auf einer Hochebene: das Land ringsum steigt sanft zu seinem Rand an
-    inland = inland.max((LAKE_LEVEL + 1.4) * smoothstep(LAKE_RADIUS + 95.0, LAKE_RADIUS + 10.0, to_lake));
-    let bowl = smoothstep(LAKE_RADIUS + 4.0, LAKE_RADIUS - 14.0, to_lake);
-    inland += (LAKE_LEVEL - 2.5 - inland) * bowl;
+    // Im Inland nie unter den Meeresspiegel: kein Wasser in Senken (nur das Meer rund um die Insel)
+    let inland = (hills + swells.max(-2.0) + peaks + plateau - valley).max(1.5);
 
     // Flacher Strand: nahe der Küstenlinie wird die Höhe zusammengedrückt.
     let shaped = -9.0 + (inland + 9.0) * land.sqrt() * land.sqrt().sqrt();
@@ -768,15 +462,13 @@ impl Paths {
         Vec2::splat(-TERRAIN_SIZE / 2.0)
     }
 
-    /// Wege vom Startpunkt zum Bergsee, zum Strand, zum Tafelberg und ins Gebirge.
+    /// Wege vom Startpunkt zur Burg, zur Festung, zum Strand und ins Gebirge.
     fn build(terrain: &Terrain, spawn: Vec3) -> Paths {
         let res = (TERRAIN_SIZE / PATH_CELL) as usize;
         let mut paths = Paths { mask: vec![0.0; res * res], res };
         let start = vec2(spawn.x, spawn.z);
         let r = ISLAND_RADIUS;
         let mut targets = Vec::new();
-        // Seeufer auf der Seite zum Startpunkt
-        targets.push(LAKE_CENTER + (start - LAKE_CENTER).normalize() * (LAKE_RADIUS + 9.0));
         // Fuß der Auffahrt zur Burg auf dem Tafelberg
         targets.push(burg_weg_fuss() + (start - burg_weg_fuss()).normalize_or(Vec2::X) * 3.0);
         // Fuß der Rampe zur Schattenfestung in der Inselmitte
@@ -791,10 +483,9 @@ impl Paths {
             targets.push(foot);
         }
         let mut trails: Vec<Vec<Vec2>> = targets.iter().enumerate().map(|(i, &to)| trail(terrain, start, to, i as u32)).collect();
-        // Querweg vom Bergsee zum Gebirge
-        if trails.len() >= 4 {
-            let (from, to) = (*trails[0].last().expect("Weg hat Punkte"), *trails[3].last().expect("Weg hat Punkte"));
-            trails.push(trail(terrain, from, to, 9));
+        // Querweg von der Festung ins Gebirge
+        if let Some(gebirge) = trails.last().and_then(|t| t.last()).copied() {
+            trails.push(trail(terrain, vec2(0.0, 76.0), gebirge, 9));
         }
         // Die Auffahrt selbst: breiter, festgefahrener Weg
         let weg: Vec<Vec2> = BURG_WEG.iter().map(|&l| burg_welt(l)).collect();
@@ -849,7 +540,7 @@ impl Paths {
 
 /// Erster Punkt entlang einer Richtung, an dem die Höhe `wanted` erfüllt (höchstens 400 m weit).
 fn find_along(terrain: &Terrain, from: Vec2, direction: Vec2, wanted: impl Fn(f32) -> bool) -> Option<Vec2> {
-    (1..100).map(|i| from + direction * (i as f32 * 4.0)).find(|p| wanted(terrain.height_at(p.x, p.y)) && !in_lake(*p)).map(|p| p - direction * 4.0)
+    (1..100).map(|i| from + direction * (i as f32 * 4.0)).find(|p| wanted(terrain.height_at(p.x, p.y))).map(|p| p - direction * 4.0)
 }
 
 /// Ein gewundener Pfad von `from` nach `to`: in 3-m-Schritten, meidet Wasser und steile
@@ -886,7 +577,7 @@ fn trail(terrain: &Terrain, from: Vec2, to: Vec2, seed: u32) -> Vec<Vec2> {
             let direction = rotate(heading, k);
             let next = here + direction * STEP;
             let h = terrain.height_at(next.x, next.y);
-            if h < 1.8 || in_lake(next) {
+            if h < 1.8 {
                 continue;
             }
             let rise = (h - here_height).abs() / STEP;
@@ -930,17 +621,8 @@ fn ground_color(c: Vec3, n: Vec3) -> Vec3 {
     color = color.lerp(alpine, smoothstep(15.0, 24.0, c.y));
     // Trockenes, gelbliches Gras als Saum zum Strand
     color = color.lerp(vec3(0.26, 0.25, 0.07), smoothstep(3.6, 2.5, c.y) * 0.7);
-    // Bachbett: nasse Kiesel, daneben feuchte, dunklere Erde
-    let river = stream_distance(p);
-    if river < STREAM_BANK + 2.0 {
-        color = color.lerp(color * 0.72, (1.0 - smoothstep(STREAM_BED + 1.0, STREAM_BANK + 2.0, river)) * 0.6);
-        color = color.lerp(vec3(0.15, 0.14, 0.12), 1.0 - smoothstep(STREAM_BED - 0.2, STREAM_BED + 1.2, river));
-    }
     color = sand.lerp(color, smoothstep(1.4, 2.6, c.y));
     color = wet_sand.lerp(color, smoothstep(-0.8, 0.6, c.y));
-    // Seeufer: nasser, dunkler Grund rund um den Bergsee
-    let ufer = smoothstep(LAKE_RADIUS + 6.0, LAKE_RADIUS - 2.0, (p - LAKE_CENTER).length()) * (1.0 - smoothstep(LAKE_LEVEL + 0.3, LAKE_LEVEL + 1.2, c.y));
-    color = color.lerp(wet_sand * 0.85, ufer);
     color = color.lerp(rock, smoothstep(0.42, 0.58, slope));
     color.lerp(snow, smoothstep(29.0, 34.0, c.y) * (1.0 - smoothstep(0.55, 0.75, slope)))
 }
@@ -991,15 +673,11 @@ pub fn is_enchanted(p: Vec2) -> bool {
     magic(p) > 0.62 && height(p) < 18.0
 }
 
-/// Bergsee: Mitte, Radius, Wasserspiegel.
-pub fn lake() -> (Vec2, f32, f32) {
-    (LAKE_CENTER, LAKE_RADIUS, LAKE_LEVEL)
-}
 
 /// Wiese (für Schmetterlinge): grün, flach, nicht feucht, nicht im Gebirge.
 pub fn is_meadow(terrain: &Terrain, p: Vec2) -> bool {
     let h = terrain.height_at(p.x, p.y);
-    (3.0..14.0).contains(&h) && moisture(p) < 0.52 && terrain.normal_at(p.x, p.y).y > 0.9 && !in_lake(p)
+    (3.0..14.0).contains(&h) && moisture(p) < 0.52 && terrain.normal_at(p.x, p.y).y > 0.9
 }
 
 /// Wo Vogelschwärme kreisen (große Wälder) und Möwen fliegen (Strände).
@@ -1091,7 +769,6 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
         ((9.0..20.0).contains(&height)
             && p.distance(start) > 140.0
             && p.distance(camp) > 140.0
-            && !in_lake(p)
             && magic(p) < 0.58
             && unevenness(terrain, p, 4.0) < 0.9)
             .then(|| height - p.distance(vec2(0.0, 0.1 * ISLAND_RADIUS)) * 0.03)
@@ -1100,17 +777,11 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
     // Steinkreis: ebene Lichtung tief im Zauberwald
     let circle = best_spot(|p| {
         let height = h(p);
-        ((3.0..16.0).contains(&height) && !in_lake(p) && magic(p) > 0.62 && p.distance(camp) > 60.0 && unevenness(terrain, p, 6.0) < 1.2)
+        ((3.0..16.0).contains(&height) && magic(p) > 0.62 && p.distance(camp) > 60.0 && unevenness(terrain, p, 6.0) < 1.2)
             .then(|| magic(p) - unevenness(terrain, p, 6.0) * 0.1)
     });
-    // Bergsee: Uferpunkt etwas neben dem Pfad vom Lager
-    let toward_start = (start - LAKE_CENTER).normalize_or(Vec2::Y);
-    // 0,45 rad neben dem Pfad
-    let shore_dir = turn(toward_start, (0.900_447_1, 0.434_965_5)).normalize();
-    let lake_shore = (0..80)
-        .map(|i| LAKE_CENTER + shore_dir * (LAKE_RADIUS - 12.0 + i as f32 * 0.5))
-        .find(|&p| h(p) > LAKE_LEVEL + 0.1)
-        .map(|shore| (shore, -shore_dir, LAKE_LEVEL));
+    // Kein Bergsee mehr: der Schrein am Seeufer entfällt
+    let lake_shore = None;
     // Schiffswrack: flacher Sandstrand, ein Stück seitlich vom Startplatz (0,6 rad weiter)
     let wreck_dir = turn(start.normalize_or(Vec2::Y), (0.825_335_6, 0.564_642_5)).normalize();
     let wreck = best_spot(|p| {
@@ -1141,10 +812,6 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
     crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave }
 }
 
-/// Liegt der Punkt im Bergsee (unter dem Wasserspiegel)?
-pub fn in_lake(p: Vec2) -> bool {
-    (p - LAKE_CENTER).length() < LAKE_RADIUS + 4.0 && height(p) < LAKE_LEVEL + 0.3
-}
 
 /// Sucht einen flachen Platz auf einer Wiese im Süden der Insel.
 fn find_spawn(terrain: &Terrain) -> Vec3 {
@@ -1153,7 +820,7 @@ fn find_spawn(terrain: &Terrain) -> Vec3 {
             let angle = std::f32::consts::FRAC_PI_2 + (step as f32 - 12.0) * 0.08;
             let p = vec2(angle.cos(), angle.sin()) * distance as f32;
             let h = terrain.height_at(p.x, p.y);
-            if (3.0..9.0).contains(&h) && terrain.normal_at(p.x, p.y).y > 0.93 && magic(p) < 0.55 && (p - LAKE_CENTER).length() > LAKE_RADIUS + 30.0 {
+            if (3.0..9.0).contains(&h) && terrain.normal_at(p.x, p.y).y > 0.93 && magic(p) < 0.55 {
                 return vec3(p.x, h, p.y);
             }
         }
@@ -1293,6 +960,31 @@ impl Library {
     }
 }
 
+/// Wasserfläche als Ring von `innen` bis `aussen` (Meter): innen fein, nach außen gröber.
+fn meer_ring(innen: f32, aussen: f32) -> MeshData {
+    let ecken = 160;
+    let ringe = 60;
+    let mut mesh = MeshData::default();
+    for i in 0..=ringe {
+        // Abstand wächst nach außen quadratisch: am Ufer dicht (Wellen), draußen weit
+        let t = i as f32 / ringe as f32;
+        let r = innen + (aussen - innen) * t * t;
+        for k in 0..ecken {
+            let w = std::f32::consts::TAU * k as f32 / ecken as f32;
+            mesh.vertices.push(Vertex::new(vec3(w.cos() * r, 0.0, w.sin() * r), Vec3::Y, Vec3::ONE));
+        }
+    }
+    for i in 0..ringe as u32 {
+        for k in 0..ecken as u32 {
+            let a = i * ecken as u32 + k;
+            let b = i * ecken as u32 + (k + 1) % ecken as u32;
+            let (c, d) = (a + ecken as u32, b + ecken as u32);
+            mesh.indices.extend([a, c, b, b, c, d]);
+        }
+    }
+    mesh
+}
+
 /// Detailstufe für die Insel: ab `distance` Metern vereinfacht (Zellgröße in Metern
 /// des Modells) oder, bei `None`, gar nicht mehr gezeichnet.
 struct Level(f32, Option<f32>);
@@ -1345,19 +1037,9 @@ pub fn build(ctx: &mut Context) -> Island {
     let (vertices, triangles) = terrain.collision_mesh();
     ctx.physics.add_static_mesh(Some(ground), vertices, triangles);
 
-    let water = ctx.assets.named_mesh("wasser", || MeshData::grid(128));
-    ctx.scene.spawn(
-        Entity::new("Meer", water)
-            .with_transform(Transform::default().with_scale(vec3(4200.0, 1.0, 4200.0)))
-            .with_material(Material::Water),
-    );
-    // Bergsee im Westen: eigene Wasserfläche auf Höhe des Seespiegels
-    let lake = ctx.assets.named_mesh("see", || MeshData::grid(48));
-    ctx.scene.spawn(
-        Entity::new("See", lake)
-            .with_transform(Transform::from_position(vec3(LAKE_CENTER.x, LAKE_LEVEL, LAKE_CENTER.y)).with_scale(vec3(LAKE_RADIUS * 2.6, 1.0, LAKE_RADIUS * 2.6)))
-            .with_material(Material::Water),
-    );
+    // Das Meer als Ring um die Insel: im Inneren liegt immer Land, dort muss kein Wasser gezeichnet werden
+    let water = ctx.assets.named_mesh("meer_ring", || meer_ring(ISLAND_RADIUS * 0.28, 2100.0));
+    ctx.scene.spawn(Entity::new("Meer", water).with_material(Material::Water));
 
     let lib = Library::load(ctx);
     let mut resources = Vec::new();
@@ -1368,8 +1050,7 @@ pub fn build(ctx: &mut Context) -> Island {
     crate::orte::build_festung(ctx, &mut places);
     let camp = crate::orte::camp_center(spawn);
     let spots = find_sights(&terrain, spawn, camp);
-    let mut blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
-    blocked.extend(build_stream(ctx, &terrain, &paths, &mut places));
+    let blocked = crate::orte::build_sights(ctx, &terrain, &spots, &mut places);
     let is_blocked = |p: Vec2| blocked.iter().any(|&(c, r)| p.distance(c) < r) || burg_frei(p) || festung_frei(p);
 
 
@@ -1387,7 +1068,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let p = vec2(x + rng.range(-1.4, 1.4), z + rng.range(-1.4, 1.4));
 
             let h = terrain.height_at(p.x, p.y);
-            if h < 0.9 || in_lake(p) {
+            if h < 0.9 {
                 continue;
             }
             let normal = terrain.normal_at(p.x, p.y);
@@ -1397,8 +1078,7 @@ pub fn build(ctx: &mut Context) -> Island {
             let clearing = base.distance(spawn) < SPAWN_CLEARING
                 || p.distance(camp) < crate::orte::CAMP_RADIUS
                 || paths.at(p) > 0.15
-                || is_blocked(p)
-                || stream_distance(p) < STREAM_BANK;
+                || is_blocked(p);
             let roll = rng.next_f32();
             let yaw = Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
             let size = rng.range(0.8, 1.25);
@@ -1588,7 +1268,6 @@ pub fn build(ctx: &mut Context) -> Island {
                         || (node_here && q.distance(p) < 1.8)
                         || q.distance(camp) < crate::orte::CAMP_RADIUS - 1.0
                         || is_blocked(q)
-                        || stream_distance(q) < STREAM_BED + 1.5
                     {
                         continue;
                     }
@@ -1603,7 +1282,6 @@ pub fn build(ctx: &mut Context) -> Island {
     }
 
     log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
-    plant_shores(ctx, &terrain, &lib, &places);
     places.surf = find_surf(&terrain);
     log::info!("{} Kristallvorkommen, {} Brandungsstellen", crystals.len(), places.surf.len());
     let map = (!ctx.is_headless()).then(|| {
@@ -1641,33 +1319,6 @@ fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, s
         ctx.scene.spawn(Entity::new("Deko-Leuchten", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.2 }));
     }
 }
-
-#[cfg(test)]
-mod bach_test {
-    use super::*;
-    #[test]
-    fn bach_faellt_stetig_und_hat_einen_wasserfall() {
-        let beds = stream_beds();
-        for pair in beds.windows(2) {
-            assert!(pair[1] <= pair[0], "Bach fließt bergauf: {beds:?}");
-        }
-        let (top, foot) = waterfall();
-        assert!(top.y - foot.y >= 4.5, "kein Wasserfall: {top} {foot}");
-        assert!((beds[beds.len() - 1] - (LAKE_LEVEL - 0.6)).abs() < 0.01, "endet nicht im See");
-        // Das Wasser liegt überall unter den Ufern (kein Damm)
-        for i in 0..STREAM.len() - 1 {
-            for k in 0..10 {
-                let u = k as f32 / 10.0;
-                let p = STREAM[i] + (STREAM[i + 1] - STREAM[i]) * u;
-                let side = (STREAM[i + 1] - STREAM[i]).normalize().perp() * (STREAM_BANK + 1.0);
-                let water = stream_bed(i, u) + STREAM_DEPTH;
-                let bank = height(p + side).min(height(p - side));
-                assert!(bank >= water - 0.05, "Abschnitt {i} bei {u:.1}: Wasser {water:.1} über dem Ufer {bank:.1}");
-            }
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod burg_test {

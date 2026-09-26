@@ -204,7 +204,7 @@ struct Visual {
 
 enum Body {
     /// Modell aus Blender mit Skelett-Animationen.
-    Animated { animator: Animator, mesh: MeshId, texture: Option<TextureId> },
+    Animated { animator: Animator, mesh: MeshId },
     /// Platzhalter aus Grundformen.
     Placeholder,
 }
@@ -352,7 +352,7 @@ impl Animal {
         let step = speed * dt;
         let walkable = |d: Vec2| {
             let next = here + d * step * 8.0;
-            terrain.height_at(next.x, next.y) > MIN_GROUND && !crate::island::in_lake(next) && terrain.normal_at(next.x, next.y).y > 0.8
+            terrain.height_at(next.x, next.y) > MIN_GROUND && terrain.normal_at(next.x, next.y).y > 0.8
         };
         let turned = [0.0f32, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9]
             .into_iter()
@@ -382,7 +382,7 @@ impl Animal {
                 // In Etappen hinziehen (höchstens 25 m je Ziel), am Ziel ein wenig verteilt
                 let step = (goal - here).clamp_length_max(25.0);
                 let target = here + step + Vec2::from_angle(self.rng.range(0.0, std::f32::consts::TAU)) * self.rng.range(0.0, 3.0);
-                if terrain.height_at(target.x, target.y) > MIN_GROUND && !crate::island::in_lake(target) {
+                if terrain.height_at(target.x, target.y) > MIN_GROUND {
                     return Some(target);
                 }
             }
@@ -391,7 +391,7 @@ impl Animal {
             let angle = self.rng.range(0.0, std::f32::consts::TAU);
             let distance = self.rng.range(3.0, WANDER_RADIUS);
             let target = self.home + Vec2::from_angle(angle) * distance;
-            if terrain.height_at(target.x, target.y) > MIN_GROUND && !crate::island::in_lake(target) && terrain.normal_at(target.x, target.y).y > 0.85 {
+            if terrain.height_at(target.x, target.y) > MIN_GROUND && terrain.normal_at(target.x, target.y).y > 0.85 {
                 return Some(target);
             }
         }
@@ -445,7 +445,7 @@ impl Animal {
         let mut position = visual.shown;
         let mut tilt = Quat::IDENTITY;
         match &mut visual.body {
-            Body::Animated { animator, mesh, texture, .. } => {
+            Body::Animated { animator, .. } => {
                 if near {
                     let (clips, speed): (&[&str], f32) = match self.gait {
                         Gait::Idle => (&["Idle", "Stehen"], 1.0),
@@ -461,7 +461,9 @@ impl Animal {
                     }
                     animator.set_speed(speed);
                     animator.update(dt);
-                    ctx.assets.update_mesh(*mesh, animator.skinned_mesh(*texture));
+                    if let Some(entity) = ctx.scene.try_get_mut(visual.entity) {
+                        entity.joints = animator.palette();
+                    }
                 }
             }
             Body::Placeholder => {
@@ -504,8 +506,9 @@ impl Visual {
                 let texture = textures.first().copied();
                 let mut animator = Animator::new(model);
                 animator.play("Idle", true, 0.0);
-                let mesh = ctx.assets.add_mesh(animator.skinned_mesh(texture));
-                Body::Animated { animator, mesh, texture }
+                // Alle Tiere einer Art teilen ein Mesh; die Grafikkarte verformt es je Tier.
+                let mesh = ctx.assets.named_mesh(&format!("tier_gpu_{}", kind.file_name()), || animator.model().skinned_gpu_mesh(texture));
+                Body::Animated { animator, mesh }
             }
             None => Body::Placeholder,
         };
@@ -513,7 +516,11 @@ impl Visual {
             Body::Animated { mesh, .. } => *mesh,
             Body::Placeholder => ctx.assets.named_mesh(&format!("tier_platzhalter_{}", kind.file_name()), || placeholder(kind)),
         };
-        let entity = ctx.scene.spawn(Entity::new(kind.label(), mesh).with_transform(Transform::from_position(position)));
+        let mut entity = Entity::new(kind.label(), mesh).with_transform(Transform::from_position(position));
+        if let Body::Animated { animator, .. } = &body {
+            entity.joints = animator.palette();
+        }
+        let entity = ctx.scene.spawn(entity);
         Visual { entity, body, shown: position, phase: 0.0, flash: 0.0, dying: None }
     }
 }
@@ -669,14 +676,14 @@ pub fn populate(terrain: &Terrain, spawn: Vec3, seed: u32, moisture: impl Fn(Vec
             }
             };
             let h = terrain.height_at(p.x, p.y);
-            if h < MIN_GROUND + 1.0 || crate::island::in_lake(p) || terrain.normal_at(p.x, p.y).y < 0.9 || !(near_spawn || fits(p, h)) {
+            if h < MIN_GROUND + 1.0 || terrain.normal_at(p.x, p.y).y < 0.9 || !(near_spawn || fits(p, h)) {
                 continue;
             }
             // Herden und Rudel: die übrigen Tiere der Gruppe dicht daneben.
             for member in 0..herd.min(count - placed) {
                 let q = if member == 0 { p } else { p + Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)) * rng.range(2.0, 6.0) };
                 let hq = terrain.height_at(q.x, q.y);
-                if hq < MIN_GROUND + 1.0 || crate::island::in_lake(q) {
+                if hq < MIN_GROUND + 1.0 {
                     continue;
                 }
                 let seed = ((seed as u64) << 16) ^ animals.len() as u64;

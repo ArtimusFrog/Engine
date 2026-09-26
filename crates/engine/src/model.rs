@@ -10,7 +10,7 @@ use std::sync::Arc;
 use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 
 use crate::assets::{Image, TextureId};
-use crate::mesh::{MeshData, Vertex};
+use crate::mesh::{MeshData, Vertex, SkinVertex};
 
 /// Position, Drehung und Größe eines Knotens relativ zu seinem Elternknoten.
 #[derive(Clone, Copy, Debug)]
@@ -55,6 +55,32 @@ struct Part {
     joints: Vec<[u16; 4]>,
     weights: Vec<[f32; 4]>,
     indices: Vec<u32>,
+    /// Eckpunkte mit gleicher Gewichtung (gleiche Knochen, gleiche Anteile) zusammengefasst:
+    /// beim Verformen wird die Mischmatrix nur einmal je Gruppe berechnet. Unsere Figuren sind
+    /// größtenteils starr an einzelne Knochen gebunden, das spart den Großteil der Rechnung.
+    clusters: Vec<SkinCluster>,
+}
+
+#[derive(Clone, Debug)]
+struct SkinCluster {
+    joints: [u16; 4],
+    weights: [f32; 4],
+    vertices: Vec<u32>,
+}
+
+/// Fasst die Eckpunkte eines Teils nach ihrer Gewichtung zusammen (siehe `Part::clusters`).
+fn skin_clusters(joints: &[[u16; 4]], weights: &[[f32; 4]]) -> Vec<SkinCluster> {
+    let mut index: std::collections::HashMap<([u16; 4], [u32; 4]), usize> = std::collections::HashMap::new();
+    let mut clusters: Vec<SkinCluster> = Vec::new();
+    for (i, (j, w)) in joints.iter().zip(weights).enumerate() {
+        let key = (*j, w.map(f32::to_bits));
+        let slot = *index.entry(key).or_insert_with(|| {
+            clusters.push(SkinCluster { joints: *j, weights: *w, vertices: Vec::new() });
+            clusters.len() - 1
+        });
+        clusters[slot].vertices.push(i as u32);
+    }
+    clusters
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,7 +196,7 @@ impl Model {
                 let normals = reader.read_normals().map(|n| n.map(Vec3::from).collect()).unwrap_or_else(|| vec![Vec3::Y; count]);
                 let uvs = reader.read_tex_coords(0).map(|t| t.into_f32().collect()).unwrap_or_else(|| vec![[0.0; 2]; count]);
                 let joints: Vec<[u16; 4]> = reader.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
-                let weights = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
+                let weights: Vec<[f32; 4]> = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
                 let indices = reader.read_indices().map(|i| i.into_u32().collect()).unwrap_or_else(|| (0..count as u32).collect());
                 let material = primitive.material().index().map_or(0, |i| i + 1);
                 let base = materials.get(material).map_or([1.0; 4], |m| m.base_color);
@@ -178,10 +204,12 @@ impl Model {
                     Some(c) => c.into_rgb_f32().map(|c| [c[0] * base[0], c[1] * base[1], c[2] * base[2]]).collect(),
                     None => vec![[base[0], base[1], base[2]]; count],
                 };
+                let skinned = node.skin().is_some() && joints.len() == count;
+                let clusters = if skinned { skin_clusters(&joints, &weights) } else { Vec::new() };
                 parts.push(Part {
                     material,
                     node: node.index(),
-                    skinned: node.skin().is_some() && joints.len() == count,
+                    skinned,
                     positions,
                     normals,
                     uvs,
@@ -189,6 +217,7 @@ impl Model {
                     joints,
                     weights,
                     indices,
+                    clusters,
                 });
             }
         }
@@ -386,6 +415,30 @@ impl Model {
     }
 
     /// Höhe des Modells in Ruhehaltung (für die Skalierung auf eine Wunschgröße).
+    /// Das ganze Modell in Ruhelage, mit Knochen und Gewichten je Eckpunkt – die Grafikkarte
+    /// verformt es mit `Animator::palette`. Einmal hochladen, beliebig viele Figuren teilen es.
+    pub fn skinned_gpu_mesh(&self, texture: Option<TextureId>) -> MeshData {
+        let mut mesh = MeshData { texture, ..Default::default() };
+        let skeleton = self.joints.len() as u32;
+        let mut rigid = 0u32;
+        for part in &self.parts {
+            let base = mesh.vertices.len() as u32;
+            for i in 0..part.positions.len() {
+                mesh.vertices.push(Vertex { position: part.positions[i].into(), normal: part.normals[i].into(), color: part.colors[i], uv: part.uvs[i] });
+                mesh.skin.push(if part.skinned {
+                    SkinVertex { joints: part.joints[i].map(u32::from), weights: part.weights[i] }
+                } else {
+                    SkinVertex { joints: [skeleton + rigid, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] }
+                });
+            }
+            if !part.skinned {
+                rigid += 1;
+            }
+            mesh.indices.extend(part.indices.iter().map(|i| i + base));
+        }
+        mesh
+    }
+
     pub fn rest_height(&self) -> f32 {
         let animator = Animator::new(Arc::new(self.clone()));
         let mesh = animator.skinned_mesh(None);
@@ -587,6 +640,17 @@ impl Animator {
     }
 
     /// Verformte Geometrie in der aktuellen Pose (Raum des Modells).
+    /// Knochenmatrizen für das GPU-Mesh aus `Model::skinned_gpu_mesh`: zuerst die Knochen des
+    /// Skeletts, dann je starrem Teil (Werkzeug in der Hand) seine Lage; ausgeblendete Teile
+    /// schrumpfen auf einen Punkt.
+    pub fn palette(&self) -> Vec<Mat4> {
+        let mut out: Vec<Mat4> = self.model.joints.iter().map(|&(node, inverse)| self.globals[node] * inverse).collect();
+        for part in self.model.parts.iter().filter(|p| !p.skinned) {
+            out.push(if self.is_hidden(part.node) { Mat4::from_scale(Vec3::ZERO) } else { self.globals[part.node] });
+        }
+        out
+    }
+
     pub fn skinned_mesh(&self, texture: Option<TextureId>) -> MeshData {
         let joint_matrices: Vec<Mat4> = self.model.joints.iter().map(|&(node, inverse)| self.globals[node] * inverse).collect();
         let mut mesh = MeshData { texture, ..Default::default() };
@@ -595,22 +659,29 @@ impl Animator {
                 continue;
             }
             if part.skinned {
-                let base = mesh.vertices.len() as u32;
-                for i in 0..part.positions.len() {
-                    let (j, w) = (part.joints[i], part.weights[i]);
+                let base = mesh.vertices.len();
+                mesh.vertices.resize(base + part.positions.len(), Vertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], uv: [0.0; 2] });
+                let out = &mut mesh.vertices[base..];
+                for cluster in &part.clusters {
+                    let (j, w) = (cluster.joints, cluster.weights);
                     let mut m = Mat4::ZERO;
                     for k in 0..4 {
                         if w[k] > 0.0 {
                             m += joint_matrices.get(j[k] as usize).copied().unwrap_or(Mat4::IDENTITY) * w[k];
                         }
                     }
-                    mesh.vertices.push(Vertex {
-                        position: m.transform_point3(part.positions[i]).into(),
-                        normal: (Mat3::from_mat4(m) * part.normals[i]).normalize_or_zero().into(),
-                        color: part.colors[i],
-                        uv: part.uvs[i],
-                    });
+                    let n = Mat3::from_mat4(m);
+                    for &i in &cluster.vertices {
+                        let i = i as usize;
+                        out[i] = Vertex {
+                            position: m.transform_point3(part.positions[i]).into(),
+                            normal: (n * part.normals[i]).normalize_or_zero().into(),
+                            color: part.colors[i],
+                            uv: part.uvs[i],
+                        };
+                    }
                 }
+                let base = base as u32;
                 mesh.indices.extend(part.indices.iter().map(|i| i + base));
             } else {
                 let m = self.globals[part.node];
@@ -728,5 +799,30 @@ mod file_tests {
         let skinned = Animator::new(Arc::new(model)).skinned_mesh(None);
         assert_eq!(skinned.vertices[1].color, [0.5, 1.0, 1.0]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod skin_statistik {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn starre_anteile_der_figuren() {
+        for pfad in ["../../game/assets/figuren/magier.gltf", "../../game/assets/npc/ritter.gltf", "../../game/assets/tiere/baer.gltf"] {
+            let Ok(model) = Model::from_file(std::path::Path::new(pfad)) else { continue };
+            let (mut starr, mut gemischt, mut gruppen) = (0usize, 0usize, 0usize);
+            for part in model.parts.iter().filter(|p| p.skinned) {
+                for c in &part.clusters {
+                    gruppen += 1;
+                    if c.weights.iter().filter(|&&w| w > 0.0).count() == 1 {
+                        starr += c.vertices.len();
+                    } else {
+                        gemischt += c.vertices.len();
+                    }
+                }
+            }
+            println!("{pfad}: {starr} starr, {gemischt} gemischt, {gruppen} Gruppen");
+        }
     }
 }

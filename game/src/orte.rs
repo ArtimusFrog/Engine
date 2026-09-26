@@ -21,8 +21,6 @@ pub struct Places {
     pub lights: Vec<(Vec3, Vec3, f32)>,
     /// Boote auf dem Wasser (schaukeln): Objekt, Ruhelage, Drehung.
     pub boats: Vec<(EntityId, Vec3, Quat)>,
-    /// Wasserfall: obere Kante und Fuß (für Gischt, Nebel und Rauschen).
-    pub waterfall: Option<(Vec3, Vec3)>,
     /// Brandung: Punkte auf der Wasserlinie flacher Strände und Richtung aufs Land.
     pub surf: Vec<(Vec3, Vec2)>,
     /// Wegelaternen (Fuß am Boden)
@@ -142,6 +140,7 @@ pub fn build_castle(ctx: &mut Context, places: &mut Places) {
     // Namen auf der Karte (die Burg selbst steht bei den großen Orten)
     places.labels.push(("Burgtor", crate::island::burg_welt(vec2(0.0, 75.0))));
     places.labels.push(("Marktplatz", crate::island::burg_welt(vec2(MARKT_VERSATZ.x, MARKT_VERSATZ.z))));
+    places.labels.push(("Thronsaal", crate::island::burg_welt(vec2(0.0, -2.0))));
     // Licht: Fackeln am Tor, Laternen an der Straße und auf dem Markt (Blender-Koordinaten der
     // Burganlage: x, y, Höhe → Modell: x, Höhe, -y)
     let blender = |x: f32, y: f32, z: f32| welt(vec3(x, z, -y));

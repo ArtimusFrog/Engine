@@ -94,6 +94,10 @@ fn wind_offset(world: vec3<f32>, local_height: f32, strength: f32) -> vec3<f32> 
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
+    return vertex_main(in);
+}
+
+fn vertex_main(in: VertexIn) -> VertexOut {
     let model = mat4x4<f32>(in.m0, in.m1, in.m2, in.m3);
     let normal_matrix = mat3x3<f32>(in.n0, in.n1, in.n2);
     var world = (model * vec4<f32>(in.position, 1.0)).xyz;
@@ -130,6 +134,38 @@ fn shadow_clip(in: VertexIn) -> vec4<f32> {
 @vertex
 fn vs_shadow(in: VertexIn) -> @builtin(position) vec4<f32> {
     return shadow_clip(in);
+}
+
+// ---------- Figuren, die die Grafikkarte verformt ----------
+// Je Eckpunkt vier Knochen mit Gewichten; die Matrizen aller Figuren eines Bildes liegen
+// hintereinander in `palette`, wo die eigenen beginnen, steht in `material.w` der Instanz.
+struct SkinIn {
+    @location(13) joints: vec4<u32>,
+    @location(14) weights: vec4<f32>,
+}
+
+@group(2) @binding(0) var<storage, read> palette: array<mat4x4<f32>>;
+
+fn skinned(in: VertexIn, skin: SkinIn) -> VertexIn {
+    let base = u32(in.material.w + 0.5);
+    let m = palette[base + skin.joints.x] * skin.weights.x
+        + palette[base + skin.joints.y] * skin.weights.y
+        + palette[base + skin.joints.z] * skin.weights.z
+        + palette[base + skin.joints.w] * skin.weights.w;
+    var out = in;
+    out.position = (m * vec4<f32>(in.position, 1.0)).xyz;
+    out.normal = (m * vec4<f32>(in.normal, 0.0)).xyz;
+    return out;
+}
+
+@vertex
+fn vs_skinned(in: VertexIn, skin: SkinIn) -> VertexOut {
+    return vertex_main(skinned(in, skin));
+}
+
+@vertex
+fn vs_shadow_skinned(in: VertexIn, skin: SkinIn) -> @builtin(position) vec4<f32> {
+    return shadow_clip(skinned(in, skin));
 }
 
 struct ShadowOut {

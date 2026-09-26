@@ -1,5 +1,5 @@
 //! Kleines Leben als Kulisse (nur Optik, jeder Rechner für sich): Vogelschwärme über dem Wald,
-//! Möwen über den Stränden, Schmetterlinge über den Wiesen, Fische, die aus dem Bergsee springen.
+//! Möwen über den Stränden, Schmetterlinge über den Wiesen, Fische, die vor der Küste aus dem Meer springen.
 //!
 //! Modelle aus `game/assets/kleintiere/` (Blender: `art/modelle/kleintiere/`): Körper und die
 //! beiden Flügel sind eigene Knoten, das Spiel schlägt die Flügel selbst.
@@ -53,7 +53,8 @@ pub struct Wildlife {
     fish: Option<EntityId>,
     jump: Option<Jump>,
     next_jump: f32,
-    lake: (Vec2, f32, f32),
+    /// Strände (Punkte an der Wasserlinie): dort springen die Fische vor der Küste
+    straende: Vec<Vec2>,
     rng: Rng,
 }
 
@@ -74,8 +75,8 @@ fn heading(dir: Vec3) -> Quat {
 }
 
 impl Wildlife {
-    /// `forests`: Mittelpunkte großer Wälder, `beaches`: Punkte an Stränden, `lake`: Mitte, Radius, Spiegel.
-    pub fn new(ctx: &mut Context, forests: &[Vec2], beaches: &[Vec2], lake: (Vec2, f32, f32)) -> Wildlife {
+    /// `forests`: Mittelpunkte großer Wälder, `beaches`: Punkte an Stränden.
+    pub fn new(ctx: &mut Context, forests: &[Vec2], beaches: &[Vec2]) -> Wildlife {
         let mut rng = Rng::new(0xB1_4D5);
         let mut flocks = Vec::new();
         let spawn_flock = |ctx: &mut Context, rng: &mut Rng, parts: (MeshId, Option<(MeshId, MeshId)>), center: Vec2, size: usize, radius: f32, height: f32, glide: bool, scale: f32| {
@@ -144,7 +145,7 @@ impl Wildlife {
             butterflies.push(Butterfly { root, wings, position: Vec3::splat(f32::MAX), velocity: Vec3::ZERO, phase: rng.range(0.0, 6.0) });
         }
         log::info!("Kleines Leben: {} Schwärme ({} Tiere), {} Schmetterlinge, Fisch: {}", flocks.len(), flocks.iter().map(|f: &Flock| f.members.len()).sum::<usize>(), butterflies.len(), fish.is_some());
-        Wildlife { flocks, butterflies, fish, jump: None, next_jump: 4.0, lake, rng }
+        Wildlife { flocks, butterflies, fish, jump: None, next_jump: 4.0, straende: beaches.to_vec(), rng }
     }
 
     /// Nur für Screenshots: wo der nächste Schwarm gerade fliegt, und wie viele Schmetterlinge zu sehen sind.
@@ -243,13 +244,17 @@ impl Wildlife {
             }
         }
 
-        // ---------- Fische springen aus dem Bergsee ----------
-        let (lake_center, lake_radius, level) = self.lake;
-        let near_lake = vec2(camera.x, camera.z).distance(lake_center) < lake_radius + 45.0;
+        // ---------- Fische springen vor der Küste aus dem Meer ----------
+        let hier = vec2(camera.x, camera.z);
+        let strand = self.straende.iter().copied().min_by(|a, b| a.distance(hier).total_cmp(&b.distance(hier)));
+        let near_lake = strand.is_some_and(|s| s.distance(hier) < 80.0);
         self.next_jump -= dt;
         if let (Some(fish), None, true, true) = (self.fish, &self.jump, near_lake, self.next_jump <= 0.0) {
             self.next_jump = self.rng.range(3.0, 8.0);
-            let at = lake_center + Vec2::from_angle(self.rng.range(0.0, std::f32::consts::TAU)) * self.rng.range(4.0, lake_radius - 8.0);
+            let strand = strand.unwrap_or(hier);
+            let hinaus = strand.normalize_or(Vec2::X);
+            let at = strand + hinaus * self.rng.range(12.0, 30.0) + hinaus.perp() * self.rng.range(-15.0, 15.0);
+            let level = 0.0;
             let dir = Vec2::from_angle(self.rng.range(0.0, std::f32::consts::TAU)) * self.rng.range(1.2, 2.2);
             let from = vec3(at.x, level, at.y);
             self.jump = Some(Jump { entity: fish, from, to: from + vec3(dir.x, 0.0, dir.y), time: 0.0 });

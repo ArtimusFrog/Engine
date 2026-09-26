@@ -221,15 +221,6 @@ impl World {
 
     /// Ein Takt Tier-Verhalten (nur auf dem Server): grasen, umherstreifen, fliehen.
     pub fn think_animals(&mut self, ctx: &Context) {
-        // Tagesablauf: Rehe ziehen morgens (5–9 Uhr) zum Trinken ans Ufer des Bergsees
-        let morning = (5.0..9.0).contains(&self.day.hour);
-        for animal in &mut self.animals {
-            animal.attraction = (morning && animal.kind == animals::AnimalKind::Deer).then(|| {
-                let (center, radius, _) = crate::island::lake();
-                let here = vec2(animal.position.x, animal.position.z);
-                center + (here - center).normalize_or(Vec2::X) * (radius + 3.0)
-            });
-        }
         let players: Vec<Vec3> = self.players.values().map(|a| ctx.physics.character_position(a.character)).collect();
         for animal in &mut self.animals {
             animal.think(Physics::FIXED_DT, &players, &self.terrain);
@@ -697,64 +688,6 @@ impl World {
         }
     }
 
-    /// Wasserfall aus der Nähe: Tropfen an der Kante, Gischt und Nebel am Fuß.
-    fn waterfall_spray(&mut self, ctx: &mut Context) {
-        let Some((top, foot)) = self.places.waterfall else { return };
-        if foot.distance(ctx.camera.position) > 70.0 {
-            return;
-        }
-        let rng = &mut self.effects_rng;
-        let dt = ctx.time.delta;
-        if rng.chance(dt * 25.0) {
-            ctx.particles.burst(Burst {
-                position: top + vec3(rng.range(-1.6, 1.6), 0.0, rng.range(-1.6, 1.6)),
-                count: 1,
-                color: vec3(0.85, 0.93, 1.0),
-                color_variation: 0.05,
-                speed: 0.5,
-                direction: (foot - top).with_y(0.0).normalize_or(Vec3::X) * 0.5,
-                size: 0.12,
-                life: 0.9,
-                gravity: 9.0,
-                glow: 0.4,
-                grow: 0.0,
-                round: true,
-            });
-        }
-        if rng.chance(dt * 18.0) {
-            ctx.particles.burst(Burst {
-                position: foot + vec3(rng.range(-1.5, 1.5), 0.1, rng.range(-1.5, 1.5)),
-                count: 2,
-                color: vec3(0.9, 0.95, 1.0),
-                color_variation: 0.04,
-                speed: 1.6,
-                direction: Vec3::Y * 1.2,
-                size: 0.22,
-                life: 1.1,
-                gravity: 3.0,
-                glow: 0.3,
-                grow: 1.5,
-                round: true,
-            });
-        }
-        if rng.chance(dt * 4.0) {
-            ctx.particles.burst(Burst {
-                position: foot + vec3(rng.range(-2.0, 2.0), 0.4, rng.range(-2.0, 2.0)),
-                count: 1,
-                color: vec3(0.78, 0.84, 0.88),
-                color_variation: 0.03,
-                speed: 0.4,
-                direction: Vec3::Y * 0.6,
-                size: 0.5,
-                life: 3.0,
-                gravity: -0.15,
-                glow: 0.0,
-                grow: 3.0,
-                round: true,
-            });
-        }
-    }
-
     /// Lampen der Sehenswürdigkeiten (nachts kräftiger) und schaukelnde Boote.
     fn place_lights(&mut self, ctx: &mut Context) {
         let night = ctx.env.sky.stars;
@@ -907,30 +840,33 @@ impl World {
         if let Some(volume) = self.weather.take_thunder(ctx.time.delta) {
             self.sound_events.push(SoundEvent::Thunder { volume });
         }
-        self.fireflies(ctx);
-        self.crystal_glow(ctx);
-        self.campfires(ctx);
-        self.place_lights(ctx);
-        self.waterfall_spray(ctx);
+        use crate::messung::messen;
+        messen("glühwürmchen", || self.fireflies(ctx));
+        messen("kristalle", || self.crystal_glow(ctx));
+        messen("feuer", || self.campfires(ctx));
+        messen("lichter", || self.place_lights(ctx));
         if self.wildlife.is_none() && !ctx.is_headless() {
             let (forests, beaches) = crate::island::wildlife_spots(&self.terrain);
-            self.wildlife = Some(crate::leben::Wildlife::new(ctx, &forests, &beaches, crate::island::lake()));
+            self.wildlife = Some(crate::leben::Wildlife::new(ctx, &forests, &beaches));
         }
         if let Some(wildlife) = &mut self.wildlife {
             let terrain = &self.terrain;
-            wildlife.update(ctx, &|x, z| terrain.height_at(x, z), &|p| crate::island::is_meadow(terrain, p));
+            messen("kleinleben", || wildlife.update(ctx, &|x, z| terrain.height_at(x, z), &|p| crate::island::is_meadow(terrain, p)));
         }
-        self.surf(ctx);
+        messen("brandung", || self.surf(ctx));
         if self.wachen.is_none() && !ctx.is_headless() {
             self.wachen = crate::wachen::Wachen::new(ctx);
         }
         if let Some(wachen) = &mut self.wachen {
-            wachen.update(ctx, &self.day);
+            messen("wachen", || wachen.update(ctx, &self.day));
         }
         self.update_bolts(ctx);
-        for animal in &mut self.animals {
-            animal.update_visual(ctx);
-        }
+        messen("tiere", || {
+            for animal in &mut self.animals {
+                animal.update_visual(ctx);
+            }
+        });
+        let _figuren = std::time::Instant::now();
         let dt = ctx.time.delta;
         let blend = (dt * 12.0).min(1.0);
         for (id, avatar) in &self.players {
@@ -939,7 +875,13 @@ impl World {
             entity.transform.rotation = entity.transform.rotation.slerp(target, blend);
             let position = entity.transform.position;
             if let Some(puppet) = self.puppets.get_mut(id) {
-                let ground = self.terrain.height_at(position.x, position.z);
+                // Boden unter den Füßen aus der Physik (Burg, Festung, Brücken …), sonst das Gelände –
+                // sonst hielte die Figur Böden von Bauwerken für Luft und schwebte statt zu gehen
+                let ground = ctx
+                    .physics
+                    .raycast(position, Vec3::NEG_Y, 4.0, Some(avatar.character))
+                    .map(|(_, d)| position.y - d)
+                    .unwrap_or_else(|| self.terrain.height_at(position.x, position.z));
                 puppet.update(ctx, position, ground);
             }
         }
@@ -948,6 +890,8 @@ impl World {
                 puppet.set_tool(avatar.tool);
             }
         }
+        crate::messung::eintragen("figuren", _figuren);
+        let _rohstoffe = std::time::Instant::now();
 
         // Schläge mit der Spitzhacke, die jetzt auftreffen
         let mut struck = Vec::new();

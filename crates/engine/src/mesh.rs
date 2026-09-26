@@ -23,6 +23,14 @@ impl Vertex {
     }
 }
 
+/// Knochen und Gewichte eines Eckpunkts – für Figuren, die die Grafikkarte verformt.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SkinVertex {
+    pub joints: [u32; 4],
+    pub weights: [f32; 4],
+}
+
 /// Geometrie im Arbeitsspeicher. Der Renderer lädt sie bei Bedarf auf die Grafikkarte.
 #[derive(Clone, Debug, Default)]
 pub struct MeshData {
@@ -34,6 +42,9 @@ pub struct MeshData {
     pub double_sided: bool,
     /// Pixel mit Textur-Alpha unter 0,5 weglassen (ausgeschnittene Blätter, Zäune).
     pub alpha_cutout: bool,
+    /// Leer = starres Mesh. Sonst je Eckpunkt Knochen und Gewichte: die Grafikkarte verformt
+    /// das Mesh mit den Knochenmatrizen des Objekts (`Entity::joints`).
+    pub skin: Vec<SkinVertex>,
 }
 
 impl MeshData {

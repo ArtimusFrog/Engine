@@ -1,6 +1,7 @@
-//! Das Hauptmenü als Titelbild: die Insel bei Nacht (mit Polarlicht), die Kamera kreist hoch
-//! darüber; dazu Kinobalken, Vignette, aufsteigende Glutfunken, ein großer goldener Titel und
-//! Knöpfe im Gold-Leder-Stil.
+//! Das Hauptmenü als Titelbild: die Insel bei Nacht (mit Polarlicht) in langsamen Kamerafahrten –
+//! vor allem um die Schattenfestung in der Inselmitte, dazwischen Schloss Grünfels und sein
+//! Marktplatz; Überblendungen über Schwarz, Kinobalken, Vignette, aufsteigende Glutfunken, ein
+//! großer goldener Titel und Knöpfe im Gold-Leder-Stil.
 
 use engine::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind};
 use engine::noise::Rng;
@@ -12,6 +13,19 @@ use crate::world::World;
 /// Uhrzeit im Menü: tiefe Nacht, Mond und Sterne stehen am Himmel.
 pub const MENU_HOUR: f32 = 23.2;
 
+/// Wie lange eine Einstellung dauert und wie lange die Überblendung über Schwarz (Sekunden).
+const SHOT: f32 = 12.0;
+const FADE: f32 = 1.3;
+
+/// Eine Kamerafahrt.
+#[derive(Clone, Copy)]
+enum Shot {
+    /// Langsamer Bogen um einen Punkt: Abstand, Höhe über dem Ziel, Startwinkel, Drehung (rad).
+    Orbit { target: Vec3, distance: f32, height: f32, angle: f32, sweep: f32 },
+    /// Gerade Fahrt von `from` nach `to`, der Blick wandert von `look_from` nach `look_to`.
+    Track { from: Vec3, to: Vec3, look_from: Vec3, look_to: Vec3 },
+}
+
 struct Ember {
     /// Position in Bildschirm-Anteilen (0..1), Tempo und Größe
     at: Pos2,
@@ -21,25 +35,65 @@ struct Ember {
 }
 
 pub struct TitleScreen {
+    shots: Vec<Shot>,
     opened: f32,
     embers: Vec<Ember>,
     rng: Rng,
 }
 
 impl TitleScreen {
-    /// Menü-Insel vorbereiten: tiefe Nacht mit Polarlicht, klarer Himmel.
+    /// Menü-Insel vorbereiten: tiefe Nacht mit Polarlicht; Kamerafahrten vor allem um die
+    /// Schattenfestung, dazwischen Schloss Grünfels und der Marktplatz.
     pub fn new(world: &mut World, now: f32) -> TitleScreen {
+        use crate::island::{burg_welt, festung_hoehe, BURG_HOEHE, BURG_ORT};
         world.day.hour = MENU_HOUR;
         world.weather.force_named("polarlicht");
-        TitleScreen { opened: now, embers: Vec::new(), rng: Rng::new(0x71_7E) }
+        let boden = festung_hoehe();
+        // Festung: Mitte der Insel, Tor nach Süden (+z), Plateau 11 m hoch, Zauberkugel über dem Bergfried
+        let hof = boden + 11.0;
+        let kugel = vec3(0.0, boden + 81.6, -9.0);
+        let mut shots = vec![
+            // Weiter Bogen um die ganze Festung, die Kugel leuchtet über allem
+            Shot::Orbit { target: vec3(0.0, boden + 28.0, 0.0), distance: 125.0, height: 30.0, angle: 0.35, sweep: 0.75 },
+            // Die Rampe hinauf, auf das Tor mit dem Totenschädel zu
+            Shot::Track { from: vec3(4.0, boden + 6.0, 105.0), to: vec3(1.5, hof + 3.0, 48.0),
+                          look_from: vec3(0.0, hof + 8.0, 20.0), look_to: vec3(0.0, hof + 6.0, 26.0) },
+            // Hinauf zur schwebenden Zauberkugel über dem Bergfried
+            Shot::Orbit { target: kugel, distance: 34.0, height: -14.0, angle: 2.2, sweep: 0.9 },
+            // Tief über dem Runenkreis im Hof
+            Shot::Orbit { target: vec3(11.0, hof + 1.5, 8.0), distance: 10.0, height: 5.0, angle: 0.6, sweep: 0.6 },
+            // Schloss Grünfels bei Nacht
+            Shot::Orbit { target: vec3(BURG_ORT.x, BURG_HOEHE + 16.0, BURG_ORT.y), distance: 120.0, height: 32.0, angle: 5.2, sweep: 0.5 },
+            // Die Festung von der anderen Seite, niedrig zwischen den Felsnadeln
+            Shot::Orbit { target: vec3(0.0, boden + 22.0, 0.0), distance: 72.0, height: 4.0, angle: 3.6, sweep: 0.6 },
+        ];
+        // Der Marktplatz mit Lichterketten und Maibaum
+        let markt = burg_welt(vec2(-32.25, 46.5));
+        shots.push(Shot::Orbit { target: vec3(markt.x, BURG_HOEHE + 3.0, markt.y), distance: 22.0, height: 9.0, angle: 1.2, sweep: 0.6 });
+        TitleScreen { shots, opened: now, embers: Vec::new(), rng: Rng::new(0x71_7E) }
     }
 
-    /// Die Kamera kreist langsam hoch über der ganzen Insel.
-    pub fn camera(&self, ctx: &mut Context) {
-        let t = ctx.time.elapsed * 0.03 + 0.8;
-        let r = crate::island::ISLAND_RADIUS * 1.25;
-        ctx.camera.position = vec3(t.sin() * r, crate::island::ISLAND_RADIUS * 0.38, t.cos() * r);
-        ctx.camera.look_at(vec3(0.0, 6.0, 0.0));
+    fn timing(&self, now: f32) -> (usize, f32) {
+        let t = (now - self.opened).max(0.0);
+        (((t / SHOT) as usize) % self.shots.len(), (t % SHOT) / SHOT)
+    }
+
+    /// Kamera der aktuellen Einstellung (nie unter dem Gelände).
+    pub fn camera(&self, ctx: &mut Context, world: &World) {
+        let (index, u) = self.timing(ctx.time.elapsed);
+        let weich = u * u * (3.0 - 2.0 * u);
+        let (mut position, ziel) = match self.shots[index] {
+            Shot::Orbit { target, distance, height, angle, sweep } => {
+                let w = angle + sweep * (u - 0.5);
+                let d = distance * (1.06 - u * 0.1);
+                (target + vec3(w.sin() * d, height + u * 3.0, w.cos() * d), target)
+            }
+            Shot::Track { from, to, look_from, look_to } => (from.lerp(to, weich), look_from.lerp(look_to, weich)),
+        };
+        let boden = world.terrain.height_at(position.x, position.z).max(0.0) + 2.0;
+        position.y = position.y.max(boden);
+        ctx.camera.position = position;
+        ctx.camera.look_at(ziel);
     }
 
     /// Alles über dem Bild: Vignette, Kinobalken, Glutfunken, Schwarzblende zwischen den Einstellungen.
@@ -81,8 +135,11 @@ impl TitleScreen {
         }
         self.embers.retain(|e| e.at.y > -0.05);
 
-        // Aus dem Schwarz einblenden, wenn das Menü aufgeht
-        let fade = 1.0 - ((now - self.opened) / 2.5).clamp(0.0, 1.0);
+        // Aus dem Schwarz einblenden, wenn das Menü aufgeht, und zwischen den Einstellungen
+        let (_, u) = self.timing(now);
+        let t = u * SHOT;
+        let intro = 1.0 - ((now - self.opened) / 2.5).clamp(0.0, 1.0);
+        let fade = (1.0 - (t / FADE).min(1.0)).max(1.0 - ((SHOT - t) / FADE).min(1.0)).max(intro);
         if fade > 0.0 {
             painter.rect_filled(screen, 0.0, Color32::from_black_alpha((fade * 255.0) as u8));
         }

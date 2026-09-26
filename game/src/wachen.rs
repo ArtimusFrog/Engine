@@ -24,8 +24,6 @@ const STRECKEN: [((f32, f32), (f32, f32), f32); 2] = [((-6.5, -25.0), (6.5, -25.
 struct Ritter {
     entity: EntityId,
     animator: Animator,
-    mesh: MeshId,
-    texture: Option<TextureId>,
     von: Vec2,
     bis: Vec2,
     versatz: f32,
@@ -94,17 +92,20 @@ impl Wachen {
         };
         let textures = model.register_textures(&mut ctx.assets);
         let texture = textures.first().copied();
+        // Beide Ritter teilen ein Mesh; die Grafikkarte verformt es je Ritter.
+        let mesh = ctx.assets.named_mesh("ritter_gpu", || model.skinned_gpu_mesh(texture));
         let ritter = STRECKEN
             .iter()
             .enumerate()
             .map(|(i, &((x0, y0), (x1, y1), versatz))| {
                 let mut animator = Animator::new(model.clone());
                 animator.play("Idle", true, 0.0);
-                let mesh = ctx.assets.add_mesh(animator.skinned_mesh(texture));
                 let (von, bis) = (welt(x0, y0), welt(x1, y1));
                 let start = vec3(von.x, BURG_HOEHE + 0.08, von.y);
-                let entity = ctx.scene.spawn(Entity::new(format!("Ritter {}", i + 1), mesh).with_transform(Transform::from_position(start)));
-                Ritter { entity, animator, mesh, texture, von, bis, versatz }
+                let mut entity = Entity::new(format!("Ritter {}", i + 1), mesh).with_transform(Transform::from_position(start));
+                entity.joints = animator.palette();
+                let entity = ctx.scene.spawn(entity);
+                Ritter { entity, animator, von, bis, versatz }
             })
             .collect();
         Some(Wachen { ritter })
@@ -128,9 +129,11 @@ impl Wachen {
                 }
                 ritter.animator.set_speed(if geht { 1.05 } else { 1.0 });
                 ritter.animator.update(dt);
-                ctx.assets.update_mesh(ritter.mesh, ritter.animator.skinned_mesh(ritter.texture));
             }
             if let Some(entity) = ctx.scene.try_get_mut(ritter.entity) {
+                if near {
+                    entity.joints = ritter.animator.palette();
+                }
                 entity.transform.position = position;
                 // Das Modell schaut nach +Z
                 entity.transform.rotation = Quat::from_rotation_y(blick.x.atan2(blick.y));
