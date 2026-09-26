@@ -373,6 +373,27 @@ impl Authority {
         self.neue_strikes = strikes;
         world.tower_shots.extend(shots.iter().copied());
         self.shots.extend(shots);
+        // Gefallene Straßen: die Siedlung an ihrem Ende wird zerstört (Dorfhalle und die Gebäude
+        // ihres Besitzers im Bauradius)
+        for lane in std::mem::take(&mut world.heer.gefallene_lanes) {
+            let Some(halle) = world.dorfhalle_auf_platz(lane).cloned() else { continue };
+            let radius = bauten::bauradius(halle.level);
+            let weg: Vec<(u32, Vec3)> = world
+                .buildings
+                .iter()
+                .filter(|b| b.id == halle.id || (b.owner == halle.owner && b.kind.produces().is_some() && b.position.distance(halle.position) <= radius))
+                .map(|b| (b.id, b.position))
+                .collect();
+            for (id, ort) in &weg {
+                world.remove_building(ctx, *id);
+                self.broadcast(ServerMessage::BuildingRemoved(*id));
+                let ereignis = crate::td::Ereignis::Explosion(*ort + Vec3::Y * 2.0, 5.0);
+                world.ereignisse.push(ereignis);
+                self.ereignisse.push(ereignis);
+            }
+            world.heer.meldungen.push(format!("Die Siedlung von {} ist zerstört ({} Gebäude).", halle.owner, weg.len()));
+            self.save(world);
+        }
         // Zerschlagene Barrikaden
         for id in std::mem::take(&mut self.verteidigung.zerstoert) {
             world.remove_building(ctx, id);
@@ -452,7 +473,7 @@ impl Authority {
         TdStand {
             aktiv: heer.enabled,
             welle: heer.welle,
-            leben: heer.leben,
+            leben: heer.leben.clone(),
             max_leben: heer.schwierigkeit.leben(),
             naechste: heer.naechste_in(),
             vorschau,

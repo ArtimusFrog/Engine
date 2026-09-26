@@ -490,8 +490,6 @@ const GRUPPEN: [Vorlage; 11] = [
 pub const WAVE_SECONDS: f32 = 45.0;
 /// Leben der Insel auf „Normal“ (siehe `Schwierigkeit::leben`).
 pub const MAX_LEBEN: u32 = 20;
-/// Pause nach einer Niederlage, bevor es wieder bei Welle 1 losgeht (s).
-const NEUSTART_SECONDS: f32 = 60.0;
 /// Anführer der Bosswellen (jede fünfte Welle, reihum)
 const BOSSE: [EnemyKind; 4] = [Golem, Knight, Warlock, Ghost];
 /// Obergrenze gleichzeitiger Einheiten (darüber fällt eine Welle aus)
@@ -635,9 +633,12 @@ pub struct Heer {
     rng: Rng,
     /// Besiegte Einheiten seit dem letzten Abholen
     pub gefallen: Vec<Gefallen>,
-    /// Nummer der zuletzt losgeschickten Welle (0 = noch keine) und die Leben der Insel
+    /// Nummer der zuletzt losgeschickten Welle (0 = noch keine) und die Leben jeder Straße
+    /// (jede Lane für sich – es gibt keinen gemeinsamen Pool)
     pub welle: u32,
-    pub leben: u32,
+    pub leben: Vec<u32>,
+    /// Straßen, die in diesem Takt gefallen sind (der Server zerstört dort die Siedlung)
+    pub gefallene_lanes: Vec<usize>,
     /// Meldungen für alle Spieler (neue Welle, Durchbruch, Niederlage)
     pub meldungen: Vec<String>,
     pub schwierigkeit: Schwierigkeit,
@@ -669,6 +670,7 @@ pub struct Heer {
 
 impl Heer {
     pub fn new(routes: Vec<Route>) -> Heer {
+        let lanes = routes.len();
         let mut heer = Heer {
             routes,
             groups: Vec::new(),
@@ -678,7 +680,8 @@ impl Heer {
             rng: Rng::new(0x7E_E4),
             gefallen: Vec::new(),
             welle: 0,
-            leben: MAX_LEBEN,
+            leben: vec![MAX_LEBEN; lanes],
+            gefallene_lanes: Vec::new(),
             meldungen: Vec::new(),
             schwierigkeit: Schwierigkeit::Normal,
             endlos: false,
@@ -800,7 +803,7 @@ impl Heer {
         self.groups.clear();
         self.zaehler.clear();
         self.welle = 0;
-        self.leben = self.schwierigkeit.leben();
+        self.leben = vec![self.schwierigkeit.leben(); self.routes.len()];
         self.timer = 5.0;
         self.sieg = false;
         self.beitrag.clear();
@@ -1057,8 +1060,7 @@ impl Heer {
             self.spalten(gi, row, side, boss, welle, zaeh, staerke, ort);
         }
         self.explodieren();
-        // Am Ende der Straße: Durchbruch – die Insel verliert Leben, die Einheit verschwindet
-        let mut verlust = 0;
+        // Am Ende der Straße: Durchbruch – diese Straße verliert Leben, die Einheit verschwindet
         self.durchbrueche.clear();
         for group in &mut self.groups {
             let route = &self.routes[group.route];
@@ -1083,22 +1085,29 @@ impl Heer {
                 !durch
             });
             if hier > 0 {
-                verlust += hier;
                 self.durchbrueche.push((group.route, hier));
             }
         }
         self.groups.retain(|g| !g.members.is_empty());
-        if verlust > 0 {
-            self.leben = self.leben.saturating_sub(verlust);
-            if self.leben == 0 {
-                self.meldungen.push(format!("Die Insel ist gefallen – nach {} Wellen. In {:.0} Sekunden geht es von vorn los.", self.welle, NEUSTART_SECONDS));
-                self.groups.clear();
-                self.zaehler.clear();
-                self.welle = 0;
-                self.leben = self.schwierigkeit.leben();
-                self.timer = NEUSTART_SECONDS;
-                self.sieg = false;
-                self.plane(1);
+        // Jede Straße hat ihre eigenen Leben. Fällt eine, verschwinden ihre Truppen, ihre Siedlung
+        // wird zerstört (Server) und sie fängt mit vollen Leben neu an – die anderen spielen weiter.
+        let voll = self.schwierigkeit.leben();
+        self.leben.resize(self.routes.len(), voll);
+        for (lane, verlust) in std::mem::take(&mut self.durchbrueche).into_iter().fold(Vec::<(usize, u32)>::new(), |mut summe, (lane, n)| {
+            match summe.iter_mut().find(|s| s.0 == lane) {
+                Some(s) => s.1 += n,
+                None => summe.push((lane, n)),
+            }
+            summe
+        }) {
+            self.durchbrueche.push((lane, verlust));
+            self.leben[lane] = self.leben[lane].saturating_sub(verlust);
+            if self.leben[lane] == 0 {
+                let name = self.routes[lane].name();
+                self.meldungen.push(format!("Die Straße {name} ist gefallen! Ihre Siedlung wird zerstört – die Straße fängt mit vollen Leben neu an."));
+                self.groups.retain(|g| g.route != lane);
+                self.leben[lane] = voll;
+                self.gefallene_lanes.push(lane);
             }
         }
         self.auswerten();
@@ -1239,7 +1248,7 @@ impl Heer {
                 schaden,
             };
             self.berichte.push((bericht, bester_turm));
-            if welle == ZIEL_WELLE && self.leben > 0 && !self.sieg {
+            if welle == ZIEL_WELLE && !self.sieg {
                 self.sieg = true;
                 self.sieg_neu = true;
                 if self.endlos {
@@ -1979,7 +1988,7 @@ mod tests {
         let mut world = crate::world::World::new(&mut ctx);
         let mut heer = std::mem::replace(&mut world.heer, Heer::new(Vec::new()));
         let boden = boden(&world);
-        assert_eq!((heer.welle, heer.leben), (0, MAX_LEBEN));
+        assert_eq!((heer.welle, heer.leben.clone()), (0, vec![MAX_LEBEN; heer.routes.len()]));
         // Welle 1: gewöhnliche Truppen mit Grundleben, kein Boss; die Vorschau stimmt
         let (vorschau, boss) = heer.vorschau();
         assert!(boss.is_none());
@@ -2007,11 +2016,11 @@ mod tests {
         heer.spawn_wave();
         heer.enabled = false;
         // Viele Leben, damit die Insel nicht fällt (sonst gibt es keine Auswertung)
-        heer.leben = 1000;
-        let mut minimum = heer.leben;
+        heer.leben = vec![1000; heer.routes.len()];
+        let mut minimum = 1000;
         for _ in 0..3000 {
             heer.tick(0.1, &[], &boden);
-            minimum = minimum.min(heer.leben);
+            minimum = minimum.min(*heer.leben.iter().min().unwrap());
             if heer.count() == 0 {
                 break;
             }
@@ -2021,19 +2030,25 @@ mod tests {
         // Die Welle ist vorbei: Auswertung liegt vor
         assert!(heer.berichte.iter().any(|(b, _)| b.welle == 1 && b.durchgebrochen > 0), "keine Auswertung");
 
-        // Niederlage: bei 0 Leben geht es nach einer Pause wieder bei Welle 1 los
-        heer.leben = 1;
+        // Eine Straße ohne Leben fällt allein: ihre Truppen verschwinden, sie hat wieder volle Leben,
+        // die anderen Straßen und die Wellen laufen weiter
+        let welle = heer.welle;
+        heer.leben = vec![1000; heer.routes.len()];
+        heer.leben[2] = 1;
         heer.spawn_wave();
         heer.enabled = false;
         for _ in 0..3000 {
             heer.tick(0.1, &[], &boden);
-            if heer.welle == 0 {
+            if !heer.gefallene_lanes.is_empty() {
                 break;
             }
         }
-        assert_eq!((heer.welle, heer.leben, heer.count()), (0, MAX_LEBEN, 0), "Niederlage setzt nicht zurück");
+        assert_eq!(heer.gefallene_lanes, vec![2], "Straße Nord fällt nicht");
+        assert_eq!(heer.leben[2], MAX_LEBEN, "gefallene Straße bekommt keine vollen Leben");
+        assert!(heer.leben[0] > MAX_LEBEN, "andere Straßen sind mitgefallen");
+        assert!(heer.groups.iter().all(|g| g.route != 2), "Truppen der gefallenen Straße bleiben");
+        assert!(heer.welle > welle, "die Wellen sind zurückgesetzt");
         assert!(heer.meldungen.iter().any(|m| m.contains("gefallen")));
-        assert!(heer.naechste_in() > 30.0);
     }
 
     #[test]

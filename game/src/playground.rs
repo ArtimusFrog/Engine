@@ -432,10 +432,11 @@ impl Playground {
     fn admin_panel(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         use crate::protocol::{AdminCommand, WETTER};
         let Some(session) = &mut self.session else { return };
+        let strassen: Vec<String> = session.world().td.strassen.iter().map(|s| s.0.clone()).collect();
         let (weather, waves, count, welle, leben, schwierigkeit, endlos) = {
             let world = session.world();
             let td = &world.td;
-            (world.weather_choice, td.aktiv, world.feinde.len(), td.welle, td.leben, td.schwierigkeit, td.endlos)
+            (world.weather_choice, td.aktiv, world.feinde.len(), td.welle, td.leben.clone(), td.schwierigkeit, td.endlos)
         };
         let mut commands = Vec::new();
         let mut close = false;
@@ -459,7 +460,8 @@ impl Playground {
             ui.add_space(10.0);
             ui.label(RichText::new("Truppen der Schattenfestung").size(16.0).strong().color(ui::ACCENT));
             ui.label(RichText::new(format!("{count} Einheiten unterwegs · {}", if waves { "Spawn läuft" } else { "Spawn gestoppt" })).size(14.0));
-            ui.label(RichText::new(format!("Welle {} · Leben der Insel {}/{}", welle, leben, schwierigkeit.leben())).size(14.0));
+            let leben: Vec<String> = leben.iter().zip(&strassen).map(|(l, s)| format!("{s} {l}")).collect();
+            ui.label(RichText::new(format!("Welle {} · Leben je Straße (von {}): {}", welle, schwierigkeit.leben(), leben.join(" · "))).size(14.0));
             ui.horizontal(|ui| {
                 let text = if waves { "Spawn stoppen" } else { "Spawn starten" };
                 if ui.button(RichText::new(text).size(16.0)).clicked() {

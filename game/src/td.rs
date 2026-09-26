@@ -145,7 +145,8 @@ pub struct TdStand {
     pub aktiv: bool,
     /// Nummer der zuletzt losgeschickten Welle (0 = noch keine)
     pub welle: u32,
-    pub leben: u32,
+    /// Leben jeder Straße (Reihenfolge wie `strassen`) und die vollen Leben
+    pub leben: Vec<u32>,
     pub max_leben: u32,
     /// Sekunden bis zur nächsten Welle
     pub naechste: f32,
@@ -174,10 +175,11 @@ impl TdStand {
         self.aktiv || self.welle > 0 || self.sieg
     }
 
-    /// Name der Straße, die ein Spieler verteidigt.
-    pub fn strasse_von(&self, name: &str) -> Option<&str> {
-        self.strassen.iter().find(|(_, v)| v.as_deref() == Some(name)).map(|(s, _)| s.as_str())
+    /// Die Straße, die ein Spieler verteidigt (Index).
+    pub fn lane_von(&self, name: &str) -> Option<usize> {
+        self.strassen.iter().position(|(_, v)| v.as_deref() == Some(name))
     }
+
 }
 
 /// Auswertung am Ende einer Welle.

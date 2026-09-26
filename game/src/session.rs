@@ -598,6 +598,13 @@ mod tests {
         assert_eq!(crate::bauten::siedlung_pruefen(session.world(), BuildingKind::Dorfhalle, fremd.0, "bert"), Err("Dieser Siedlungsplatz ist schon vergeben"));
         // Wer eine Dorfhalle hat, fängt dort an
         assert!(vec2(session.world().startpunkt("Nils").x, session.world().startpunkt("Nils").z).distance(mitte) < 20.0);
+        // Fällt die Straße, wird die Siedlung an ihrem Ende zerstört (Dorfhalle und Gebäude im Radius)
+        let vorher = session.world().buildings.len();
+        session.world_mut().heer.gefallene_lanes.push(1);
+        session.fixed_update(&mut ctx, crate::protocol::PlayerInput::default()).unwrap();
+        assert!(session.world().dorfhalle_von("nils").is_none(), "Dorfhalle steht noch");
+        assert_eq!(session.world().buildings.len(), vorher - 2, "Gebäude im Radius stehen noch");
+        assert!(session.world().dorfhalle_von("anna").is_some(), "fremde Siedlung mit zerstört");
     }
 
     #[test]

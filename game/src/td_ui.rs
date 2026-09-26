@@ -88,9 +88,18 @@ pub fn wellen_hud(egui_ctx: &egui::Context, world: &World, ich: &str, bericht: O
                     } else {
                         ui.label(RichText::new("·  pausiert").size(15.0).color(ui::MUTED));
                     }
-                    ui.label(RichText::new(format!("·  Leben {}/{}", td.leben, td.max_leben)).size(15.0).strong().color(leben_farbe(td.leben, td.max_leben)));
-                    if let Some(strasse) = td.strasse_von(ich) {
-                        ui.label(RichText::new(format!("·  Straße {strasse}")).size(14.0).color(ui::MUTED));
+                    // Leben je Straße: die eigene groß, die anderen klein daneben
+                    let eigene = td.lane_von(ich);
+                    if let Some(lane) = eigene {
+                        let leben = td.leben.get(lane).copied().unwrap_or(0);
+                        ui.label(RichText::new(format!("·  Straße {}: {}/{} Leben", td.strassen[lane].0, leben, td.max_leben)).size(15.0).strong().color(leben_farbe(leben, td.max_leben)));
+                    }
+                    for (lane, (name, _)) in td.strassen.iter().enumerate() {
+                        if Some(lane) == eigene {
+                            continue;
+                        }
+                        let leben = td.leben.get(lane).copied().unwrap_or(0);
+                        ui.label(RichText::new(format!("{} {}", name, leben)).size(13.0).color(leben_farbe(leben, td.max_leben).gamma_multiply(0.85)));
                     }
                 });
                 if td.aktiv && !(td.sieg && !td.endlos) {
@@ -180,10 +189,11 @@ pub fn td_fenster(egui_ctx: &egui::Context, world: &World, ich: &str) -> (Vec<Td
         ui::heading(ui, "Verteidigung der Insel");
         let ziel = if td.endlos { "Endlosmodus".to_string() } else { format!("Ziel: Welle {ZIEL_WELLE} überstehen") };
         ui.label(
-            RichText::new(format!("Welle {} · {} · Schwierigkeit {} · Leben {}/{}", td.welle, ziel, td.schwierigkeit.label(), td.leben, td.max_leben))
+            RichText::new(format!("Welle {} · {} · Schwierigkeit {} · {} Leben je Straße", td.welle, ziel, td.schwierigkeit.label(), td.max_leben))
                 .size(15.0)
-                .color(leben_farbe(td.leben, td.max_leben)),
+                .color(ui::TEXT),
         );
+        ui.label(RichText::new("Jede Straße hat ihre eigenen Leben. Fällt eine, wird die Siedlung an ihrem Ende zerstört.").size(13.0).color(ui::MUTED));
         if td.sieg {
             ui.label(RichText::new("Welle 30 überstanden – die Insel ist gerettet!").size(16.0).strong().color(GOLD));
         }
@@ -216,6 +226,8 @@ pub fn td_fenster(egui_ctx: &egui::Context, world: &World, ich: &str) -> (Vec<Td
                 for (i, (spalte, (name, wer))) in spalten.iter_mut().zip(&td.strassen).enumerate() {
                     egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(6.0).inner_margin(8.0).show(spalte, |ui| {
                         ui.label(RichText::new(format!("Straße {name}")).size(15.0).strong());
+                        let leben = td.leben.get(i).copied().unwrap_or(0);
+                        ui.label(RichText::new(format!("{leben}/{} Leben", td.max_leben)).size(14.0).strong().color(leben_farbe(leben, td.max_leben)));
                         let meins = wer.as_deref() == Some(ich);
                         ui.label(RichText::new(wer.clone().unwrap_or_else(|| "frei".into())).size(13.0).color(if meins { GRUEN } else { ui::MUTED }));
                         if meins {

@@ -187,7 +187,7 @@ pub struct World {
     schutzstein_teile: Vec<Vec<EntityId>>,
     /// Siedlungsplätze am Ende der Heerstraßen (Mitte, Höhe des ebenen Bodens), je Straße
     pub siedlungsplaetze: Vec<(Vec2, f32)>,
-    shown_leben: u32,
+    shown_leben: Vec<u32>,
     /// Stand der Verteidigung (beim Server selbst gerechnet, beim Client aus dem Schnappschuss)
     pub td: crate::td::TdStand,
     /// Kills und Schaden je Turm, Schaden und Kills je Spieler (zuletzt gemeldet)
@@ -252,7 +252,7 @@ impl World {
             schutzsteine: Vec::new(),
             schutzstein_teile: Vec::new(),
             siedlungsplaetze: island.siedlungen.clone(),
-            shown_leben: crate::heer::MAX_LEBEN,
+            shown_leben: Vec::new(),
             td: Default::default(),
             td_stats: HashMap::new(),
             td_beitrag: Vec::new(),
@@ -1141,8 +1141,16 @@ impl World {
             self.chat_events.push(ChatLine::notice(text));
         }
         // Durchbruch: die Schutzsteine blitzen auf
-        if self.td.leben < self.shown_leben && self.td.welle > 0 {
-            for &stein in &self.schutzsteine {
+        for lane in 0..self.td.leben.len().min(self.schutzsteine.len()) {
+            if self.shown_leben.get(lane).is_none_or(|&vorher| self.td.leben[lane] >= vorher) {
+                continue;
+            }
+            // Dort blitzt der Schutzstein auf – oder die Dorfhalle, wenn eine steht
+            let stein = match self.dorfhalle_auf_platz(lane) {
+                Some(halle) => halle.position + Vec3::Y * 4.0,
+                None => self.schutzsteine[lane],
+            };
+            {
                 ctx.particles.burst(Burst {
                     position: stein + Vec3::Y * 5.8,
                     count: 50,
@@ -1159,7 +1167,7 @@ impl World {
                 });
             }
         }
-        self.shown_leben = self.td.leben;
+        self.shown_leben = self.td.leben.clone();
         // Wo eine Dorfhalle steht, ersetzt sie den Schutzstein
         for platz in 0..self.schutzstein_teile.len() {
             let sichtbar = self.dorfhalle_auf_platz(platz).is_none();

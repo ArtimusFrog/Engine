@@ -1328,8 +1328,8 @@ mod kampf_tests {
             heer.meldungen.clear();
             heer.berichte.clear();
             heer.ereignisse.clear();
-            if heer.welle == 0 && hoechste > 0 {
-                return hoechste;
+            if !heer.gefallene_lanes.is_empty() {
+                return heer.welle;
             }
             hoechste = hoechste.max(heer.welle);
             if heer.sieg {
@@ -1362,8 +1362,8 @@ mod kampf_tests {
             (Ballista, 3, 2),
             (Storm, 3, 2),
         ]);
-        println!("Balancing: ohne Türme fällt die Insel in Welle {ohne}, schwach in Welle {schwach}, stark {}", if stark > crate::td::ZIEL_WELLE { "nie (Sieg)".to_string() } else { format!("in Welle {stark}") });
-        assert!(ohne <= 5, "ohne Verteidigung hält die Insel zu lange: {ohne}");
+        println!("Balancing: ohne Türme fällt die erste Straße in Welle {ohne}, schwach in Welle {schwach}, stark {}", if stark > crate::td::ZIEL_WELLE { "nie (Sieg)".to_string() } else { format!("in Welle {stark}") });
+        assert!(ohne <= 8, "ohne Verteidigung hält die Insel zu lange: {ohne}");
         assert!((4..=20).contains(&schwach), "schwache Verteidigung: Welle {schwach}");
         assert!(stark > 20, "starke Verteidigung fällt schon in Welle {stark}");
     }
