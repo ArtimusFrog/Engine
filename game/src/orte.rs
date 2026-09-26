@@ -275,6 +275,8 @@ pub struct SightSpots {
     pub cave: Option<(Vec2, Vec2)>,
     /// Mühlenhof: Mitte (Windmühle) und Richtung zum Lager
     pub farm: Option<(Vec2, Vec2)>,
+    /// Tempelruine: Mitte und Richtung der Treppe
+    pub ruin: Option<(Vec2, Vec2)>,
 }
 
 /// Fester Kasten relativ zu einem aufgestellten Modell (`offset` und `yaw` in dessen Achsen).
@@ -404,6 +406,24 @@ pub fn build_sights(ctx: &mut Context, terrain: &Terrain, spots: &SightSpots, pl
             }
         }
         places.lights.push((ground(terrain, at) + rotation * vec3(2.6, 2.4, 0.0), vec3(2.2, 1.5, 0.7), 8.0));
+    }
+    if let Some((at, look)) = spots.ruin {
+        let rotation = facing(look);
+        if let Some(entity) = prop(ctx, terrain, "tempelruine", at, rotation, None) {
+            // Die Plattform sitzt tiefer im Boden, damit man bequem hinaufgeht
+            ctx.scene.get_mut(entity).transform.position.y -= 0.35;
+            let base = ground(terrain, at) - Vec3::Y * 0.35;
+            // Säulen (Blender x/y → Spiel x/-z) und der Sockel mit dem Runenstein
+            for y in [-3.0f32, 3.0] {
+                for x in [-4.4f32, -2.2, 0.0, 2.2, 4.4] {
+                    solid(ctx, entity, base, rotation, vec3(x, 1.6, -y), vec3(0.75, 2.4, 0.75), 0.0);
+                }
+            }
+            solid(ctx, entity, base, rotation, vec3(0.0, 1.0, 0.0), vec3(1.4, 1.3, 1.4), 0.0);
+            places.lights.push((base + Vec3::Y * 2.2, vec3(0.5, 1.6, 2.4), 9.0));
+            places.labels.push(("Tempelruine", at));
+            blocked.push((at, 9.0));
+        }
     }
     if let Some((at, out)) = spots.cave {
         let rotation = facing(out);

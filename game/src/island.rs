@@ -827,7 +827,21 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
             .then(|| -(distance - 160.0).abs() * 0.01 - flat)
     })
     .map(|p| (p, (camp - p).normalize_or(Vec2::X)));
-    crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave, farm }
+    // Tempelruine: ebene Anhöhe mit Weitblick, fern von Burg, Festung und den anderen Orten
+    let others: Vec<Vec2> = [tower.map(|t| t.0), farm.map(|f| f.0), circle].into_iter().flatten().collect();
+    let ruin = best_spot(|p| {
+        let height = h(p);
+        let flat = unevenness(terrain, p, 7.0);
+        ((13.0..30.0).contains(&height)
+            && flat < 1.2
+            && p.length() > 170.0
+            && p.distance(BURG_ORT) > 150.0
+            && p.distance(camp) > 120.0
+            && others.iter().all(|o| o.distance(p) > 90.0))
+            .then(|| height * 0.1 - flat * 2.0)
+    })
+    .map(|p| (p, (camp - p).normalize_or(Vec2::X)));
+    crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave, farm, ruin }
 }
 
 
