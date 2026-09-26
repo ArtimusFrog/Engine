@@ -290,8 +290,10 @@ impl BauVisuals {
         }
     }
 
-    /// Einmal pro Bild: Baufortschritt zeigen, Staub und Hammerschläge.
-    pub fn update(&mut self, ctx: &mut Context, buildings: &[Building], sounds: &mut Vec<SoundEvent>) {
+    /// Einmal pro Bild: Baufortschritt zeigen, Staub und Hammerschläge. Liefert die Gebäude,
+    /// die gerade fertig geworden sind.
+    pub fn update(&mut self, ctx: &mut Context, buildings: &[Building], sounds: &mut Vec<SoundEvent>) -> Vec<BuildingKind> {
+        let mut done = Vec::new();
         let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
         for building in buildings {
             let Some(site) = self.sites.get_mut(&building.id) else { continue };
@@ -326,6 +328,7 @@ impl BauVisuals {
                         round: true,
                     });
                     sounds.push(SoundEvent::Built { at: building.position, done: true });
+                    done.push(building.kind);
                 }
                 continue;
             }
@@ -362,6 +365,7 @@ impl BauVisuals {
                 }
             }
         }
+        done
     }
 
     /// Vorschau beim Platzieren: Modell in Grün (passt) oder Rot (passt nicht). `None` = weg.

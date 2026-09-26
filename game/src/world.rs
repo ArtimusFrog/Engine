@@ -907,7 +907,9 @@ impl World {
         if let Some(wachen) = &mut self.wachen {
             messen("wachen", || wachen.update(ctx, &self.day));
         }
-        self.bau.update(ctx, &self.buildings, &mut self.sound_events);
+        for kind in self.bau.update(ctx, &self.buildings, &mut self.sound_events) {
+            self.chat_events.push(ChatLine::notice(format!("{} ist fertig gebaut und liefert jetzt {}.", kind.label(), kind.produces().label())));
+        }
         self.update_bolts(ctx);
         messen("tiere", || {
             for animal in &mut self.animals {
