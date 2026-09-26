@@ -1435,7 +1435,7 @@ impl CullView<'_> {
             let world_radius = radius * scale + 1.0;
             let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
             let seen = sphere_visible(self.camera_planes, world_center, world_radius);
-            let casts_shadow = sphere_visible(self.shadow_planes, world_center, world_radius);
+            let casts_shadow = entity.casts_shadow && sphere_visible(self.shadow_planes, world_center, world_radius);
             if !seen && !casts_shadow {
                 continue;
             }

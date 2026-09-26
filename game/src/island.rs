@@ -1375,7 +1375,10 @@ fn crystal_node(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: 
 
 fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
     let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size));
-    ctx.scene.spawn(Entity::new("Deko", mesh).with_transform(transform).with_color(color).with_material(material));
+    let mut entity = Entity::new("Deko", mesh).with_transform(transform).with_color(color).with_material(material);
+    // Gras, Farne und Blumen werfen keinen Schatten (winzig, aber sehr viele Blattkarten)
+    entity.casts_shadow = !(material == GRASS || material == FLOWERS);
+    ctx.scene.spawn(entity);
     // Leuchtende Teile aus Blender-Modellen (Material mit Emission) glühen nachts.
     if let Some(glow) = glow {
         ctx.scene.spawn(Entity::new("Deko-Leuchten", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.2 }));

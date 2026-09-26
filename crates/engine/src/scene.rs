@@ -82,6 +82,8 @@ pub struct Entity {
     pub parent: Option<EntityId>,
     /// Knochenmatrizen für Meshes mit `MeshData::skin` (jedes Bild neu vom Animator).
     pub joints: Vec<glam::Mat4>,
+    /// Wirft einen Schatten (kleines Gras nicht – spart viel Arbeit im Schattendurchgang).
+    pub casts_shadow: bool,
 }
 
 impl Entity {
@@ -95,6 +97,7 @@ impl Entity {
             material: Material::Standard,
             parent: None,
             joints: Vec::new(),
+            casts_shadow: true,
         }
     }
 
