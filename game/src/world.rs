@@ -181,6 +181,9 @@ pub struct World {
     building_bodies: HashMap<u32, (EntityId, Vec<RigidBodyHandle>)>,
     /// Schüsse der Türme, die noch gezeigt werden sollen
     pub tower_shots: Vec<crate::tuerme::Schuss>,
+    /// Schutzsteine an den Straßenenden (Mitte am Boden) und die zuletzt gezeigten Leben
+    pub schutzsteine: Vec<Vec3>,
+    shown_leben: u32,
 }
 
 impl World {
@@ -231,7 +234,26 @@ impl World {
             weather_choice: 0,
             building_bodies: HashMap::new(),
             tower_shots: Vec::new(),
+            schutzsteine: Vec::new(),
+            shown_leben: crate::heer::MAX_LEBEN,
         };
+        // Schutzsteine am Ende jeder Heerstraße (etwas hinter dem Ende, quer zur Straße)
+        for (ende, richtung) in world.heer.enden() {
+            let p = vec2(ende.x, ende.z) + richtung * 5.0;
+            let boden = vec3(p.x, world.terrain.height_at(p.x, p.y), p.y);
+            world.schutzsteine.push(boden);
+            if !ctx.is_headless() {
+                if let Some(&(mesh, glow)) = crate::asset_files::load_variants(ctx, "bauten", "schutzstein", Vec3::ONE, 0.0).first() {
+                    let transform = Transform::from_position(boden).with_rotation(Quat::from_rotation_y(richtung.x.atan2(richtung.y)));
+                    ctx.scene.spawn(Entity::new("Schutzstein", mesh).with_transform(transform));
+                    if let Some(glow) = glow {
+                        ctx.scene.spawn(Entity::new("Schutzstein (leuchtet)", glow).with_transform(transform).with_material(Material::Emissive { glow: 2.2 }));
+                    }
+                }
+                world.places.lights.push((boden + Vec3::Y * 6.0, vec3(0.6, 1.4, 2.4), 12.0));
+                world.places.labels.push(("Schutzstein", p));
+            }
+        }
         for (id, spec) in island.resources {
             let health = spec.max_health;
             world.resources.insert(
@@ -1020,6 +1042,26 @@ impl World {
             };
             self.chat_events.push(ChatLine::notice(text));
         }
+        // Durchbruch: die Schutzsteine blitzen auf
+        if self.heer.leben < self.shown_leben {
+            for &stein in &self.schutzsteine {
+                ctx.particles.burst(Burst {
+                    position: stein + Vec3::Y * 5.8,
+                    count: 50,
+                    color: vec3(1.0, 0.35, 0.3),
+                    color_variation: 0.2,
+                    speed: 5.0,
+                    direction: Vec3::Y,
+                    size: 0.14,
+                    life: 1.2,
+                    gravity: 2.0,
+                    glow: 4.0,
+                    grow: 0.0,
+                    round: true,
+                });
+            }
+        }
+        self.shown_leben = self.heer.leben;
         for shot in std::mem::take(&mut self.tower_shots) {
             if let Some(building) = self.buildings.iter().find(|b| b.id == shot.turm) {
                 self.bau.shot(ctx, building, shot.ziel, &mut self.sound_events);

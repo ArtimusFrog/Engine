@@ -132,6 +132,10 @@ impl Authority {
         let shots = self.verteidigung.tick(Physics::FIXED_DT, &world.buildings, &mut world.heer);
         world.tower_shots.extend(shots.iter().copied());
         self.shots.extend(shots);
+        for text in std::mem::take(&mut world.heer.meldungen) {
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            self.broadcast(ServerMessage::Notice(text));
+        }
         for (name, kind) in std::mem::take(&mut world.heer.gefallen) {
             let beute: Vec<(Item, u32)> = crate::tuerme::beute(kind).to_vec();
             self.give(world, &name, &beute);
@@ -317,6 +321,7 @@ impl Authority {
             AdminCommand::Waves(on) => world.heer.set_enabled(on),
             AdminCommand::WaveNow => world.heer.spawn_wave(),
             AdminCommand::ClearEnemies => world.heer.clear(),
+            AdminCommand::ResetWaves => world.heer.reset(),
         }
     }
 
@@ -657,6 +662,9 @@ impl Authority {
             weather: world.weather_choice,
             waves: world.heer.enabled,
             shots: std::mem::take(&mut self.shots),
+            welle: world.heer.welle,
+            leben: world.heer.leben,
+            naechste: world.heer.naechste_in(),
         });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));

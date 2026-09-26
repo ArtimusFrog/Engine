@@ -220,6 +220,7 @@ impl Replica {
             ServerMessage::BuildRefused(reason) => world.chat_events.push(crate::world::ChatLine::notice(reason)),
             ServerMessage::BuildingChanged(building) => world.replace_building(ctx, building),
             ServerMessage::BuildingRemoved(id) => world.remove_building(ctx, id),
+            ServerMessage::Notice(text) => world.chat_events.push(crate::world::ChatLine::notice(text)),
         }
     }
 
@@ -231,6 +232,7 @@ impl Replica {
             world.feinde = std::mem::take(&mut snapshot.enemies);
             world.set_weather(snapshot.weather);
             world.heer.enabled = snapshot.waves;
+            world.heer.sync(snapshot.welle, snapshot.leben, snapshot.naechste);
         }
         world.strikes.append(&mut snapshot.strikes);
         world.tower_shots.append(&mut snapshot.shots);

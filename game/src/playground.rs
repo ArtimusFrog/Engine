@@ -105,6 +105,8 @@ pub struct Playground {
     demo_fight: bool,
     /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
     demo_towers: bool,
+    /// Nur zum Testen: Wellen gleich bei dieser Nummer beginnen lassen (`--demo-welle N`)
+    demo_wave: Option<u32>,
     demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
@@ -171,6 +173,7 @@ impl Playground {
             demo_troops: false,
             demo_fight: false,
             demo_towers: false,
+            demo_wave: None,
             demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
@@ -373,9 +376,9 @@ impl Playground {
     fn admin_panel(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         use crate::protocol::{AdminCommand, WETTER};
         let Some(session) = &mut self.session else { return };
-        let (weather, waves, count) = {
+        let (weather, waves, count, welle, leben) = {
             let world = session.world();
-            (world.weather_choice, world.heer.enabled, world.feinde.len())
+            (world.weather_choice, world.heer.enabled, world.feinde.len(), world.heer.welle, world.heer.leben)
         };
         let mut commands = Vec::new();
         let mut close = false;
@@ -399,6 +402,7 @@ impl Playground {
             ui.add_space(10.0);
             ui.label(RichText::new("Truppen der Schattenfestung").size(16.0).strong().color(ui::ACCENT));
             ui.label(RichText::new(format!("{count} Einheiten unterwegs · {}", if waves { "Spawn läuft" } else { "Spawn gestoppt" })).size(14.0));
+            ui.label(RichText::new(format!("Welle {} · Leben der Insel {}/{}", welle, leben, crate::heer::MAX_LEBEN)).size(14.0));
             ui.horizontal(|ui| {
                 let text = if waves { "Spawn stoppen" } else { "Spawn starten" };
                 if ui.button(RichText::new(text).size(16.0)).clicked() {
@@ -409,6 +413,9 @@ impl Playground {
                 }
                 if ui.button(RichText::new("Alle entfernen").size(16.0)).clicked() {
                     commands.push(AdminCommand::ClearEnemies);
+                }
+                if ui.button(RichText::new("Zurück auf Welle 1").size(16.0)).clicked() {
+                    commands.push(AdminCommand::ResetWaves);
                 }
             });
             ui.label(
@@ -1222,6 +1229,27 @@ impl Playground {
             return;
         }
         ui::time_bar(egui_ctx, session.day());
+        // Wellen der Schattenfestung: Nummer, Countdown, Leben der Insel
+        let heer = &session.world().heer;
+        if heer.enabled || heer.welle > 0 {
+            egui::Area::new(egui::Id::new("wellen"))
+                .anchor(Align2::CENTER_TOP, [0.0, 92.0])
+                .interactable(false)
+                .show(egui_ctx, |ui| {
+                    egui::Frame::new().fill(Color32::from_black_alpha(165)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("Welle {}", heer.welle)).size(16.0).strong().color(Color32::from_rgb(210, 150, 255)));
+                            if heer.enabled {
+                                ui.label(RichText::new(format!("·  nächste in {:.0} s", heer.naechste_in())).size(15.0));
+                            }
+                            let anteil = heer.leben as f32 / crate::heer::MAX_LEBEN as f32;
+                            let farbe = if anteil > 0.5 { Color32::from_rgb(140, 225, 130) } else if anteil > 0.25 { Color32::from_rgb(235, 200, 90) } else { Color32::from_rgb(240, 100, 90) };
+                            ui.label(RichText::new(format!("·  Leben {}/{}", heer.leben, crate::heer::MAX_LEBEN)).size(15.0).strong().color(farbe));
+                        });
+                    });
+                });
+        }
         if ctx.cursor_locked {
             ui::crosshair(egui_ctx);
         }
@@ -1384,6 +1412,10 @@ impl Game for Playground {
         self.admin_open = args.iter().any(|a| a == "--demo-admin");
         self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
         self.demo_towers = args.iter().any(|a| a == "--demo-tuerme");
+        if let Some(position) = args.iter().position(|a| a == "--demo-welle") {
+            self.demo_wave = args.get(position + 1).and_then(|n| n.parse().ok());
+            self.demo_troops = true;
+        }
         if args.iter().any(|a| a == "tuerme") {
             self.build_tab = 1;
         }
@@ -1596,6 +1628,9 @@ impl Game for Playground {
         }
         if let (true, Some(session)) = (self.demo_troops, &mut self.session) {
             self.demo_troops = false;
+            if let Some(welle) = self.demo_wave.take() {
+                session.world_mut().heer.welle = welle.saturating_sub(1);
+            }
             session.admin(crate::protocol::AdminCommand::Waves(true));
         }
         if let (true, Some(session)) = (self.demo_towers, &mut self.session) {

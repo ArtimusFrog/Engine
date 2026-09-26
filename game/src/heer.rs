@@ -154,6 +154,9 @@ pub struct EnemyState {
     pub action: EnemyAction,
     /// Lebenspunkte in Prozent (0 = besiegt)
     pub health: u8,
+    /// Anführer einer Bosswelle (größer dargestellt)
+    #[serde(default)]
+    pub boss: bool,
 }
 
 /// Ein Treffer: Schaden, Art und Nachwirkungen (Verlangsamung, Brand).
@@ -236,6 +239,12 @@ const GRUPPEN: [&[EnemyKind]; 6] = [
 ];
 /// Abstand zwischen zwei Wellen (s) und Obergrenze gleichzeitiger Einheiten.
 pub const WAVE_SECONDS: f32 = 45.0;
+/// Leben der Insel: so viele Durchbrüche hält sie aus.
+pub const MAX_LEBEN: u32 = 20;
+/// Pause nach einer Niederlage, bevor es wieder bei Welle 1 losgeht (s).
+const NEUSTART_SECONDS: f32 = 60.0;
+/// Anführer der Bosswellen (jede fünfte Welle, reihum)
+const BOSSE: [EnemyKind; 4] = [EnemyKind::Golem, EnemyKind::Knight, EnemyKind::Warlock, EnemyKind::Ghost];
 const MAX_ENEMIES: usize = 90;
 /// Ab dieser Entfernung zu einem Spieler bleibt eine Gruppe stehen und kämpft.
 const ENGAGE: f32 = 16.0;
@@ -243,6 +252,9 @@ const ENGAGE: f32 = 16.0;
 struct Member {
     id: u16,
     kind: EnemyKind,
+    /// Anführer einer Bosswelle und die (mit der Welle gewachsenen) vollen Lebenspunkte
+    boss: bool,
+    max_health: f32,
     /// Platz in der Formation (Reihe hinter der Spitze, seitlich)
     row: f32,
     side: f32,
@@ -290,11 +302,16 @@ pub struct Heer {
     rng: Rng,
     /// Besiegte Einheiten seit dem letzten Abholen: wer den letzten Treffer gesetzt hat, welche Art
     pub gefallen: Vec<(String, EnemyKind)>,
+    /// Nummer der zuletzt losgeschickten Welle (0 = noch keine) und die Leben der Insel
+    pub welle: u32,
+    pub leben: u32,
+    /// Meldungen für alle Spieler (neue Welle, Durchbruch, Niederlage)
+    pub meldungen: Vec<String>,
 }
 
 impl Heer {
     pub fn new(routes: Vec<Route>) -> Heer {
-        Heer { routes, groups: Vec::new(), next_id: 1, timer: 3.0, enabled: false, rng: Rng::new(0x7E_E4), gefallen: Vec::new() }
+        Heer { routes, groups: Vec::new(), next_id: 1, timer: 3.0, enabled: false, rng: Rng::new(0x7E_E4), gefallen: Vec::new(), welle: 0, leben: MAX_LEBEN, meldungen: Vec::new() }
     }
 
     /// Die Heerstraßen (ab dem Fuß der Rampe) als Linien (x, z) – für die Karte.
@@ -314,29 +331,69 @@ impl Heer {
         self.enabled = on;
     }
 
-    /// Eine Welle: auf jeder Straße eine Gruppe. Die nächste kommt frühestens nach `WAVE_SECONDS`.
+    /// Sekunden bis zur nächsten Welle
+    pub fn naechste_in(&self) -> f32 {
+        self.timer.max(0.0)
+    }
+
+    /// Stand der Wellen vom Server übernehmen (Client).
+    pub fn sync(&mut self, welle: u32, leben: u32, naechste: f32) {
+        (self.welle, self.leben, self.timer) = (welle, leben, naechste);
+    }
+
+    /// Enden der Heerstraßen (dort stehen die Schutzsteine): Ort und Richtung der Straße.
+    pub fn enden(&self) -> Vec<(Vec3, Vec2)> {
+        self.routes.iter().map(|r| r.sample(r.length())).collect()
+    }
+
+    /// Wellen zurück auf Anfang (Admin): Welle 0, volle Leben, alle Truppen weg.
+    pub fn reset(&mut self) {
+        self.groups.clear();
+        self.welle = 0;
+        self.leben = MAX_LEBEN;
+        self.timer = 5.0;
+    }
+
+    /// Eine Welle: auf jeder Straße eine Gruppe. Mit jeder Welle werden die Truppen zäher
+    /// (+15 % Leben), alle drei Wellen kommt je Gruppe eine Einheit dazu, jede fünfte Welle
+    /// führt ein Boss an. Die nächste Welle kommt frühestens nach `WAVE_SECONDS`.
     pub fn spawn_wave(&mut self) {
         self.timer = WAVE_SECONDS;
         if self.count() > MAX_ENEMIES {
             return;
         }
+        self.welle += 1;
+        let welle = self.welle;
+        let zaeh = 1.0 + 0.15 * (welle - 1) as f32;
+        let boss = (welle % 5 == 0).then(|| BOSSE[((welle / 5 - 1) % BOSSE.len() as u32) as usize]);
+        self.meldungen.push(match boss {
+            Some(kind) => format!("Welle {welle}: Bosswelle! Ein gewaltiger {} führt die Truppen an.", kind.label()),
+            None => format!("Welle {welle} bricht aus der Schattenfestung hervor."),
+        });
         for route in 0..self.routes.len() {
-            let template = GRUPPEN[(self.rng.next_u32() % GRUPPEN.len() as u32) as usize];
+            let vorlage = GRUPPEN[(self.rng.next_u32() % GRUPPEN.len() as u32) as usize];
+            // Mehr Einheiten mit jeder dritten Welle (reihum aus der Vorlage), der Boss vorneweg
+            let extra = ((welle - 1) / 3).min(6) as usize;
+            let mut template: Vec<(EnemyKind, bool)> = boss.iter().map(|&k| (k, true)).collect();
+            template.extend(vorlage.iter().chain(vorlage.iter().cycle().take(extra)).map(|&k| (k, false)));
             let columns = if template.len() >= 5 { 3.0 } else { 2.0 };
             let members: Vec<Member> = template
                 .iter()
                 .enumerate()
-                .map(|(i, &kind)| {
+                .map(|(i, &(kind, boss))| {
                     let row = (i as f32 / columns).floor();
                     let side = (i as f32 % columns) - (columns - 1.0) / 2.0;
                     let id = self.next_id;
                     self.next_id = self.next_id.wrapping_add(1).max(1);
+                    let max_health = kind.max_health() * zaeh * if boss { 6.0 } else { 1.0 };
                     Member {
                         id,
                         kind,
+                        boss,
+                        max_health,
                         row,
                         side,
-                        health: kind.max_health(),
+                        health: max_health,
                         cooldown: self.rng.range(0.3, 1.5),
                         progress: 0.0,
                         slow: (0.0, 0.0),
@@ -447,9 +504,32 @@ impl Heer {
             }
             group.members.retain(|m| m.dying.is_none_or(|t| t < 2.0));
         }
-        // Am Ende der Straße verschwinden; leere Gruppen fallen weg
-        let routes = &self.routes;
-        self.groups.retain(|g| !g.members.is_empty() && g.distance - g.members.iter().map(|m| m.row).fold(0.0, f32::max) * 2.4 < routes[g.route].length());
+        // Am Ende der Straße: Durchbruch – die Insel verliert Leben, die Einheit verschwindet
+        let mut verlust = 0;
+        for group in &mut self.groups {
+            let ende = self.routes[group.route].length();
+            let distance = group.distance;
+            group.members.retain(|m| {
+                let durch = m.dying.is_none() && distance - m.row * 2.4 >= ende;
+                if durch {
+                    let wert = if m.boss { 5 } else if m.kind == EnemyKind::Golem { 3 } else { 1 };
+                    verlust += wert;
+                    self.meldungen.push(format!("{}{} ist durchgebrochen! (−{wert} {})", if m.boss { "Der Boss " } else { "" }, m.kind.label(), "Leben"));
+                }
+                !durch
+            });
+        }
+        self.groups.retain(|g| !g.members.is_empty());
+        if verlust > 0 {
+            self.leben = self.leben.saturating_sub(verlust);
+            if self.leben == 0 {
+                self.meldungen.push(format!("Die Insel ist gefallen – nach {} Wellen. In {:.0} Sekunden geht es von vorn los.", self.welle, NEUSTART_SECONDS));
+                self.groups.clear();
+                self.welle = 0;
+                self.leben = MAX_LEBEN;
+                self.timer = NEUSTART_SECONDS;
+            }
+        }
         strikes
     }
 
@@ -472,7 +552,8 @@ impl Heer {
                     } else {
                         EnemyAction::Walk
                     },
-                    health: if m.dying.is_some() { 0 } else { ((m.health / m.kind.max_health()) * 100.0).ceil().clamp(1.0, 100.0) as u8 },
+                    health: if m.dying.is_some() { 0 } else { ((m.health / m.max_health) * 100.0).ceil().clamp(1.0, 100.0) as u8 },
+                    boss: m.boss,
                 })
             })
             .collect()
@@ -697,6 +778,7 @@ impl HeerAnsicht {
             let (up, _) = figur.kind.hit_sphere();
             entity.transform.position = figur.shown - Vec3::Y * (fall * up * 0.6 + (figur.fallen - 0.5).max(0.0) * 1.2);
             entity.transform.rotation = Quat::from_rotation_y(figur.facing) * Quat::from_rotation_z(fall * std::f32::consts::FRAC_PI_2 * 0.95);
+            entity.transform.scale = Vec3::splat(if state.boss { 1.6 } else { 1.0 });
             entity.color = Vec4::ONE.lerp(vec4(2.2, 0.35, 0.3, 1.0), figur.flash / 0.25);
         }
     }
@@ -753,6 +835,62 @@ mod tests {
         }
         assert!(unterwegs, "Truppen kommen nicht aus der Festung");
         assert_eq!(world.heer.count(), 0, "Truppen verschwinden nicht am Ende der Straße");
+    }
+
+    #[test]
+    fn wellen_werden_staerker_und_durchbrueche_kosten_leben() {
+        let mut ctx = Context::headless();
+        let mut world = crate::world::World::new(&mut ctx);
+        let heer = &mut world.heer;
+        assert_eq!((heer.welle, heer.leben), (0, MAX_LEBEN));
+        // Welle 1: gewöhnliche Truppen mit Grundleben, kein Boss
+        heer.spawn_wave();
+        assert_eq!(heer.welle, 1);
+        let erste = heer.count();
+        assert!(heer.states().iter().all(|s| !s.boss));
+        assert!(heer.meldungen.iter().any(|m| m.contains("Welle 1")));
+        // Bis Welle 5: mehr Einheiten, zähere Einheiten, ein Boss je Straße
+        heer.clear();
+        for _ in 0..4 {
+            heer.spawn_wave();
+        }
+        assert_eq!(heer.welle, 5);
+        let bosse = heer.states().iter().filter(|s| s.boss).count();
+        assert_eq!(bosse, heer.routes.len(), "jede Straße braucht in Welle 5 einen Boss");
+        assert!(heer.meldungen.iter().any(|m| m.contains("Bosswelle")));
+        let golem = heer.groups.iter().flat_map(|g| &g.members).find(|m| m.boss).unwrap();
+        assert!((golem.max_health - EnemyKind::Golem.max_health() * 1.6 * 6.0).abs() < 0.1, "Boss-Leben {}", golem.max_health);
+        assert!(heer.count() > erste, "Welle 5 ist nicht größer als Welle 1");
+
+        // Durchbrüche: jede Einheit am Straßenende kostet Leben
+        heer.clear();
+        heer.reset();
+        heer.spawn_wave();
+        heer.enabled = false;
+        let mut minimum = heer.leben;
+        for _ in 0..3000 {
+            heer.tick(0.1, &[]);
+            minimum = minimum.min(heer.leben);
+            if heer.count() == 0 {
+                break;
+            }
+        }
+        assert!(minimum < MAX_LEBEN, "Durchbruch kostet keine Leben");
+        assert!(heer.meldungen.iter().any(|m| m.contains("durchgebrochen")));
+
+        // Niederlage: bei 0 Leben geht es nach einer Pause wieder bei Welle 1 los
+        heer.leben = 1;
+        heer.spawn_wave();
+        heer.enabled = false;
+        for _ in 0..3000 {
+            heer.tick(0.1, &[]);
+            if heer.welle == 0 {
+                break;
+            }
+        }
+        assert_eq!((heer.welle, heer.leben, heer.count()), (0, MAX_LEBEN, 0), "Niederlage setzt nicht zurück");
+        assert!(heer.meldungen.iter().any(|m| m.contains("gefallen")));
+        assert!(heer.naechste_in() > 30.0);
     }
 
     #[test]

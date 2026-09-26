@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0013;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0014;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -49,6 +49,8 @@ pub enum AdminCommand {
     WaveNow,
     /// Alle Truppen entfernen
     ClearEnemies,
+    /// Wellen zurück auf Welle 1, volle Leben
+    ResetWaves,
 }
 
 /// Werkzeuge in der Auswahlleiste. Jeder Spieler hat sie von Anfang an.
@@ -135,6 +137,10 @@ pub struct Snapshot {
     pub waves: bool,
     /// Schüsse der Türme seit dem letzten Schnappschuss
     pub shots: Vec<crate::tuerme::Schuss>,
+    /// Wellen: Nummer, Leben der Insel, Sekunden bis zur nächsten
+    pub welle: u32,
+    pub leben: u32,
+    pub naechste: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,6 +177,8 @@ pub enum ServerMessage {
     BuildingChanged(crate::bauten::Building),
     /// Ein Gebäude wurde abgerissen
     BuildingRemoved(u32),
+    /// Meldung an alle (neue Welle, Durchbruch, Niederlage)
+    Notice(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
