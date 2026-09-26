@@ -390,8 +390,8 @@ pub fn build_sights(ctx: &mut Context, terrain: &Terrain, spots: &SightSpots, pl
                 places.windmills.push((sails, hub, rotation));
             }
             places.labels.push(("Mühlenhof", at));
-            // Der ganze Hof bleibt frei von Bäumen und Büschen
-            blocked.push((at, 24.0));
+            // Rund um die Mühle frei von Bäumen und hohem Gras
+            blocked.push((at, 13.0));
         }
         // Brunnen, Bienenstöcke, Weizenfeld mit Vogelscheuche rund um die Mühle
         let spots_around: [(&str, Vec2, Vec2, Option<Vec3>, f32); 4] = [
