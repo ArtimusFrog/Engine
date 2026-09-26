@@ -96,6 +96,8 @@ pub struct Playground {
     demo_build_menu: bool,
     /// Nur zum Testen: Truppen der Festung sofort losschicken (`--demo-truppen`)
     demo_troops: bool,
+    /// Nur zum Testen: Figur auf die Südstraße stellen, den Truppen entgegen (`--demo-kampf`)
+    demo_fight: bool,
     demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
@@ -157,6 +159,7 @@ impl Playground {
             demo_bau: None,
             demo_build_menu: false,
             demo_troops: false,
+            demo_fight: false,
             demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
@@ -1210,7 +1213,9 @@ impl Game for Playground {
             self.demo_bau = Some((name, args.get(position + 2).and_then(|p| p.parse().ok())));
         }
         self.demo_build_menu = args.iter().any(|a| a == "--demo-baumenue");
-        self.demo_troops = args.iter().any(|a| a == "--demo-truppen");
+        self.demo_troops = args.iter().any(|a| a == "--demo-truppen" || a == "--demo-kampf");
+        self.admin_open = args.iter().any(|a| a == "--demo-admin");
+        self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
@@ -1421,6 +1426,19 @@ impl Game for Playground {
         if let (true, Some(session)) = (self.demo_troops, &mut self.session) {
             self.demo_troops = false;
             session.admin(crate::protocol::AdminCommand::Waves(true));
+        }
+        if let (true, Some(session)) = (self.demo_fight, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_fight = false;
+                let world = session.world();
+                let stand = vec2(0.0, 105.0);
+                let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+                let character = world.players[&local].character;
+                ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+                self.hotbar_slot = Tool::Staff.slot();
+                self.demo_crystal = Some(Some(vec3(0.0, crate::island::festung_hoehe() + 6.0, 40.0)));
+                self.demo_yaw_offset = 0.0;
+            }
         }
         if let (true, Some(session)) = (self.demo_build_menu, &mut self.session) {
             if let Some(local) = session.local_player() {
