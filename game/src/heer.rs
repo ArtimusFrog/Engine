@@ -13,6 +13,7 @@ use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::asset_files;
+use crate::tuerme::DamageKind;
 use crate::world::SoundEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,16 +55,49 @@ impl EnemyKind {
         }
     }
 
-    pub fn max_health(self) -> u8 {
+    pub fn max_health(self) -> f32 {
         match self {
-            EnemyKind::Knight => 6,
-            EnemyKind::Archer => 3,
-            EnemyKind::Pikeman => 5,
-            EnemyKind::Skeleton => 3,
-            EnemyKind::Warlock => 4,
-            EnemyKind::Golem => 14,
-            EnemyKind::Wolf => 3,
-            EnemyKind::Ghost => 4,
+            EnemyKind::Knight => 160.0,
+            EnemyKind::Archer => 70.0,
+            EnemyKind::Pikeman => 120.0,
+            EnemyKind::Skeleton => 80.0,
+            EnemyKind::Warlock => 90.0,
+            EnemyKind::Golem => 420.0,
+            EnemyKind::Wolf => 60.0,
+            EnemyKind::Ghost => 100.0,
+        }
+    }
+
+    /// Rüstung gegen physischen Schaden (Anteil, der abgehalten wird).
+    pub fn armor(self) -> f32 {
+        match self {
+            EnemyKind::Knight => 0.4,
+            EnemyKind::Archer | EnemyKind::Skeleton => 0.1,
+            EnemyKind::Pikeman => 0.25,
+            EnemyKind::Golem => 0.6,
+            EnemyKind::Ghost => 0.75,
+            EnemyKind::Warlock | EnemyKind::Wolf => 0.0,
+        }
+    }
+
+    fn undead(self) -> bool {
+        matches!(self, EnemyKind::Skeleton | EnemyKind::Ghost)
+    }
+
+    /// Wie stark eine Schadensart wirkt (1 = voll). `geschwaecht`: Rüstung durch Gift gemindert.
+    pub fn factor(self, art: DamageKind, geschwaecht: f32) -> f32 {
+        let ruestung = self.armor() * (1.0 - geschwaecht);
+        match art {
+            DamageKind::Physical => 1.0 - ruestung,
+            DamageKind::Pierce => 1.0 - ruestung * 0.5,
+            DamageKind::Arcane | DamageKind::Lightning if self == EnemyKind::Warlock => 0.6,
+            DamageKind::Arcane | DamageKind::Lightning | DamageKind::Frost => 1.0,
+            DamageKind::Holy if self.undead() => 2.0,
+            DamageKind::Holy => 1.0,
+            DamageKind::Poison if self == EnemyKind::Skeleton => 0.0,
+            DamageKind::Poison => 1.0,
+            DamageKind::Fire if self == EnemyKind::Golem => 0.5,
+            DamageKind::Fire => 1.0,
         }
     }
 
@@ -118,7 +152,26 @@ pub struct EnemyState {
     pub position: Vec3,
     pub facing: f32,
     pub action: EnemyAction,
+    /// Lebenspunkte in Prozent (0 = besiegt)
     pub health: u8,
+}
+
+/// Ein Treffer: Schaden, Art und Nachwirkungen (Verlangsamung, Brand).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Hit {
+    pub schaden: f32,
+    pub art: DamageKind,
+    /// Verlangsamung (Anteil) für 2,5 s
+    pub bremse: f32,
+    /// Brand: Schaden pro Sekunde für `dauer` Sekunden
+    pub brand: f32,
+    pub dauer: f32,
+}
+
+impl Default for DamageKind {
+    fn default() -> Self {
+        DamageKind::Physical
+    }
 }
 
 // ---------- Marschrouten ----------
@@ -193,8 +246,15 @@ struct Member {
     /// Platz in der Formation (Reihe hinter der Spitze, seitlich)
     row: f32,
     side: f32,
-    health: u8,
+    health: f32,
     cooldown: f32,
+    /// Wie weit die Einheit auf ihrer Route ist (für die Zielwahl der Türme: „erstes“)
+    progress: f32,
+    /// Verlangsamung (Anteil, Restzeit), Brand (Schaden/s, Restzeit, von wem), Rüstung geschwächt (Anteil, Restzeit)
+    slow: (f32, f32),
+    burn: (f32, f32),
+    burn_by: Option<String>,
+    weak: (f32, f32),
     /// Seit wann besiegt (dann nach kurzer Zeit weg)
     dying: Option<f32>,
     /// Weicht zum Kämpfen von seinem Platz ab
@@ -228,11 +288,13 @@ pub struct Heer {
     /// Wellen aus der Festung an (Admin-Panel)
     pub enabled: bool,
     rng: Rng,
+    /// Besiegte Einheiten seit dem letzten Abholen: wer den letzten Treffer gesetzt hat, welche Art
+    pub gefallen: Vec<(String, EnemyKind)>,
 }
 
 impl Heer {
     pub fn new(routes: Vec<Route>) -> Heer {
-        Heer { routes, groups: Vec::new(), next_id: 1, timer: 3.0, enabled: false, rng: Rng::new(0x7E_E4) }
+        Heer { routes, groups: Vec::new(), next_id: 1, timer: 3.0, enabled: false, rng: Rng::new(0x7E_E4), gefallen: Vec::new() }
     }
 
     /// Die Heerstraßen (ab dem Fuß der Rampe) als Linien (x, z) – für die Karte.
@@ -276,6 +338,11 @@ impl Heer {
                         side,
                         health: kind.max_health(),
                         cooldown: self.rng.range(0.3, 1.5),
+                        progress: 0.0,
+                        slow: (0.0, 0.0),
+                        burn: (0.0, 0.0),
+                        burn_by: None,
+                        weak: (0.0, 0.0),
                         dying: None,
                         offset: Vec2::ZERO,
                         attacking: 0.0,
@@ -301,11 +368,20 @@ impl Heer {
                 self.spawn_wave();
             }
         }
+        let gefallen = &mut self.gefallen;
         for group in &mut self.groups {
             let route = &self.routes[group.route];
             let (lead, _) = route.sample(group.distance);
             // Stehen bleiben, sobald ein Spieler nah an der Spitze ist – die vorderen Reihen kämpfen
             group.halted = players.iter().any(|p| p.distance(lead) < ENGAGE - 2.0);
+            // Die Gruppe ist so schnell wie ihr langsamstes (ggf. vereistes) Mitglied
+            group.speed = group
+                .members
+                .iter()
+                .filter(|m| m.dying.is_none())
+                .map(|m| m.kind.speed() * (1.0 - m.slow.0))
+                .fold(f32::MAX, f32::min)
+                .min(4.0);
             if !group.halted {
                 group.distance += group.speed * dt;
             }
@@ -314,6 +390,26 @@ impl Heer {
                     *t += dt;
                     continue;
                 }
+                // Nachwirkungen: Verlangsamung und Schwächung laufen ab, Brand zehrt
+                member.slow.1 -= dt;
+                if member.slow.1 <= 0.0 {
+                    member.slow = (0.0, 0.0);
+                }
+                member.weak.1 -= dt;
+                if member.weak.1 <= 0.0 {
+                    member.weak = (0.0, 0.0);
+                }
+                if member.burn.1 > 0.0 {
+                    member.burn.1 -= dt;
+                    member.health -= member.burn.0 * dt * member.kind.factor(DamageKind::Fire, 0.0);
+                    if member.health <= 0.0 {
+                        member.health = 0.0;
+                        member.dying = Some(0.0);
+                        gefallen.push((member.burn_by.clone().unwrap_or_default(), member.kind));
+                        continue;
+                    }
+                }
+                member.progress = group.distance - member.row * 2.4;
                 let (spot, dir) = route.sample(group.distance - member.row * 2.4);
                 let side = vec2(-dir.y, dir.x) * member.side * 1.5;
                 let home = vec2(spot.x, spot.z) + side;
@@ -376,10 +472,71 @@ impl Heer {
                     } else {
                         EnemyAction::Walk
                     },
-                    health: m.health,
+                    health: if m.dying.is_some() { 0 } else { ((m.health / m.kind.max_health()) * 100.0).ceil().clamp(1.0, 100.0) as u8 },
                 })
             })
             .collect()
+    }
+
+    fn alive(&self) -> impl Iterator<Item = &Member> {
+        self.groups.iter().flat_map(|g| &g.members).filter(|m| m.dying.is_none())
+    }
+
+    fn center(m: &Member) -> Vec3 {
+        m.position + Vec3::Y * m.kind.hit_sphere().0
+    }
+
+    /// Ziel eines Turms: die Einheit in Reichweite, die auf der Straße am weitesten gekommen ist.
+    pub fn first_in_range(&self, from: Vec3, range: f32, minimum: f32) -> Option<(u16, Vec3)> {
+        self.alive()
+            .filter(|m| {
+                let d = Self::center(m).distance(from);
+                d <= range && d >= minimum
+            })
+            .max_by(|a, b| a.progress.total_cmp(&b.progress))
+            .map(|m| (m.id, Self::center(m)))
+    }
+
+    /// Nächste Einheit um `at` (für den Kettenblitz), ohne die schon getroffenen.
+    pub fn nearest_except(&self, at: Vec3, radius: f32, except: &[u16]) -> Option<(u16, Vec3)> {
+        self.alive()
+            .filter(|m| !except.contains(&m.id) && Self::center(m).distance(at) <= radius)
+            .min_by(|a, b| Self::center(a).distance(at).total_cmp(&Self::center(b).distance(at)))
+            .map(|m| (m.id, Self::center(m)))
+    }
+
+    /// Alle Einheiten im Umkreis (Flächenschaden).
+    pub fn within(&self, at: Vec3, radius: f32) -> Vec<u16> {
+        self.alive().filter(|m| m.position.distance(at) <= radius + m.kind.hit_sphere().1).map(|m| m.id).collect()
+    }
+
+    /// Schaden an einer Einheit (mit Rüstung und Empfindlichkeiten, Verlangsamung, Brand).
+    /// `von`: wer getroffen hat – bekommt bei einem Sieg die Beute. Liefert die Art, falls besiegt.
+    pub fn damage(&mut self, id: u16, hit: Hit, von: &str) -> Option<EnemyKind> {
+        let member = self.groups.iter_mut().flat_map(|g| g.members.iter_mut()).find(|m| m.id == id && m.dying.is_none())?;
+        member.health -= hit.schaden * member.kind.factor(hit.art, member.weak.0);
+        if hit.bremse > 0.0 {
+            let bremse = if member.kind == EnemyKind::Golem { hit.bremse * 0.5 } else { hit.bremse };
+            member.slow = (member.slow.0.max(bremse), 2.5);
+        }
+        if hit.brand > 0.0 {
+            member.burn = (member.burn.0.max(hit.brand), hit.dauer);
+            member.burn_by = Some(von.to_string());
+        }
+        if member.health > 0.0 {
+            return None;
+        }
+        member.health = 0.0;
+        member.dying = Some(0.0);
+        self.gefallen.push((von.to_string(), member.kind));
+        Some(member.kind)
+    }
+
+    /// Gift schwächt die Rüstung (für eine Sekunde, wird in der Wolke laufend erneuert).
+    pub fn weaken(&mut self, id: u16, amount: f32) {
+        if let Some(member) = self.groups.iter_mut().flat_map(|g| g.members.iter_mut()).find(|m| m.id == id) {
+            member.weak = (member.weak.0.max(amount), 1.0);
+        }
     }
 
     /// Welche Einheit liegt auf dem Strahl zuerst (vor `nearest`)? Liefert (ID, Entfernung).
@@ -403,16 +560,6 @@ impl Heer {
             }
         }
         best
-    }
-
-    /// Treffer eines Zaubers: ein Lebenspunkt weniger. Liefert die verbleibenden Lebenspunkte.
-    pub fn hit(&mut self, id: u16) -> Option<u8> {
-        let member = self.groups.iter_mut().flat_map(|g| g.members.iter_mut()).find(|m| m.id == id && m.dying.is_none())?;
-        member.health = member.health.saturating_sub(1);
-        if member.health == 0 {
-            member.dying = Some(0.0);
-        }
-        Some(member.health)
     }
 
     /// Alle Einheiten entfernen (Admin).

@@ -61,6 +61,11 @@ pub struct Playground {
     inventory_open: bool,
     /// Baumenü offen (Taste B)?
     build_menu_open: bool,
+    /// Reiter im Baumenü: 0 = Gebäude, 1 = Türme
+    build_tab: u8,
+    /// Gebäude unter dem Fadenkreuz und das offene Turmfenster (Taste E)
+    aim_building: Option<u32>,
+    building_window: Option<u32>,
     /// Admin-Panel offen (Taste X) und frei fliegen (Noclip)
     admin_open: bool,
     noclip: bool,
@@ -98,6 +103,8 @@ pub struct Playground {
     demo_troops: bool,
     /// Nur zum Testen: Figur auf die Südstraße stellen, den Truppen entgegen (`--demo-kampf`)
     demo_fight: bool,
+    /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
+    demo_towers: bool,
     demo_yaw_offset: f32,
     /// Nur zum Testen: Figur läuft von allein.
     autopilot: bool,
@@ -140,6 +147,9 @@ impl Playground {
             last_cast: -10.0,
             inventory_open: false,
             build_menu_open: false,
+            build_tab: 0,
+            aim_building: None,
+            building_window: None,
             admin_open: false,
             noclip: false,
             aim_enemy: None,
@@ -160,6 +170,7 @@ impl Playground {
             demo_build_menu: false,
             demo_troops: false,
             demo_fight: false,
+            demo_towers: false,
             demo_yaw_offset: -0.75,
             autopilot,
             themed: false,
@@ -423,56 +434,187 @@ impl Playground {
     /// Baumenü: die drei Gebäude mit Beschreibung, Kosten und Ertrag.
     fn build_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
         use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
+        use crate::tuerme::TowerKind;
         let inventory = self.session.as_ref().map(|s| s.local_inventory()).unwrap_or_default();
         let icons = self.build_icons.get_or_insert_with(|| load_build_icons(egui_ctx)).clone();
         let mut chosen = None;
         let mut close = false;
-        ui::center_panel(egui_ctx, "baumenue", 820.0, |ui| {
-            ui::heading(ui, "Bauen");
-            ui.label(RichText::new("Wähle ein Gebäude und stelle es auf der Insel auf. Fertige Gebäude liefern dir regelmäßig Rohstoffe.").size(15.0).color(ui::TEXT.gamma_multiply(0.8)));
-            ui.add_space(10.0);
-            ui.columns(BuildingKind::ALL.len(), |columns| {
-                for (column, kind) in columns.iter_mut().zip(BuildingKind::ALL) {
-                    let affordable = crate::bauten::affordable(&inventory, kind);
-                    egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(8.0).inner_margin(12.0).show(column, |ui| {
-                        ui.set_min_height(230.0);
-                        ui.label(RichText::new(kind.label()).size(22.0).strong().color(ui::ACCENT));
-                        ui.add_space(4.0);
-                        if let Some(icon) = icons.get(&kind) {
-                            let width = ui.available_width();
-                            ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(width, width * 0.5)));
-                        }
-                        ui.label(RichText::new(kind.description()).size(14.0));
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Kosten").size(13.0).color(ui::TEXT.gamma_multiply(0.7)));
-                        for &(item, amount) in kind.cost() {
-                            let have = inventory.count(item);
-                            let color = if have >= amount { Color32::from_rgb(140, 225, 130) } else { Color32::from_rgb(240, 120, 100) };
-                            ui.label(RichText::new(format!("{amount} {}  (du hast {have})", item.label())).size(15.0).color(color));
-                        }
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new(format!("Liefert 1 {} alle {:.0} s · Bauzeit {:.0} s", kind.produces().label(), PRODUCTION_SECONDS, kind.build_seconds()))
-                                .size(13.0)
-                                .color(ui::TEXT.gamma_multiply(0.75)),
-                        );
-                        ui.add_space(10.0);
-                        let label = if affordable { "Bauen" } else { "Zu wenig Rohstoffe" };
-                        if ui.add_enabled(affordable, egui::Button::new(RichText::new(label).size(17.0)).min_size(egui::vec2(ui.available_width(), 36.0))).clicked() {
-                            chosen = Some(kind);
-                        }
-                    });
+        let mut tab = self.build_tab;
+        let kosten_zeile = |ui: &mut egui::Ui, cost: &[(crate::protocol::Item, u32)]| {
+            ui.horizontal_wrapped(|ui| {
+                for &(item, amount) in cost {
+                    let color = if inventory.count(item) >= amount { Color32::from_rgb(140, 225, 130) } else { Color32::from_rgb(240, 120, 100) };
+                    ui.label(RichText::new(format!("{amount} {}", item.label())).size(14.0).color(color));
                 }
             });
-            ui.add_space(10.0);
+        };
+        ui::center_panel(egui_ctx, "baumenue", 940.0, |ui| {
+            ui::heading(ui, "Bauen");
+            ui.horizontal(|ui| {
+                for (i, name) in ["Gebäude", "Türme"].iter().enumerate() {
+                    if ui.selectable_label(tab == i as u8, RichText::new(*name).size(18.0)).clicked() {
+                        tab = i as u8;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            if tab == 0 {
+                ui.label(RichText::new("Fertige Gebäude liefern dir regelmäßig Rohstoffe. Nicht auf die Heerstraßen bauen.").size(15.0).color(ui::TEXT.gamma_multiply(0.8)));
+                ui.add_space(8.0);
+                ui.columns(BuildingKind::ALL.len(), |columns| {
+                    for (column, kind) in columns.iter_mut().zip(BuildingKind::ALL) {
+                        let affordable = crate::bauten::affordable(&inventory, kind);
+                        egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(8.0).inner_margin(12.0).show(column, |ui| {
+                            ui.set_min_height(230.0);
+                            ui.label(RichText::new(kind.label()).size(22.0).strong().color(ui::ACCENT));
+                            if let Some(icon) = icons.get(&kind) {
+                                let width = ui.available_width();
+                                ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(width, width * 0.5)));
+                            }
+                            ui.label(RichText::new(kind.description()).size(14.0));
+                            ui.add_space(6.0);
+                            kosten_zeile(ui, &kind.cost());
+                            let liefert = kind.produces().map(|i| i.label()).unwrap_or("-");
+                            ui.label(
+                                RichText::new(format!("Liefert 1 {liefert} alle {:.0} s · Bauzeit {:.0} s", PRODUCTION_SECONDS, kind.build_seconds(1)))
+                                    .size(13.0)
+                                    .color(ui::TEXT.gamma_multiply(0.75)),
+                            );
+                            ui.add_space(8.0);
+                            let label = if affordable { "Bauen" } else { "Zu wenig Rohstoffe" };
+                            if ui.add_enabled(affordable, egui::Button::new(RichText::new(label).size(17.0)).min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
+                                chosen = Some(kind);
+                            }
+                        });
+                    }
+                });
+            } else {
+                ui.label(
+                    RichText::new("Türme nur direkt an einer Heerstraße (4–14 m daneben). Mit E auf einen Turm: aufwerten bis Stufe 3 oder abreißen.")
+                        .size(15.0)
+                        .color(ui::TEXT.gamma_multiply(0.8)),
+                );
+                ui.add_space(8.0);
+                let hoehe = (egui_ctx.content_rect().height() - 250.0).max(200.0);
+                egui::ScrollArea::vertical().max_height(hoehe).show(ui, |ui| {
+                for reihe in TowerKind::ALL.chunks(5) {
+                    ui.columns(5, |columns| {
+                        for (column, &tower) in columns.iter_mut().zip(reihe) {
+                            let kind = BuildingKind::Tower(tower);
+                            let affordable = crate::bauten::affordable(&inventory, kind);
+                            egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(8.0).inner_margin(9.0).show(column, |ui| {
+                                ui.set_min_height(210.0);
+                                ui.label(RichText::new(tower.label()).size(17.0).strong().color(ui::ACCENT));
+                                if let Some(icon) = icons.get(&kind) {
+                                    let width = ui.available_width();
+                                    ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(width, width * 0.5)));
+                                }
+                                ui.label(RichText::new(tower.description()).size(12.5));
+                                ui.add_space(4.0);
+                                for zeile in tower.werte(1).zeilen() {
+                                    ui.label(RichText::new(zeile).size(12.0).color(ui::TEXT.gamma_multiply(0.8)));
+                                }
+                                ui.add_space(4.0);
+                                kosten_zeile(ui, &kind.cost());
+                                if ui.add_enabled(affordable, egui::Button::new(RichText::new("Bauen").size(15.0)).min_size(egui::vec2(ui.available_width(), 28.0))).clicked() {
+                                    chosen = Some(kind);
+                                }
+                            });
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
+                });
+            }
+            ui.add_space(8.0);
             if ui::big_button(ui, "Schließen").clicked() {
                 close = true;
             }
         });
+        self.build_tab = tab;
         if let Some(kind) = chosen {
             self.start_placing(ctx, kind);
         } else if close {
             self.toggle_build_menu(ctx);
+        }
+    }
+
+    /// Turmfenster (E): Werte, nächste Stufe mit Kosten, Aufwerten und Abreißen.
+    fn building_panel(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let Some(id) = self.building_window else { return };
+        let Some(session) = &mut self.session else { return };
+        let inventory = session.local_inventory();
+        let me = session.local_player().and_then(|p| session.world().players.get(&p)).map(|a| crate::save::player_key(&a.name)).unwrap_or_default();
+        let Some(building) = session.world().buildings.iter().find(|b| b.id == id).cloned() else {
+            self.building_window = None;
+            self.refresh_cursor(ctx);
+            return;
+        };
+        let mut aktion = None;
+        let mut close = false;
+        ui::center_panel(egui_ctx, "turmfenster", 520.0, |ui| {
+            let titel = match building.tower() {
+                Some(_) => format!("{} · Stufe {}", building.kind.label(), building.level),
+                None => building.kind.label().to_string(),
+            };
+            ui::heading(ui, &titel);
+            ui.label(RichText::new(format!("Gebaut von {}", if building.owner.is_empty() { "?" } else { &building.owner })).size(13.0).color(ui::TEXT.gamma_multiply(0.7)));
+            if !building.finished() {
+                ui.label(RichText::new(format!("Wird gebaut … {:.0} %", building.progress * 100.0)).size(15.0).color(ui::ACCENT));
+            }
+            ui.add_space(6.0);
+            if let Some(tower) = building.tower() {
+                ui.label(RichText::new(tower.description()).size(14.0));
+                ui.add_space(6.0);
+                for zeile in tower.werte(building.level).zeilen() {
+                    ui.label(RichText::new(zeile).size(15.0));
+                }
+                ui.add_space(10.0);
+                if building.level < crate::tuerme::MAX_STUFE {
+                    let naechste = building.level + 1;
+                    ui.label(RichText::new(format!("Stufe {naechste}")).size(16.0).strong().color(ui::ACCENT));
+                    for zeile in tower.werte(naechste).zeilen() {
+                        ui.label(RichText::new(zeile).size(14.0).color(Color32::from_rgb(170, 230, 160)));
+                    }
+                    let cost = building.kind.upgrade_cost(naechste);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Kosten:").size(14.0));
+                        for &(item, amount) in &cost {
+                            let color = if inventory.count(item) >= amount { Color32::from_rgb(140, 225, 130) } else { Color32::from_rgb(240, 120, 100) };
+                            ui.label(RichText::new(format!("{amount} {}", item.label())).size(14.0).color(color));
+                        }
+                    });
+                    let kann = building.finished() && crate::bauten::can_pay(&inventory, &cost);
+                    if ui.add_enabled(kann, egui::Button::new(RichText::new(format!("Auf Stufe {naechste} aufwerten")).size(17.0)).min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
+                        aktion = Some(true);
+                    }
+                } else {
+                    ui.label(RichText::new("Höchste Stufe erreicht").size(15.0).color(ui::ACCENT));
+                }
+            } else if let Some(item) = building.kind.produces() {
+                ui.label(RichText::new(format!("Liefert 1 {} alle {:.0} s", item.label(), crate::bauten::PRODUCTION_SECONDS)).size(15.0));
+            }
+            ui.add_space(8.0);
+            if building.owner == me {
+                let zurueck: Vec<String> = building.paid().into_iter().filter(|&(_, n)| n / 2 > 0).map(|(item, n)| format!("{} {}", n / 2, item.label())).collect();
+                if ui.button(RichText::new(format!("Abreißen (zurück: {})", zurueck.join(", "))).size(14.0).color(Color32::from_rgb(240, 140, 120))).clicked() {
+                    aktion = Some(false);
+                }
+            }
+            ui.add_space(8.0);
+            if ui::big_button(ui, "Schließen (E)").clicked() {
+                close = true;
+            }
+        });
+        if let Some(upgrade) = aktion {
+            session.change_building(ctx, id, upgrade);
+            if !upgrade {
+                close = true;
+            }
+        }
+        if close {
+            self.building_window = None;
+            self.refresh_cursor(ctx);
         }
     }
 
@@ -489,6 +631,7 @@ impl Playground {
             && !self.inventory_open
             && !self.build_menu_open
             && !self.admin_open
+            && self.building_window.is_none()
             && !self.map_open
             && !self.chat.open
             && !ctx.is_headless();
@@ -509,6 +652,14 @@ impl Playground {
                 if escape && self.map_open {
                     self.toggle_map(ctx);
                     return;
+                }
+                // E: Turmfenster für das anvisierte Gebäude (Esc/E schließt)
+                if (escape && self.building_window.is_some()) || (ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none()) {
+                    self.building_window = if self.building_window.is_some() { None } else { self.aim_building };
+                    if self.building_window.is_some() || escape || ctx.input.key_pressed(KeyCode::KeyE) {
+                        self.refresh_cursor(ctx);
+                        return;
+                    }
                 }
                 // X: Admin-Panel (Noclip, Wetter, Truppen der Festung)
                 if (escape && self.admin_open) || (ctx.input.key_pressed(KeyCode::KeyX) && !self.free_camera) {
@@ -688,6 +839,10 @@ impl Playground {
         let Some(local) = session.local_player() else { return };
         let Some(avatar) = session.world().players.get(&local) else { return };
         let hit = ctx.physics.raycast(ctx.camera.position, ctx.camera.forward(), 60.0, Some(avatar.character));
+        self.aim_building = match hit {
+            Some((Some(entity), distance)) if distance < 45.0 => session.world().building_at(entity),
+            _ => None,
+        };
         if let Some((Some(entity), _)) = hit {
             self.aim = session.world().resource_at(entity).filter(|&id| session.world().in_reach(ctx, local, id, 0.0));
         }
@@ -739,13 +894,25 @@ impl Playground {
 
     /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff oder Tier anvisiert ist.
     fn aim_hud(&self, egui_ctx: &egui::Context) {
+        // Gebäude im Visier: Name, Stufe und „E“
+        if let (None, None, Some(id), Some(session)) = (self.build_mode, self.aim_enemy, self.aim_building, &self.session) {
+            if let Some(building) = session.world().buildings.iter().find(|b| b.id == id) {
+                let center = egui_ctx.content_rect().center();
+                let painter = egui_ctx.layer_painter(egui::LayerId::background());
+                let name = if building.tower().is_some() { format!("{} · Stufe {}", building.kind.label(), building.level) } else { building.kind.label().to_string() };
+                painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, name, egui::FontId::proportional(18.0), Color32::WHITE);
+                let hinweis = if building.tower().is_some() { "E: Turm verwalten" } else { "E: Gebäude verwalten" };
+                painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, hinweis, egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
+                return;
+            }
+        }
         // Einheit der Festung im Visier: Name und Lebensleiste
         if let (None, Some((kind, health))) = (self.build_mode, self.aim_enemy) {
             let center = egui_ctx.content_rect().center();
             let painter = egui_ctx.layer_painter(egui::LayerId::background());
             painter.text(center + egui::vec2(0.0, 28.0), Align2::CENTER_TOP, kind.label(), egui::FontId::proportional(18.0), Color32::from_rgb(230, 170, 255));
             painter.text(center + egui::vec2(0.0, 50.0), Align2::CENTER_TOP, "Linksklick: Zauber", egui::FontId::proportional(14.0), Color32::from_white_alpha(200));
-            ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, health as f32 / kind.max_health() as f32, 1.0);
+            ui::health_bar(&painter, center + egui::vec2(0.0, 78.0), 110.0, health as f32 / 100.0, 1.0);
             return;
         }
         // Beim Platzieren: was gebaut wird und ob es hier geht
@@ -1216,6 +1383,10 @@ impl Game for Playground {
         self.demo_troops = args.iter().any(|a| a == "--demo-truppen" || a == "--demo-kampf");
         self.admin_open = args.iter().any(|a| a == "--demo-admin");
         self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
+        self.demo_towers = args.iter().any(|a| a == "--demo-tuerme");
+        if args.iter().any(|a| a == "tuerme") {
+            self.build_tab = 1;
+        }
         if args.iter().any(|a| a == "--demo-kristall") {
             self.demo_crystal = Some(None);
         }
@@ -1414,7 +1585,7 @@ impl Game for Playground {
                 ctx.physics.teleport_character(character, vec3(stand.x, ground + 1.0, stand.y));
                 match progress {
                     Some(progress) => {
-                        let building = Building { id: 1, kind, position: vec3(at.x, y, at.y), yaw: away.x.atan2(away.y) + 0.5, progress, owner: "demo".into(), produce_in: 40.0 };
+                        let building = Building { id: 1, kind, position: vec3(at.x, y, at.y), yaw: away.x.atan2(away.y) + 0.5, progress, owner: "demo".into(), produce_in: 40.0, level: 1 };
                         session.world_mut().place_building(ctx, building);
                     }
                     None => self.build_mode = Some((kind, 0.5)),
@@ -1426,6 +1597,38 @@ impl Game for Playground {
         if let (true, Some(session)) = (self.demo_troops, &mut self.session) {
             self.demo_troops = false;
             session.admin(crate::protocol::AdminCommand::Waves(true));
+        }
+        if let (true, Some(session)) = (self.demo_towers, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_towers = false;
+                let strasse: Vec<Vec2> = session.world().heer.strassen().next().unwrap_or_default();
+                for (i, kind) in crate::tuerme::TowerKind::ALL.into_iter().enumerate() {
+                    let k = 8 + i * 4;
+                    let (a, b) = (strasse[k], strasse[k + 1]);
+                    let p = a + (b - a).normalize().perp() * if i % 2 == 0 { 8.0 } else { -8.0 };
+                    let y = session.world().terrain.height_at(p.x, p.y);
+                    let building = crate::bauten::Building {
+                        id: 500 + i as u32,
+                        kind: crate::bauten::BuildingKind::Tower(kind),
+                        position: vec3(p.x, y, p.y),
+                        yaw: 0.0,
+                        progress: 1.0,
+                        owner: "demo".into(),
+                        produce_in: 0.0,
+                        level: 1 + (i % 3) as u8,
+                    };
+                    session.world_mut().place_building(ctx, building);
+                }
+                session.admin(crate::protocol::AdminCommand::Waves(true));
+                let world = session.world();
+                let (a, b) = (strasse[18], strasse[19]);
+                let stand = a + (b - a).normalize().perp() * 26.0;
+                let character = world.players[&local].character;
+                ctx.physics.teleport_character(character, vec3(stand.x, world.terrain.height_at(stand.x, stand.y) + 1.0, stand.y));
+                let ziel = strasse[16];
+                self.demo_crystal = Some(Some(vec3(ziel.x, world.terrain.height_at(ziel.x, ziel.y) + 3.0, ziel.y)));
+                self.demo_yaw_offset = 0.0;
+            }
         }
         if let (true, Some(session)) = (self.demo_fight, &mut self.session) {
             if let Some(local) = session.local_player() {
@@ -1555,6 +1758,7 @@ impl Game for Playground {
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
             Screen::Playing if self.build_menu_open => self.build_menu(ctx, egui_ctx),
             Screen::Playing if self.admin_open => self.admin_panel(ctx, egui_ctx),
+            Screen::Playing if self.building_window.is_some() => self.building_panel(ctx, egui_ctx),
             Screen::Playing if self.map_open => {
                 if let Some(session) = &self.session {
                     if self.map_ui.show(ctx, egui_ctx, session.world(), session.local_player()) {
@@ -1583,7 +1787,8 @@ impl Game for Playground {
 fn load_build_icons(ctx: &egui::Context) -> std::collections::HashMap<crate::bauten::BuildingKind, egui::TextureHandle> {
     let mut icons = std::collections::HashMap::new();
     let Some(dir) = crate::asset_files::asset_dir() else { return icons };
-    for kind in crate::bauten::BuildingKind::ALL {
+    let alle = crate::bauten::BuildingKind::ALL.into_iter().chain(crate::tuerme::TowerKind::ALL.into_iter().map(crate::bauten::BuildingKind::Tower));
+    for kind in alle {
         let path = dir.join("icons").join(format!("bau_{}.png", kind.file_name()));
         let mut image = match Image::load_png(&path) {
             Ok(image) => image,

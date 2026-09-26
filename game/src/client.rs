@@ -89,6 +89,15 @@ impl Replica {
         }
     }
 
+    /// Turm aufwerten bzw. eigenes Gebäude abreißen (der Server prüft).
+    pub fn send_upgrade(&mut self, id: u32) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Upgrade(id)));
+    }
+
+    pub fn send_demolish(&mut self, id: u32) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Demolish(id)));
+    }
+
     /// Schickt einen Befehl aus dem Admin-Panel an den Server.
     pub fn send_admin(&mut self, command: AdminCommand) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Admin(command)));
@@ -209,6 +218,8 @@ impl Replica {
                 }
             }
             ServerMessage::BuildRefused(reason) => world.chat_events.push(crate::world::ChatLine::notice(reason)),
+            ServerMessage::BuildingChanged(building) => world.replace_building(ctx, building),
+            ServerMessage::BuildingRemoved(id) => world.remove_building(ctx, id),
         }
     }
 
@@ -222,6 +233,7 @@ impl Replica {
             world.heer.enabled = snapshot.waves;
         }
         world.strikes.append(&mut snapshot.strikes);
+        world.tower_shots.append(&mut snapshot.shots);
         let tick = snapshot.tick as f64;
         match &mut self.server_tick {
             Some(estimate) if (*estimate - tick).abs() < 30.0 => *estimate += (tick - *estimate) * 0.05,

@@ -16,9 +16,24 @@ ZIEL = REPO / "game" / "assets" / "icons"
 sys.path.insert(0, str(REPO / "art" / "lib"))
 
 import bauten  # noqa: E402
+import tuerme  # noqa: E402
 import werkstatt  # noqa: E402
 
 GEBAEUDE = {"holzfaeller": bauten.holzfaeller, "steinbruch": bauten.steinbruch, "erzmine": bauten.erzmine}
+
+
+def _turm(art):
+    """Turm in Stufe 2 mit aufgesetztem Kopf (wie im Spiel, Kopf 1,3-fach)."""
+    def bauen():
+        tuerme.turm(art, 2)
+        k = tuerme.kopf(art)
+        k.location = (0.0, 0.0, tuerme.KOPF_Z[2])
+        k.scale = (1.3, 1.3, 1.3)
+    return bauen
+
+
+for _art in tuerme.TUERME:
+    GEBAEUDE["turm_" + _art] = _turm(_art)
 
 
 def setze(obj, **werte):
@@ -94,7 +109,7 @@ def main():
     for name in namen:
         werkstatt.neu()
         GEBAEUDE[name]()
-        buehne()
+        buehne() if not name.startswith("turm_") else buehne((-0.8, -1.0, 0.55))
         pfad = ZIEL / f"bau_{name}.png"
         bpy.context.scene.render.filepath = str(pfad)
         bpy.ops.render.render(write_still=True)

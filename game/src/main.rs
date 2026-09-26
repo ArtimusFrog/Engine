@@ -14,6 +14,7 @@ mod karte;
 mod leben;
 mod bauten;
 mod heer;
+mod tuerme;
 mod markierungen;
 mod messung;
 mod models;

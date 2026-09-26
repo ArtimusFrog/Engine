@@ -177,6 +177,10 @@ pub struct World {
     heer_ansicht: crate::heer::HeerAnsicht,
     /// Erzwungenes Wetter (Index in `protocol::WETTER`, 0 = automatisch)
     pub weather_choice: u8,
+    /// Gebäude: unsichtbares Objekt (zum Anvisieren) und die festen Körper
+    building_bodies: HashMap<u32, (EntityId, Vec<RigidBodyHandle>)>,
+    /// Schüsse der Türme, die noch gezeigt werden sollen
+    pub tower_shots: Vec<crate::tuerme::Schuss>,
 }
 
 impl World {
@@ -225,6 +229,8 @@ impl World {
             strikes: Vec::new(),
             heer_ansicht: Default::default(),
             weather_choice: 0,
+            building_bodies: HashMap::new(),
+            tower_shots: Vec::new(),
         };
         for (id, spec) in island.resources {
             let health = spec.max_health;
@@ -256,7 +262,11 @@ impl World {
         if self.buildings.iter().any(|b| b.id == building.id) {
             return;
         }
-        crate::bauten::add_colliders(ctx, &building);
+        let mut marker = Entity::new("Gebäude", ctx.assets.cube());
+        marker.visible = false;
+        let marker = ctx.scene.spawn(marker);
+        let bodies = crate::bauten::add_colliders(ctx, &building, marker);
+        self.building_bodies.insert(building.id, (marker, bodies));
         if !ctx.is_headless() {
             let by_entity = &self.by_entity;
             self.bau.add_site(ctx, &building, &|id| !by_entity.contains_key(&id));
@@ -264,11 +274,36 @@ impl World {
         self.buildings.push(building);
     }
 
+    /// Ein Gebäude abreißen (Hindernisse, Darstellung, Eintrag).
+    pub fn remove_building(&mut self, ctx: &mut Context, id: u32) {
+        if let Some((marker, bodies)) = self.building_bodies.remove(&id) {
+            for body in bodies {
+                ctx.physics.remove_body(body);
+            }
+            ctx.scene.despawn(marker);
+        }
+        if !ctx.is_headless() {
+            self.bau.remove_site(ctx, id);
+        }
+        self.buildings.retain(|b| b.id != id);
+    }
+
+    /// Ein Gebäude durch seinen neuen Stand ersetzen (Turm aufgewertet: neues Modell, Gerüst).
+    pub fn replace_building(&mut self, ctx: &mut Context, building: crate::bauten::Building) {
+        self.remove_building(ctx, building.id);
+        self.place_building(ctx, building);
+    }
+
+    /// Welches Gebäude gehört zu diesem (unsichtbaren) Objekt? Zum Anvisieren.
+    pub fn building_at(&self, entity: EntityId) -> Option<u32> {
+        self.building_bodies.iter().find(|(_, (marker, _))| *marker == entity).map(|(&id, _)| id)
+    }
+
     /// Baufortschritt, ein Takt (auf Server und Clients gleich schnell).
     pub fn advance_buildings(&mut self, dt: f32) {
         for building in &mut self.buildings {
             if building.progress < 1.0 {
-                building.progress = (building.progress + dt / building.kind.build_seconds()).min(1.0);
+                building.progress = (building.progress + dt / building.kind.build_seconds(building.level)).min(1.0);
             }
         }
     }
@@ -979,7 +1014,16 @@ impl World {
             messen("wachen", || wachen.update(ctx, &self.day));
         }
         for kind in self.bau.update(ctx, &self.buildings, &mut self.sound_events) {
-            self.chat_events.push(ChatLine::notice(format!("{} ist fertig gebaut und liefert jetzt {}.", kind.label(), kind.produces().label())));
+            let text = match kind.produces() {
+                Some(item) => format!("{} ist fertig gebaut und liefert jetzt {}.", kind.label(), item.label()),
+                None => format!("{} ist bereit und verteidigt die Straße.", kind.label()),
+            };
+            self.chat_events.push(ChatLine::notice(text));
+        }
+        for shot in std::mem::take(&mut self.tower_shots) {
+            if let Some(building) = self.buildings.iter().find(|b| b.id == shot.turm) {
+                self.bau.shot(ctx, building, shot.ziel, &mut self.sound_events);
+            }
         }
         if !ctx.is_headless() {
             self.heer_ansicht.update(ctx, &self.feinde, &mut self.sound_events);

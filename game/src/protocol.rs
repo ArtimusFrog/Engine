@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0012;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0013;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -133,6 +133,8 @@ pub struct Snapshot {
     /// Erzwungenes Wetter (Index in `WETTER`) und ob die Festung Truppen schickt
     pub weather: u8,
     pub waves: bool,
+    /// Schüsse der Türme seit dem letzten Schnappschuss
+    pub shots: Vec<crate::tuerme::Schuss>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,6 +167,10 @@ pub enum ServerMessage {
     Buildings(Vec<crate::bauten::Building>),
     /// Der eigene Bauauftrag wurde abgelehnt (Grund zum Anzeigen).
     BuildRefused(String),
+    /// Ein Gebäude hat sich geändert (Turm aufgewertet)
+    BuildingChanged(crate::bauten::Building),
+    /// Ein Gebäude wurde abgerissen
+    BuildingRemoved(u32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,6 +183,9 @@ pub enum ClientMessage {
     Build { kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32 },
     /// Befehl aus dem Admin-Panel
     Admin(AdminCommand),
+    /// Turm aufwerten bzw. eigenes Gebäude abreißen
+    Upgrade(u32),
+    Demolish(u32),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {

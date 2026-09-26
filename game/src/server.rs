@@ -58,6 +58,9 @@ pub struct Authority {
     chat_times: HashMap<PlayerId, Vec<u64>>,
     /// Angriffe der Truppen seit dem letzten Schnappschuss
     strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
+    /// Türme im Kampf und ihre Schüsse seit dem letzten Schnappschuss
+    verteidigung: crate::tuerme::Verteidigung,
+    shots: Vec<crate::tuerme::Schuss>,
 }
 
 impl Authority {
@@ -72,6 +75,8 @@ impl Authority {
             tick: 0,
             chat_times: HashMap::new(),
             strikes: Vec::new(),
+            verteidigung: Default::default(),
+            shots: Vec::new(),
         }
     }
 
@@ -123,6 +128,14 @@ impl Authority {
         // Truppen der Festung: marschieren, kämpfen gegen Spieler in der Nähe (nicht gegen Flieger)
         let players: Vec<Vec3> = world.players.values().filter(|a| !a.noclip).map(|a| ctx.physics.character_position(a.character)).collect();
         let strikes = world.heer.tick(Physics::FIXED_DT, &players);
+        // Türme schießen; Beute für besiegte Einheiten an den, der sie besiegt hat
+        let shots = self.verteidigung.tick(Physics::FIXED_DT, &world.buildings, &mut world.heer);
+        world.tower_shots.extend(shots.iter().copied());
+        self.shots.extend(shots);
+        for (name, kind) in std::mem::take(&mut world.heer.gefallen) {
+            let beute: Vec<(Item, u32)> = crate::tuerme::beute(kind).to_vec();
+            self.give(world, &name, &beute);
+        }
         world.feinde = world.heer.states();
         for strike in strikes {
             let entry = (strike.kind, strike.from, strike.target);
@@ -160,6 +173,7 @@ impl Authority {
 
         if self.net.is_none() {
             self.strikes.clear();
+            self.shots.clear();
         }
         if let Some(net) = &mut self.net {
             net.flush();
@@ -240,7 +254,9 @@ impl Authority {
         self.pending_hits = waiting;
         for hit in landed {
             if hit.enemy {
-                world.heer.hit(hit.animal);
+                let name = world.players.get(&hit.by).map(|a| player_key(&a.name)).unwrap_or_default();
+                let zauber = crate::heer::Hit { schaden: 20.0, art: crate::tuerme::DamageKind::Arcane, ..Default::default() };
+                world.heer.damage(hit.animal, zauber, &name);
                 continue;
             }
             let Some(animal) = world.animals.get_mut(hit.animal as usize) else { continue };
@@ -277,13 +293,13 @@ impl Authority {
         if !bauten::affordable(inventory, kind) {
             return Err(format!("Nicht genug Rohstoffe für {}", kind.with_article()));
         }
-        for &(item, amount) in kind.cost() {
+        for (item, amount) in kind.cost() {
             inventory.remove_item(item, amount);
         }
         let inventory = *inventory;
         let id = world.buildings.iter().map(|b| b.id + 1).max().unwrap_or(1);
         let yaw = if yaw.is_finite() { yaw.rem_euclid(std::f32::consts::TAU) } else { 0.0 };
-        let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS };
+        let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS, level: 1 };
         log::info!("{name} baut {} bei ({:.0}, {:.0})", kind.with_article(), at.x, at.y);
         world.place_building(ctx, building.clone());
         world.chat_events.push(crate::world::ChatLine::notice(format!("{name} baut {}", kind.with_article())));
@@ -308,24 +324,84 @@ impl Authority {
     fn produce(&mut self, world: &mut World) {
         let mut deliveries = Vec::new();
         for building in world.buildings.iter_mut().filter(|b| b.finished()) {
+            let Some(item) = building.kind.produces() else { continue };
             building.produce_in -= Physics::FIXED_DT;
             if building.produce_in <= 0.0 {
                 building.produce_in += PRODUCTION_SECONDS;
-                deliveries.push((building.owner.clone(), building.kind.produces()));
+                deliveries.push((building.owner.clone(), item));
             }
         }
         for (owner, item) in deliveries {
-            let online = world.players.iter().find(|(_, a)| player_key(&a.name) == owner).map(|(&id, _)| id);
-            match online {
-                Some(id) => {
-                    let inventory = world.inventories.entry(id).or_default();
-                    inventory.add_item(item, 1);
-                    let inventory = *inventory;
-                    self.send_inventory(id, inventory);
+            self.give(world, &owner, &[(item, 1)]);
+        }
+    }
+
+    /// Gegenstände an einen Spieler (nach Namen) – auch wenn er gerade nicht da ist.
+    fn give(&mut self, world: &mut World, owner: &str, items: &[(Item, u32)]) {
+        if owner.is_empty() || items.is_empty() {
+            return;
+        }
+        let online = world.players.iter().find(|(_, a)| player_key(&a.name) == owner).map(|(&id, _)| id);
+        match online {
+            Some(id) => {
+                let inventory = world.inventories.entry(id).or_default();
+                for &(item, n) in items {
+                    inventory.add_item(item, n);
                 }
-                None => self.inventories.entry(owner).or_default().add_item(item, 1),
+                let inventory = *inventory;
+                self.send_inventory(id, inventory);
+            }
+            None => {
+                let inventory = self.inventories.entry(owner.to_string()).or_default();
+                for &(item, n) in items {
+                    inventory.add_item(item, n);
+                }
             }
         }
+    }
+
+    /// Einen Turm um eine Stufe aufwerten (jeder darf, der die Rohstoffe hat).
+    pub fn upgrade(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) -> Result<(), String> {
+        let Some(building) = world.buildings.iter().find(|b| b.id == id).cloned() else { return Err("Das Gebäude gibt es nicht mehr".into()) };
+        if building.tower().is_none() {
+            return Err("Nur Türme lassen sich aufwerten".into());
+        }
+        if !building.finished() {
+            return Err("Erst fertig bauen".into());
+        }
+        if building.level >= crate::tuerme::MAX_STUFE {
+            return Err("Schon auf der höchsten Stufe".into());
+        }
+        let cost = building.kind.upgrade_cost(building.level + 1);
+        let inventory = world.inventories.entry(player).or_default();
+        if !bauten::can_pay(inventory, &cost) {
+            return Err("Nicht genug Rohstoffe zum Aufwerten".into());
+        }
+        for &(item, n) in &cost {
+            inventory.remove_item(item, n);
+        }
+        let inventory = *inventory;
+        let neu = Building { level: building.level + 1, progress: 0.0, ..building };
+        world.replace_building(ctx, neu.clone());
+        self.broadcast(ServerMessage::BuildingChanged(neu));
+        self.send_inventory(player, inventory);
+        self.save(world);
+        Ok(())
+    }
+
+    /// Ein eigenes Gebäude abreißen: die Hälfte der Kosten kommt zurück.
+    pub fn demolish(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) -> Result<(), String> {
+        let Some(building) = world.buildings.iter().find(|b| b.id == id).cloned() else { return Err("Das Gebäude gibt es nicht mehr".into()) };
+        let name = world.players.get(&player).map(|a| player_key(&a.name)).unwrap_or_default();
+        if building.owner != name {
+            return Err("Nur wer es gebaut hat, darf es abreißen".into());
+        }
+        let zurueck: Vec<(Item, u32)> = building.paid().into_iter().map(|(item, n)| (item, n / 2)).filter(|&(_, n)| n > 0).collect();
+        world.remove_building(ctx, id);
+        self.broadcast(ServerMessage::BuildingRemoved(id));
+        self.give(world, &name, &zurueck);
+        self.save(world);
+        Ok(())
     }
 
     fn send_inventory(&mut self, player: PlayerId, inventory: Inventory) {
@@ -423,12 +499,15 @@ impl Authority {
         let mut chats = Vec::new();
         let mut builds = Vec::new();
         let mut admins = Vec::new();
+        let mut changes = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
                     Some(ClientMessage::Chat(text)) => chats.push((id, text)),
                     Some(ClientMessage::Build { kind, at, yaw }) => builds.push((id, kind, at, yaw)),
                     Some(ClientMessage::Admin(command)) => admins.push(command),
+                    Some(ClientMessage::Upgrade(building)) => changes.push((id, building, true)),
+                    Some(ClientMessage::Demolish(building)) => changes.push((id, building, false)),
                     _ => {}
                 }
             }
@@ -454,6 +533,12 @@ impl Authority {
         }
         for command in admins {
             self.admin(world, command);
+        }
+        for (id, building, upgrade) in changes {
+            let result = if upgrade { self.upgrade(ctx, world, id, building) } else { self.demolish(ctx, world, id, building) };
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
         }
         for (id, kind, at, yaw) in builds {
             if let Err(reason) = self.build(ctx, world, id, kind, at, yaw) {
@@ -571,6 +656,7 @@ impl Authority {
             strikes: std::mem::take(&mut self.strikes),
             weather: world.weather_choice,
             waves: world.heer.enabled,
+            shots: std::mem::take(&mut self.shots),
         });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));

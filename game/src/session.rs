@@ -128,6 +128,23 @@ impl Session {
         }
     }
 
+    /// Turm aufwerten (`upgrade`) bzw. eigenes Gebäude abreißen.
+    pub fn change_building(&mut self, ctx: &mut Context, id: u32, upgrade: bool) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            if upgrade {
+                replica.send_upgrade(id);
+            } else {
+                replica.send_demolish(id);
+            }
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            let result = if upgrade { authority.upgrade(ctx, &mut self.world, local, id) } else { authority.demolish(ctx, &mut self.world, local, id) };
+            if let Err(reason) = result {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Befehl aus dem Admin-Panel (beim Host/Einzelspieler direkt, sonst an den Server).
     pub fn admin(&mut self, command: crate::protocol::AdminCommand) {
         if let Some(replica) = &mut self.replica {
@@ -495,7 +512,7 @@ mod tests {
         assert_eq!(pair.client.session.local_inventory().wood, 10, "Holz nicht abgezogen");
         assert_eq!(pair.client.session.local_inventory().stone, 2, "Stein nicht abgezogen");
 
-        pair.run((kind.build_seconds() * 60.0) as u32 + 30);
+        pair.run((kind.build_seconds(1) * 60.0) as u32 + 30);
         assert!(pair.server.session.world().buildings[0].finished(), "Server: nicht fertig");
         assert!(pair.client.session.world().buildings[0].finished(), "Client: nicht fertig");
         pair.run((PRODUCTION_SECONDS * 60.0) as u32 + 30);
