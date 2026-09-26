@@ -1294,7 +1294,7 @@ impl Game for Playground {
             });
             if let (Some((at, y)), Some(local)) = (site, session.local_player()) {
                 let away = (spawn - at).normalize_or(Vec2::Y);
-                let stand = at + away * 22.0;
+                let stand = at + away * 17.0 + away.perp() * 4.0;
                 let character = world.players[&local].character;
                 let ground = world.terrain.height_at(stand.x, stand.y);
                 ctx.physics.teleport_character(character, vec3(stand.x, ground + 1.0, stand.y));

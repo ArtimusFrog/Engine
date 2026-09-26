@@ -257,7 +257,16 @@ impl BauVisuals {
         let bands = band_meshes.iter().map(|&m| ctx.scene.spawn(Entity::new("Bauabschnitt", m).with_transform(transform))).collect();
         let full = ctx.scene.spawn(Entity::new(building.kind.label(), full_mesh).with_transform(transform));
         let glow = glow_mesh.map(|m| ctx.scene.spawn(Entity::new("Licht", m).with_transform(transform).with_material(Material::Emissive { glow: 2.2 })));
-        let scaffold = spawn_scaffold(ctx, building, min, max, height);
+        let mut scaffold = spawn_scaffold(ctx, building, min, max, height);
+        // Baumaterial vor der Baustelle: Holzstapel, Kisten und ein Fass (verschwinden mit dem Gerüst)
+        let rotation = building.rotation();
+        for (name, local, turn) in [("holzstapel", vec2(max.x + 1.6, max.y + 2.2), 0.3), ("kiste", vec2(min.x - 1.2, max.y + 2.0), 0.9), ("fass", vec2(min.x - 1.4, max.y + 3.0), 0.0)] {
+            if let Some(&(mesh, _)) = crate::asset_files::load_variants(ctx, "gebaeude", name, Vec3::ONE, 0.0).first() {
+                let at = building.position + rotation * vec3(local.x, 0.0, local.y);
+                let transform = Transform::from_position(at).with_rotation(rotation * Quat::from_rotation_y(turn));
+                scaffold.push((ctx.scene.spawn(Entity::new("Baumaterial", mesh).with_transform(transform)), 0.0));
+            }
+        }
         let mut site = Site { bands, full, glow, scaffold, shown_bands: usize::MAX, hammer: 0.0, finished: false };
         site.show(ctx, building.progress, false);
         self.sites.insert(building.id, site);
