@@ -59,7 +59,8 @@ struct VertexIn {
 };
 
 struct VertexOut {
-    @builtin(position) clip: vec4<f32>,
+    // invariant: Laub wird zweimal gezeichnet (Tiefe, dann Farbe mit Tiefentest „gleich“)
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
@@ -663,7 +664,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let pattern_w = max(fwidth(in.uv.x), fwidth(in.uv.y));
     // Tatsächliche Ausrichtung der Fläche (die Normale in `in.normal` ist bei Laub „weich“ geschönt).
     let face = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    // Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
+    clip_cutout(in, texel, face);
+    return shade(in, front, texel, pattern_w);
+}
+
+// Ausschnitt-Masken (Blätter, Gräser): durchsichtige Stellen gar nicht zeichnen.
+fn clip_cutout(in: VertexOut, texel: vec4<f32>, face: vec3<f32>) {
     let kind = in.material.x;
     if (texel.a < 0.5 && kind != MAT_GROUND) {
         discard;
@@ -677,7 +683,17 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
             discard;
         }
     }
-    return shade(in, front, texel, pattern_w);
+}
+
+// Tiefen-Vordurchgang für Laub: nur ausschneiden, keine Beleuchtung. Danach wird jedes
+// sichtbare Blattpixel genau einmal mit `fs_opaque` beleuchtet (Tiefentest „gleich“) – statt
+// jede der vielen übereinanderliegenden Blattkarten voll zu berechnen.
+@fragment
+fn fs_prepass(in: VertexOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(albedo_texture, albedo_sampler, in.uv);
+    let face = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    clip_cutout(in, texel, face);
+    return vec4<f32>(0.0);
 }
 
 @fragment

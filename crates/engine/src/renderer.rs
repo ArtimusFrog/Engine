@@ -108,9 +108,12 @@ pub(crate) struct Renderer {
     double_sided_pipeline: wgpu::RenderPipeline,
     shadow_cutout_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
-    /// Ausgeschnittene Flächen (Blätter, Gräser): dürfen Pixel verwerfen
+    /// Ausgeschnittene Flächen (Blätter, Gräser): Tiefen-Vordurchgang (verwirft Pixel) und
+    /// Beleuchtung mit Tiefentest „gleich“
     cutout_pipeline: wgpu::RenderPipeline,
     double_sided_cutout_pipeline: wgpu::RenderPipeline,
+    cutout_shade_pipeline: wgpu::RenderPipeline,
+    double_sided_cutout_shade_pipeline: wgpu::RenderPipeline,
     /// Verformte Figuren: Bild und Schatten, dazu die Knochenmatrizen aller Figuren des Bildes
     skinned_pipeline: wgpu::RenderPipeline,
     skinned_shadow_pipeline: wgpu::RenderPipeline,
@@ -337,8 +340,14 @@ impl Renderer {
             immediate_size: 0,
         });
         // Normal nur Vorderseiten; beidseitige Meshes (Blätter) ohne Rückseiten-Culling.
-        // `cutout`: darf Pixel verwerfen (Blätter) – sonst bleibt der frühe Tiefentest an.
-        let main_pipeline = |cull_mode: Option<wgpu::Face>, cutout: bool| {
+        // Feste Flächen: beleuchten, Tiefe schreiben. Laub in zwei Schritten: erst nur die Tiefe
+        // (ausschneiden, keine Farbe), dann mit Tiefentest „gleich“ genau einmal beleuchten.
+        let main_pipeline = |cull_mode: Option<wgpu::Face>, stage: DrawStage| {
+            let (entry, write, compare, color) = match stage {
+                DrawStage::Prepass => ("fs_prepass", true, wgpu::CompareFunction::Less, wgpu::ColorWrites::empty()),
+                DrawStage::Shade => ("fs_opaque", false, wgpu::CompareFunction::Equal, wgpu::ColorWrites::ALL),
+                _ => ("fs_opaque", true, wgpu::CompareFunction::Less, wgpu::ColorWrites::ALL),
+            };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("basic"),
                 layout: Some(&pipeline_layout),
@@ -351,26 +360,28 @@ impl Renderer {
                 primitive: wgpu::PrimitiveState { cull_mode, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_write_enabled: Some(write),
+                    depth_compare: Some(compare),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some(if cutout { "fs_main" } else { "fs_opaque" }),
+                    entry_point: Some(entry),
                     compilation_options: Default::default(),
-                    targets: &[Some(config.format.into())],
+                    targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: None, write_mask: color })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let pipeline = main_pipeline(Some(wgpu::Face::Back), false);
-        let double_sided_pipeline = main_pipeline(None, false);
-        let cutout_pipeline = main_pipeline(Some(wgpu::Face::Back), true);
-        let double_sided_cutout_pipeline = main_pipeline(None, true);
+        let pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Main);
+        let double_sided_pipeline = main_pipeline(None, DrawStage::Main);
+        let cutout_pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Prepass);
+        let double_sided_cutout_pipeline = main_pipeline(None, DrawStage::Prepass);
+        let cutout_shade_pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Shade);
+        let double_sided_cutout_shade_pipeline = main_pipeline(None, DrawStage::Shade);
 
         // Schatten ausgeschnittener Flächen: Textur lesen und durchsichtige Pixel weglassen.
         let shadow_cutout_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -588,6 +599,8 @@ impl Renderer {
             shadow_pipeline,
             cutout_pipeline,
             double_sided_cutout_pipeline,
+            cutout_shade_pipeline,
+            double_sided_cutout_shade_pipeline,
             skinned_pipeline,
             skinned_shadow_pipeline,
             palette_layout,
@@ -627,7 +640,7 @@ impl Renderer {
     }
 
     /// Renderauflösung in Prozent (50–100) oder 0 = automatisch: die Grafikkarte soll dann
-    /// etwa 75 Bilder pro Sekunde schaffen, die Auflösung sinkt dafür bis auf die Hälfte.
+    /// etwa 70 Bilder pro Sekunde schaffen, die Auflösung sinkt dafür bis auf die Hälfte.
     pub fn set_render_scale(&mut self, percent: u8) {
         if percent == self.scale_setting {
             return;
@@ -699,12 +712,14 @@ impl Renderer {
         }
         let average = self.scale_samples.0 / self.scale_samples.1 as f32;
         self.scale_samples = (0.0, 0);
-        const TARGET_MS: f32 = 13.0;
-        let wanted = if average > TARGET_MS * 1.15 {
-            // Pixelzahl wächst mit dem Quadrat der Auflösung
+        // Ziel: ~14 ms für die Grafikkarte (Luft für 60 Bilder/s samt CPU). Die Pixelzahl wächst
+        // mit dem Quadrat der Auflösung; hochgeregelt wird nur, wenn die nächste Stufe noch passt.
+        const TARGET_MS: f32 = 14.0;
+        let up = self.scale + 0.05;
+        let wanted = if average > TARGET_MS * 1.12 {
             self.scale * (TARGET_MS / average).sqrt()
-        } else if average < TARGET_MS * 0.7 {
-            self.scale + 0.05
+        } else if self.scale < 1.0 && average * (up / self.scale).powi(2) < TARGET_MS {
+            up
         } else {
             return;
         };
@@ -981,7 +996,7 @@ impl Renderer {
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &shadow_batches, true);
+            self.draw_batches(&mut pass, &shadow_batches, DrawStage::Shadow);
             self.draw_skinned(&mut pass, &skinned_shadow_batches, true);
         }
         {
@@ -1011,7 +1026,9 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            self.draw_batches(&mut pass, &batches, false);
+            self.draw_batches(&mut pass, &batches, DrawStage::Main);
+            self.draw_batches(&mut pass, &batches, DrawStage::Prepass);
+            self.draw_batches(&mut pass, &batches, DrawStage::Shade);
             self.draw_skinned(&mut pass, &skinned_batches, false);
             // Himmel zuletzt: er wird nur dort berechnet, wo noch nichts gezeichnet ist.
             pass.set_bind_group(1, &self.white_texture, &[]);
@@ -1108,20 +1125,31 @@ impl Renderer {
 
     /// Zeichnet die Stapel und wählt je Mesh die passende Pipeline: im Schatten-Durchgang
     /// brauchen nur Ausschnitt-Meshes (Blätter) ihre Textur, im Hauptdurchgang alle.
-    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], shadow: bool) {
+    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[(usize, std::ops::Range<u32>)], stage: DrawStage) {
         let mut current: Option<*const wgpu::RenderPipeline> = None;
         for (mesh, instances) in batches {
             let mesh = &self.meshes[*mesh];
             if mesh.index_count == 0 {
                 continue;
             }
-            let (pipeline, textured) = match (shadow, mesh.alpha_cutout, mesh.double_sided) {
-                (true, true, _) => (&self.shadow_cutout_pipeline, true),
-                (true, false, _) => (&self.shadow_pipeline, false),
-                (false, true, true) => (&self.double_sided_cutout_pipeline, true),
-                (false, true, false) => (&self.cutout_pipeline, true),
-                (false, false, true) => (&self.double_sided_pipeline, true),
-                (false, false, false) => (&self.pipeline, true),
+            // Im Hauptdurchgang kommen feste Flächen und Laub getrennt (siehe `DrawStage`)
+            let wanted = match stage {
+                DrawStage::Shadow => true,
+                DrawStage::Main => !mesh.alpha_cutout,
+                DrawStage::Prepass | DrawStage::Shade => mesh.alpha_cutout,
+            };
+            if !wanted {
+                continue;
+            }
+            let (pipeline, textured) = match (stage, mesh.alpha_cutout, mesh.double_sided) {
+                (DrawStage::Shadow, true, _) => (&self.shadow_cutout_pipeline, true),
+                (DrawStage::Shadow, false, _) => (&self.shadow_pipeline, false),
+                (DrawStage::Prepass, _, true) => (&self.double_sided_cutout_pipeline, true),
+                (DrawStage::Prepass, _, false) => (&self.cutout_pipeline, true),
+                (DrawStage::Shade, _, true) => (&self.double_sided_cutout_shade_pipeline, true),
+                (DrawStage::Shade, _, false) => (&self.cutout_shade_pipeline, true),
+                (_, _, true) => (&self.double_sided_pipeline, true),
+                (_, _, false) => (&self.pipeline, true),
             };
             if current != Some(pipeline as *const _) {
                 pass.set_pipeline(pipeline);
@@ -1342,6 +1370,19 @@ fn sphere_visible(planes: &[glam::Vec4; 6], center: glam::Vec3, radius: f32) -> 
 }
 
 /// Sortiert nach Mesh, hängt die Instanzen an und liefert die Stapel (Mesh, Instanzbereich).
+/// Welcher Teil eines Durchgangs gezeichnet wird.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DrawStage {
+    /// Schattenkarte (alles)
+    Shadow,
+    /// Hauptbild: feste Flächen
+    Main,
+    /// Hauptbild: Laub, nur Tiefe
+    Prepass,
+    /// Hauptbild: Laub beleuchten, wo die Tiefe genau passt
+    Shade,
+}
+
 /// Was ein Abschnitt der Szene zum Bild beiträgt (siehe `CullView::cull`).
 #[derive(Default)]
 struct Culled {
