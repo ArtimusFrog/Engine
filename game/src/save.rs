@@ -33,6 +33,9 @@ pub struct WorldSave {
     /// Von Spielern errichtete Gebäude (ältere Spielstände haben keine).
     #[serde(default)]
     pub buildings: Vec<crate::bauten::Building>,
+    /// Wer sein Startgold schon bekommen hat
+    #[serde(default)]
+    pub startgold: std::collections::BTreeSet<String>,
 }
 
 /// Schlüssel für Inventare: Name ohne Groß/klein-Unterschied.
@@ -58,6 +61,7 @@ impl WorldSave {
             gone: world.resources.iter().filter_map(|(&id, r)| r.regrows_at.map(|at| (id, at.saturating_sub(tick)))).collect(),
             damaged: world.resources.iter().filter(|(_, r)| r.is_present() && r.health < r.spec.max_health).map(|(&id, r)| (id, r.health)).collect(),
             buildings: world.buildings.clone(),
+            startgold: Default::default(),
         }
     }
 

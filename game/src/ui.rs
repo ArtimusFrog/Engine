@@ -331,6 +331,17 @@ pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
     let v = |x: f32, y: f32| c + egui::vec2(x * s, y * s);
     let outline = Stroke::new(1.5 * s, Color32::from_black_alpha(120));
     match item {
+        Item::Gold => {
+            // Drei gestapelte Goldmünzen
+            for (i, dy) in [9.0f32, 2.0, -5.0].into_iter().enumerate() {
+                let mitte = v(-1.0 + i as f32 * 1.5, dy);
+                let rand = egui::Rect::from_center_size(mitte, egui::vec2(26.0 * s, 9.0 * s));
+                painter.rect_filled(rand.translate(egui::vec2(0.0, 2.5 * s)), 4.5 * s, Color32::from_rgb(170, 115, 25));
+                painter.rect_filled(rand, 4.5 * s, Color32::from_rgb(245, 196, 64));
+                painter.rect_stroke(rand, 4.5 * s, Stroke::new(1.2 * s, Color32::from_rgb(150, 100, 20)), egui::StrokeKind::Inside);
+            }
+            painter.circle_filled(v(4.0, -9.0), 2.0 * s, Color32::from_rgb(255, 250, 220));
+        }
         Item::Wood => {
             // Zwei gestapelte Holzscheite mit Jahresringen
             for (dy, dx) in [(7.0, -2.0), (-5.0, 3.0)] {

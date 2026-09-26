@@ -129,17 +129,13 @@ impl Session {
     }
 
     /// Turm aufwerten (`upgrade`) bzw. eigenes Gebäude abreißen.
-    pub fn change_building(&mut self, ctx: &mut Context, id: u32, upgrade: bool) {
+    /// Befehl zur Verteidigung (aufwerten, abreißen, zielen, Welle rufen, Straße wählen).
+    pub fn td(&mut self, ctx: &mut Context, befehl: crate::td::TdBefehl) {
         let local = self.local_player();
         if let Some(replica) = &mut self.replica {
-            if upgrade {
-                replica.send_upgrade(id);
-            } else {
-                replica.send_demolish(id);
-            }
+            replica.send_td(befehl);
         } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
-            let result = if upgrade { authority.upgrade(ctx, &mut self.world, local, id) } else { authority.demolish(ctx, &mut self.world, local, id) };
-            if let Err(reason) = result {
+            if let Err(reason) = authority.td(ctx, &mut self.world, local, befehl) {
                 self.world.chat_events.push(crate::world::ChatLine::notice(reason));
             }
         }
@@ -150,7 +146,7 @@ impl Session {
         if let Some(replica) = &mut self.replica {
             replica.send_admin(command);
         } else if let Some(authority) = &mut self.authority {
-            authority.admin(&mut self.world, command);
+            authority.admin(&mut self.world, HOST_PLAYER, command);
         }
     }
 

@@ -14,7 +14,7 @@ use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{Inventory, Item};
-use crate::tuerme::{TowerKind, KOPF_GROESSE, KOPF_Z, MAX_STUFE};
+use crate::tuerme::{FallenArt, TowerKind, KOPF_GROESSE, KOPF_Z, MAX_STUFE};
 use crate::world::SoundEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ pub enum BuildingKind {
     Quarry,
     Mine,
     Tower(TowerKind),
+    /// Falle direkt auf der Heerstraße
+    Falle(FallenArt),
 }
 
 impl BuildingKind {
@@ -36,12 +38,20 @@ impl BuildingKind {
         }
     }
 
+    pub fn falle(self) -> Option<FallenArt> {
+        match self {
+            BuildingKind::Falle(f) => Some(f),
+            _ => None,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BuildingKind::Lumberjack => "Holzfäller",
             BuildingKind::Quarry => "Steinbruch",
             BuildingKind::Mine => "Erzmine",
             BuildingKind::Tower(t) => t.label(),
+            BuildingKind::Falle(f) => f.label(),
         }
     }
 
@@ -51,6 +61,7 @@ impl BuildingKind {
             BuildingKind::Quarry => "Felswand mit Kran und Werkstatt. Bricht Steinquader für dich.",
             BuildingKind::Mine => "Stollen in den Fels, Lore voller Erz. Fördert Eisenerz für dich.",
             BuildingKind::Tower(t) => t.description(),
+            BuildingKind::Falle(f) => f.description(),
         }
     }
 
@@ -61,6 +72,7 @@ impl BuildingKind {
             BuildingKind::Quarry => "steinbruch".into(),
             BuildingKind::Mine => "erzmine".into(),
             BuildingKind::Tower(t) => format!("turm_{}_{}", t.file(), level.clamp(1, MAX_STUFE)),
+            BuildingKind::Falle(f) => f.file().into(),
         }
     }
 
@@ -78,14 +90,15 @@ impl BuildingKind {
             BuildingKind::Lumberjack => vec![(Item::Wood, 20), (Item::Stone, 8)],
             BuildingKind::Quarry => vec![(Item::Wood, 25), (Item::Stone, 10)],
             BuildingKind::Mine => vec![(Item::Wood, 30), (Item::Stone, 20)],
-            BuildingKind::Tower(t) => t.kosten(1).into_iter().filter(|&(_, n)| n > 0).collect(),
+            BuildingKind::Tower(t) => t.kosten(1),
+            BuildingKind::Falle(f) => f.kosten(),
         }
     }
 
     /// Kosten, um auf `level` aufzuwerten (nur Türme).
     pub fn upgrade_cost(self, level: u8) -> Vec<(Item, u32)> {
         match self {
-            BuildingKind::Tower(t) if level <= MAX_STUFE => t.kosten(level).into_iter().filter(|&(_, n)| n > 0).collect(),
+            BuildingKind::Tower(t) if level <= MAX_STUFE => t.kosten(level),
             _ => Vec::new(),
         }
     }
@@ -97,6 +110,7 @@ impl BuildingKind {
             BuildingKind::Quarry => "einen Steinbruch".into(),
             BuildingKind::Mine => "eine Erzmine".into(),
             BuildingKind::Tower(t) => t.with_article(),
+            BuildingKind::Falle(f) => f.with_article(),
         }
     }
 
@@ -106,7 +120,7 @@ impl BuildingKind {
             BuildingKind::Lumberjack => Some(Item::Wood),
             BuildingKind::Quarry => Some(Item::Stone),
             BuildingKind::Mine => Some(Item::Ore),
-            BuildingKind::Tower(_) => None,
+            BuildingKind::Tower(_) | BuildingKind::Falle(_) => None,
         }
     }
 
@@ -117,7 +131,9 @@ impl BuildingKind {
             BuildingKind::Quarry => 8.0,
             BuildingKind::Mine => 7.4,
             BuildingKind::Tower(TowerKind::Catapult) => 3.3,
+            BuildingKind::Tower(TowerKind::Barracks | TowerKind::Treasury) => 2.9,
             BuildingKind::Tower(_) => 2.6,
+            BuildingKind::Falle(_) => 2.0,
         }
     }
 
@@ -129,6 +145,7 @@ impl BuildingKind {
             BuildingKind::Mine => 42.0,
             BuildingKind::Tower(_) if level > 1 => 8.0,
             BuildingKind::Tower(_) => 14.0,
+            BuildingKind::Falle(_) => 5.0,
         }
     }
 
@@ -143,6 +160,7 @@ impl BuildingKind {
                 let breite = if t == TowerKind::Catapult { 4.4 } else { 3.3 };
                 vec![([0.0, h / 2.0, 0.0], [breite, h, breite])]
             }
+            BuildingKind::Falle(_) => Vec::new(),
         }
     }
 }
@@ -175,6 +193,12 @@ pub struct Building {
     /// Stufe (Türme 1–3, sonst 1)
     #[serde(default = "stufe_eins")]
     pub level: u8,
+    /// Richtung auf Stufe 3 (0 = noch keine, 1 = A, 2 = B)
+    #[serde(default)]
+    pub zweig: u8,
+    /// Worauf der Turm zielt
+    #[serde(default)]
+    pub ziel: crate::td::Zielmodus,
 }
 
 impl Building {
@@ -188,6 +212,16 @@ impl Building {
 
     pub fn tower(&self) -> Option<TowerKind> {
         self.kind.tower()
+    }
+
+    /// Die Richtung, die wirkt (nur auf Stufe 3).
+    pub fn aktiver_zweig(&self) -> u8 {
+        if self.level >= MAX_STUFE { self.zweig } else { 0 }
+    }
+
+    /// Werte des Turms auf seiner Stufe und in seiner Richtung (Fallen und Gebäude: leer).
+    pub fn kind_werte(&self) -> crate::tuerme::Werte {
+        self.tower().map(|t| t.werte(self.level, self.aktiver_zweig())).unwrap_or_default()
     }
 
     /// Was bisher insgesamt bezahlt wurde (fürs Abreißen: die Hälfte kommt zurück).
@@ -242,7 +276,11 @@ pub fn check_site(world: &crate::world::World, kind: BuildingKind, at: Vec2, bui
         }
     }
     let strasse = road_distance(world, at);
-    if kind.tower().is_some() {
+    if kind.falle().is_some() {
+        if strasse > 2.6 {
+            return Err("Fallen nur auf eine Heerstraße");
+        }
+    } else if kind.tower().is_some() {
         if strasse < TURM_ABSTAND.0 {
             return Err("Nicht auf die Straße");
         }
@@ -336,13 +374,42 @@ struct Site {
     glow: Option<EntityId>,
     /// Modell (Art und Stufe), mit dem die Baustelle angelegt wurde
     model: String,
-    /// Turmkopf: Objekt, aktuelle und gewünschte Drehung, Zeit seit dem letzten Schuss
-    head: Option<(EntityId, f32, f32, f32)>,
+    /// Turmkopf (dreht sich zum Ziel, federt beim Schuss zurück)
+    head: Option<Kopf>,
     /// Gerüst: Objekt und die Höhe, ab der es zu sehen ist
     scaffold: Vec<(EntityId, f32)>,
     shown_bands: usize,
     hammer: f32,
     finished: bool,
+}
+
+/// Der drehbare Kopf eines Turms.
+struct Kopf {
+    entity: EntityId,
+    /// Aktuelle und gewünschte Drehung, Zeit seit dem letzten Schuss
+    yaw: f32,
+    want: f32,
+    idle: f32,
+    /// Rückstoß nach dem Schuss (1 → 0)
+    kick: f32,
+    /// Höhe der Plattform
+    z: f32,
+}
+
+/// Ein fliegendes Geschoss eines Turms (nur Optik – getroffen hat der Server schon).
+struct Geschoss {
+    entity: Option<EntityId>,
+    von: Vec3,
+    nach: Vec3,
+    /// Fortschritt 0..1 und Flugzeit
+    t: f32,
+    dauer: f32,
+    /// Scheitelhöhe der Flugbahn über der Geraden
+    hoehe: f32,
+    art: TowerKind,
+    zweig: u8,
+    /// Dreht sich im Flug (Steinbrocken)
+    drall: f32,
 }
 
 struct Ghost {
@@ -358,8 +425,8 @@ pub struct BauVisuals {
     sites: HashMap<u32, Site>,
     ghost: Option<Ghost>,
     rng: Option<Rng>,
-    /// Giftwolken der Türme: Mitte, Radius, Restzeit
-    clouds: Vec<(Vec3, f32, f32)>,
+    /// Geschosse der Türme im Flug
+    geschosse: Vec<Geschoss>,
 }
 
 impl BauVisuals {
@@ -373,85 +440,155 @@ impl BauVisuals {
         for entity in site.bands.iter().chain([&site.full]).chain(site.glow.iter()).chain(site.scaffold.iter().map(|(e, _)| e)) {
             ctx.scene.despawn(*entity);
         }
-        if let Some((head, ..)) = site.head {
-            ctx.scene.despawn(head);
+        if let Some(kopf) = site.head {
+            ctx.scene.despawn(kopf.entity);
         }
     }
 
-    /// Ein Turm hat geschossen: Kopf zum Ziel drehen, Geschoss und Treffer zeigen.
+    /// Ein Turm hat geschossen: Kopf zum Ziel drehen (mit Rückstoß), Mündungsfeuer, Geschoss
+    /// losschicken. Blitz und Sonnenstrahl sind sofort da, alles andere fliegt.
     pub fn shot(&mut self, ctx: &mut Context, building: &Building, target: Vec3, sounds: &mut Vec<SoundEvent>) {
         let Some(kind) = building.tower() else { return };
-        let mund = building.position + Vec3::Y * (KOPF_Z[(building.level.clamp(1, MAX_STUFE) - 1) as usize] + 1.1);
-        if let Some(site) = self.sites.get_mut(&building.id) {
-            if let Some(head) = &mut site.head {
-                let to = target - building.position;
-                head.2 = to.x.atan2(to.z);
-                head.3 = 0.0;
-            }
+        let zweig = building.aktiver_zweig();
+        let z = KOPF_Z[(building.level.clamp(1, MAX_STUFE) - 1) as usize];
+        let mut mund = building.position + Vec3::Y * (z + 1.0 * KOPF_GROESSE);
+        if let Some(kopf) = self.sites.get_mut(&building.id).and_then(|s| s.head.as_mut()) {
+            let to = target - building.position;
+            kopf.want = to.x.atan2(to.z);
+            kopf.idle = 0.0;
+            kopf.kick = 1.0;
+            // Die Mündung sitzt vorne am Kopf (er dreht sich schnell dorthin)
+            mund += vec3(kopf.want.sin(), 0.0, kopf.want.cos()) * 0.8 * KOPF_GROESSE;
         }
-        if mund.distance(ctx.camera.position) > 160.0 {
+        if mund.distance(ctx.camera.position) > 170.0 {
             return;
         }
-        let (farbe, glow, dicke, bogen) = match kind {
-            TowerKind::Arrow => (vec3(0.5, 0.35, 0.2), 0.0, 0.05, 0.05),
-            TowerKind::Ballista => (vec3(0.45, 0.32, 0.2), 0.0, 0.1, 0.02),
-            TowerKind::Catapult => (vec3(0.55, 0.52, 0.48), 0.0, 0.22, 0.35),
-            TowerKind::Fire => (vec3(1.0, 0.45, 0.1), 4.0, 0.2, 0.0),
-            TowerKind::Frost => (vec3(0.55, 0.85, 1.0), 3.0, 0.12, 0.0),
-            TowerKind::Lightning => (vec3(0.6, 0.85, 1.0), 6.0, 0.08, 0.0),
-            TowerKind::Sun => (vec3(1.0, 0.9, 0.5), 5.0, 0.1, 0.0),
-            TowerKind::Arcane => (vec3(0.75, 0.5, 1.0), 4.0, 0.12, 0.0),
-            TowerKind::Poison => (vec3(0.45, 0.95, 0.35), 1.5, 0.16, 0.25),
-            TowerKind::Banner => return,
-        };
-        let weite = mund.distance(target);
-        let schritte = (weite / 0.7).clamp(4.0, 40.0) as usize;
         let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
-        for i in 0..=schritte {
-            let t = i as f32 / schritte as f32;
-            let mut p = mund.lerp(target, t) + Vec3::Y * (t * (1.0 - t) * weite * bogen);
-            if kind == TowerKind::Lightning {
-                // Zickzack
-                p += vec3(rng.range(-0.35, 0.35), rng.range(-0.35, 0.35), rng.range(-0.35, 0.35)) * (t * (1.0 - t) * 4.0);
+        let weite = mund.distance(target);
+        match kind {
+            TowerKind::Lightning => {
+                // Zickzack-Blitz – beim Gewitter aus den Wolken
+                let von = if zweig == 2 { target + vec3(rng.range(-3.0, 3.0), 22.0, rng.range(-3.0, 3.0)) } else { mund };
+                strahl(ctx, rng, von, target, vec3(0.6, 0.85, 1.0), 6.0, 0.09, 0.45);
+                blitz_funken(ctx, von, vec3(0.7, 0.9, 1.0), 6.0, 10);
+                einschlag(ctx, sounds, kind, zweig, target);
+                if zweig == 2 {
+                    sounds.push(SoundEvent::Thunder { volume: 0.25 });
+                }
+                return;
             }
-            ctx.particles.burst(Burst {
-                position: p,
-                count: 1,
-                color: farbe,
-                color_variation: 0.1,
-                speed: 0.05,
-                direction: Vec3::ZERO,
-                size: dicke,
-                life: 0.12 + t * 0.25,
-                gravity: 0.0,
-                glow,
-                grow: 0.0,
-                round: glow > 0.0,
-            });
+            TowerKind::Sun => {
+                let dicke = if zweig == 2 { 0.16 } else { 0.1 };
+                strahl(ctx, rng, mund, target, vec3(1.0, 0.9, 0.5), 5.0, dicke, 0.0);
+                blitz_funken(ctx, mund, vec3(1.0, 0.95, 0.6), 5.0, 6);
+                einschlag(ctx, sounds, kind, zweig, target);
+                return;
+            }
+            TowerKind::Fire if zweig == 2 => {
+                // Drachenatem: breiter Flammenstoß
+                let richtung = (target - mund).normalize_or(Vec3::Z);
+                ctx.particles.burst(Burst {
+                    position: mund,
+                    count: 45,
+                    color: vec3(1.0, 0.5, 0.12),
+                    color_variation: 0.3,
+                    speed: weite * 1.6,
+                    direction: richtung * 2.5,
+                    size: 0.35,
+                    life: 0.55,
+                    gravity: -1.0,
+                    glow: 4.0,
+                    grow: 1.5,
+                    round: true,
+                });
+                return;
+            }
+            TowerKind::Banner | TowerKind::Barracks | TowerKind::Treasury | TowerKind::Rune => return,
+            _ => {}
         }
-        let (anzahl, flaeche) = match kind {
-            TowerKind::Catapult => (26, 2.2),
-            TowerKind::Fire => (18, 1.2),
-            _ => (10, 0.6),
+        // Mündungsfeuer bzw. Abschuss
+        let (flamme, glow) = match kind {
+            TowerKind::Fire => (vec3(1.0, 0.55, 0.15), 4.0),
+            TowerKind::Frost => (vec3(0.6, 0.9, 1.0), 3.0),
+            TowerKind::Arcane => (vec3(0.75, 0.5, 1.0), 4.0),
+            TowerKind::Poison => (vec3(0.45, 0.95, 0.35), 1.5),
+            TowerKind::Storm => (vec3(0.9, 0.95, 1.0), 1.0),
+            _ => (vec3(0.8, 0.72, 0.55), 0.0),
         };
-        ctx.particles.burst(Burst {
-            position: target,
-            count: anzahl,
-            color: farbe,
-            color_variation: 0.25,
-            speed: 2.0 + flaeche,
-            direction: Vec3::Y * 0.5,
-            size: 0.08 + flaeche * 0.04,
-            life: 0.5,
-            gravity: if glow > 0.0 { 1.0 } else { 8.0 },
-            glow,
-            grow: if kind == TowerKind::Catapult { 1.0 } else { 0.0 },
-            round: kind == TowerKind::Catapult || glow > 0.0,
+        blitz_funken(ctx, mund, flamme, glow, 8);
+        // Das Geschoss selbst: Form, Farbe, Leuchten, Tempo, Bogen
+        let (groesse, farbe, leuchten, tempo, bogen, drall) = match kind {
+            TowerKind::Arrow => (vec3(0.05, 0.05, 0.9), vec4(0.55, 0.38, 0.22, 1.0), 0.0, 55.0, 0.05, 0.0),
+            TowerKind::Scout => (vec3(0.05, 0.05, 0.8), vec4(0.9, 0.25, 0.2, 1.0), 1.5, 60.0, 0.03, 0.0),
+            TowerKind::Ballista => (vec3(0.12, 0.12, 1.9), vec4(0.5, 0.36, 0.22, 1.0), 0.0, 48.0, 0.03, 0.0),
+            TowerKind::Catapult if zweig == 1 => (vec3(0.5, 0.5, 0.5), vec4(1.0, 0.5, 0.15, 1.0), 2.5, 22.0, 0.35, 5.0),
+            TowerKind::Catapult => (vec3(0.6, 0.55, 0.55), vec4(0.55, 0.52, 0.48, 1.0), 0.0, 22.0, 0.35, 5.0),
+            TowerKind::Fire => (vec3(0.4, 0.4, 0.4), vec4(1.0, 0.55, 0.15, 1.0), 4.0, 26.0, 0.1, 3.0),
+            TowerKind::Frost => (vec3(0.12, 0.12, 0.7), vec4(0.65, 0.9, 1.0, 1.0), 3.0, 40.0, 0.04, 0.0),
+            TowerKind::Arcane => (vec3(0.32, 0.32, 0.32), vec4(0.75, 0.5, 1.0, 1.0), 5.0, 30.0, 0.02, 4.0),
+            TowerKind::Poison => (vec3(0.38, 0.38, 0.38), vec4(0.45, 0.95, 0.35, 1.0), 1.5, 20.0, 0.3, 2.0),
+            TowerKind::Storm => (Vec3::ZERO, vec4(1.0, 1.0, 1.0, 1.0), 0.0, 30.0, 0.0, 0.0),
+            _ => return,
+        };
+        let entity = (groesse.length() > 0.0).then(|| {
+            let mut e = Entity::new("Geschoss", ctx.assets.cube()).with_transform(Transform::from_position(mund).with_scale(groesse)).with_color(farbe);
+            if leuchten > 0.0 {
+                e.material = Material::Emissive { glow: leuchten };
+            }
+            e.casts_shadow = false;
+            ctx.scene.spawn(e)
         });
-        if kind == TowerKind::Poison {
-            self.clouds.push((target, kind.werte(building.level).flaeche, kind.werte(building.level).dauer));
+        self.geschosse.push(Geschoss { entity, von: mund, nach: target, t: 0.0, dauer: (weite / tempo).max(0.08), hoehe: weite * bogen, art: kind, zweig, drall });
+    }
+
+    /// Geschosse fliegen lassen: Spur, Drehung, Einschlag.
+    fn geschosse(&mut self, ctx: &mut Context, sounds: &mut Vec<SoundEvent>) {
+        let dt = ctx.time.delta;
+        let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
+        for g in &mut self.geschosse {
+            g.t += dt / g.dauer;
+            let t = g.t.min(1.0);
+            let ort = g.von.lerp(g.nach, t) + Vec3::Y * (4.0 * g.hoehe * t * (1.0 - t));
+            let richtung = (g.nach - g.von + Vec3::Y * (4.0 * g.hoehe * (1.0 - 2.0 * t))).normalize_or(Vec3::Z);
+            if let Some(e) = g.entity.and_then(|e| ctx.scene.try_get_mut(e)) {
+                e.transform.position = ort;
+                e.transform.rotation = Quat::from_rotation_arc(Vec3::Z, richtung) * Quat::from_rotation_z(g.t * g.drall * g.dauer * 6.0) * Quat::from_rotation_x(g.t * g.drall * g.dauer * 4.0);
+            }
+            // Spur hinter dem Geschoss
+            let spur = match g.art {
+                TowerKind::Fire => Some((vec3(1.0, 0.5, 0.12), 4.0, 0.28, -1.5, 3)),
+                TowerKind::Catapult if g.zweig == 1 => Some((vec3(1.0, 0.5, 0.12), 3.0, 0.25, -1.0, 2)),
+                TowerKind::Frost => Some((vec3(0.7, 0.92, 1.0), 3.0, 0.07, 0.0, 1)),
+                TowerKind::Arcane => Some((vec3(0.75, 0.5, 1.0), 4.0, 0.14, 0.0, 2)),
+                TowerKind::Poison => Some((vec3(0.45, 0.95, 0.35), 1.0, 0.14, 3.0, 1)),
+                TowerKind::Scout => Some((vec3(1.0, 0.3, 0.2), 3.0, 0.05, 0.0, 1)),
+                TowerKind::Storm => Some((vec3(0.92, 0.95, 1.0), 0.6, 0.55, 0.0, 3)),
+                _ => None,
+            };
+            if let Some((farbe, glow, groesse, schwere, anzahl)) = spur {
+                ctx.particles.burst(Burst {
+                    position: ort + vec3(rng.range(-0.1, 0.1), rng.range(-0.1, 0.1), rng.range(-0.1, 0.1)),
+                    count: anzahl,
+                    color: farbe,
+                    color_variation: 0.2,
+                    speed: 0.3,
+                    direction: Vec3::ZERO,
+                    size: groesse,
+                    life: 0.35,
+                    gravity: schwere,
+                    glow,
+                    grow: if g.art == TowerKind::Storm { 2.0 } else { 0.0 },
+                    round: true,
+                });
+            }
+            if g.t >= 1.0 {
+                einschlag(ctx, sounds, g.art, g.zweig, g.nach);
+                if let Some(e) = g.entity.take() {
+                    ctx.scene.despawn(e);
+                }
+            }
         }
-        sounds.push(SoundEvent::Impact { at: target, animal: false, killed: false });
+        self.geschosse.retain(|g| g.t < 1.0);
     }
 
     /// Neues Gebäude (oder beim Beitreten ein schon stehendes) sichtbar machen. `hidden` sind
@@ -484,7 +621,7 @@ impl BauVisuals {
                 .with_scale(Vec3::splat(KOPF_GROESSE));
             let mut entity = Entity::new("Turmkopf", mesh).with_transform(transform);
             entity.visible = building.finished();
-            Some((ctx.scene.spawn(entity), building.yaw, building.yaw, 10.0))
+            Some(Kopf { entity: ctx.scene.spawn(entity), yaw: building.yaw, want: building.yaw, idle: 10.0, kick: 0.0, z })
         });
         let mut site = Site { bands, full, glow, model, head, scaffold, shown_bands: usize::MAX, hammer: 0.0, finished: false };
         site.show(ctx, building.progress, false);
@@ -513,42 +650,37 @@ impl BauVisuals {
     /// die gerade fertig geworden sind.
     pub fn update(&mut self, ctx: &mut Context, buildings: &[Building], sounds: &mut Vec<SoundEvent>) -> Vec<BuildingKind> {
         let mut done = Vec::new();
-        let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
         let dt = ctx.time.delta;
-        // Giftwolken wabern am Boden
-        for (mitte, radius, rest) in &mut self.clouds {
-            *rest -= dt;
-            if rng.chance((dt * 14.0).min(1.0)) {
-                let p = *mitte + vec3(rng.range(-*radius, *radius), 0.2, rng.range(-*radius, *radius));
-                ctx.particles.burst(Burst {
-                    position: p,
-                    count: 1,
-                    color: vec3(0.35, 0.8, 0.25),
-                    color_variation: 0.2,
-                    speed: 0.3,
-                    direction: Vec3::Y,
-                    size: 0.4,
-                    life: 1.4,
-                    gravity: -0.2,
-                    glow: 0.6,
-                    grow: 1.5,
-                    round: true,
-                });
-            }
-        }
-        self.clouds.retain(|c| c.2 > 0.0);
+        self.geschosse(ctx, sounds);
+        let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
         for building in buildings {
             let Some(site) = self.sites.get_mut(&building.id) else { continue };
-            // Turmköpfe drehen sich zum Ziel; ohne Ziel schauen sie sich langsam um
-            if let Some((entity, yaw, want, idle)) = &mut site.head {
-                *idle += dt;
-                if *idle > 4.0 {
-                    *want += dt * 0.25;
+            // Turmköpfe drehen sich zum Ziel und federn beim Schuss zurück (das Katapult schleudert
+            // nach vorne); ohne Ziel schauen sie sich langsam um
+            if let Some(kopf) = &mut site.head {
+                kopf.idle += dt;
+                if kopf.idle > 4.0 {
+                    kopf.want += dt * 0.25;
                 }
-                let turn = (*want - *yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                *yaw += turn * (dt * 6.0).min(1.0);
-                if let Some(e) = ctx.scene.try_get_mut(*entity) {
-                    e.transform.rotation = Quat::from_rotation_y(*yaw);
+                let turn = (kopf.want - kopf.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                kopf.yaw += turn * (dt * 10.0).min(1.0);
+                kopf.kick = (kopf.kick - dt * 3.0).max(0.0);
+                let vorne = vec3(kopf.yaw.sin(), 0.0, kopf.yaw.cos());
+                let (zurueck, nicken) = match building.tower() {
+                    Some(TowerKind::Catapult) => (0.0, -(kopf.kick * std::f32::consts::PI).sin() * 0.45),
+                    Some(TowerKind::Ballista | TowerKind::Arrow | TowerKind::Scout) => (kopf.kick * kopf.kick * 0.35, 0.0),
+                    Some(TowerKind::Storm | TowerKind::Fire | TowerKind::Poison) => (kopf.kick * kopf.kick * 0.2, kopf.kick * 0.1),
+                    _ => (0.0, 0.0),
+                };
+                // Kristalle und Scheiben (Frost, Blitz, Arkan, Sonne) pulsieren beim Schuss
+                let puls = match building.tower() {
+                    Some(TowerKind::Frost | TowerKind::Lightning | TowerKind::Arcane | TowerKind::Sun) => 1.0 + kopf.kick * 0.12,
+                    _ => 1.0,
+                };
+                if let Some(e) = ctx.scene.try_get_mut(kopf.entity) {
+                    e.transform.position = building.position + Vec3::Y * kopf.z - vorne * zurueck;
+                    e.transform.rotation = Quat::from_rotation_y(kopf.yaw) * Quat::from_rotation_x(nicken);
+                    e.transform.scale = Vec3::splat(KOPF_GROESSE * puls);
                     e.visible = building.finished();
                 }
             }
@@ -639,7 +771,7 @@ impl BauVisuals {
             let Some(mesh) = self.kind(ctx, &kind.model(1)).map(|v| v.full) else { return };
             let entity = ctx.scene.spawn(Entity::new("Bauvorschau", mesh));
             // Reichweite eines Turms als leuchtender Ring am Boden
-            let ring = kind.tower().filter(|t| t.werte(1).reichweite > 0.0).map(|_| {
+            let ring = kind.tower().filter(|t| t.werte(1, 0).reichweite > 0.0).map(|_| {
                 let mesh = ctx.assets.named_mesh("reichweite_ring", ring_mesh);
                 ctx.scene.spawn(Entity::new("Reichweite", mesh).with_material(Material::Emissive { glow: 1.2 }))
             });
@@ -653,7 +785,7 @@ impl BauVisuals {
         entity.color = farbe;
         entity.material = Material::Emissive { glow: 0.3 + pulse * 0.25 };
         if let (Some(ring), Some(tower)) = (ghost.ring, kind.tower()) {
-            let weite = tower.werte(1).reichweite;
+            let weite = tower.werte(1, 0).reichweite;
             let e = ctx.scene.get_mut(ring);
             e.transform = Transform::from_position(position + Vec3::Y * 0.3).with_scale(vec3(weite, 1.0, weite));
             e.color = farbe;
@@ -831,4 +963,100 @@ fn spawn_scaffold(ctx: &mut Context, building: &Building, min: Vec2, max: Vec2, 
         level += 1.6;
     }
     parts
+}
+
+/// Einschlag eines Geschosses: Splitter, Funken, Staub – je nach Turm.
+fn einschlag(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, art: TowerKind, zweig: u8, ort: Vec3) {
+    let (farbe, glow, anzahl, flaeche, schwere) = match art {
+        TowerKind::Arrow | TowerKind::Scout => (vec3(0.6, 0.5, 0.35), 0.0, 8, 0.4, 8.0),
+        TowerKind::Ballista => (vec3(0.6, 0.5, 0.35), 0.0, 16, 0.8, 8.0),
+        TowerKind::Catapult if zweig == 1 => (vec3(1.0, 0.5, 0.12), 4.0, 40, 2.5, 3.0),
+        TowerKind::Catapult => (vec3(0.55, 0.52, 0.48), 0.0, 34, 2.4, 9.0),
+        TowerKind::Fire => (vec3(1.0, 0.45, 0.1), 4.0, 22, 1.4, 1.0),
+        TowerKind::Frost => (vec3(0.6, 0.88, 1.0), 3.0, 16, 0.8, 4.0),
+        TowerKind::Lightning => (vec3(0.6, 0.85, 1.0), 6.0, 14, 0.8, 1.0),
+        TowerKind::Sun => (vec3(1.0, 0.9, 0.5), 5.0, 14, 0.8, 1.0),
+        TowerKind::Arcane => (vec3(0.75, 0.5, 1.0), 4.0, 20, 1.0, 1.0),
+        TowerKind::Poison => (vec3(0.45, 0.95, 0.35), 1.5, 18, 1.4, 6.0),
+        TowerKind::Storm => (vec3(0.9, 0.95, 1.0), 1.0, 24, 2.0, 0.0),
+        _ => return,
+    };
+    ctx.particles.burst(Burst {
+        position: ort,
+        count: anzahl,
+        color: farbe,
+        color_variation: 0.25,
+        speed: 2.0 + flaeche * 1.5,
+        direction: Vec3::Y * 0.5,
+        size: 0.08 + flaeche * 0.04,
+        life: 0.55,
+        gravity: schwere,
+        glow,
+        grow: if art == TowerKind::Catapult || art == TowerKind::Storm { 1.0 } else { 0.0 },
+        round: glow > 0.0 || art == TowerKind::Catapult || art == TowerKind::Storm,
+    });
+    if art == TowerKind::Catapult {
+        // Staubwolke
+        ctx.particles.burst(Burst {
+            position: ort,
+            count: 10,
+            color: vec3(0.72, 0.65, 0.55),
+            color_variation: 0.1,
+            speed: 1.8,
+            direction: Vec3::Y * 0.4,
+            size: 0.8,
+            life: 1.3,
+            gravity: -0.3,
+            glow: 0.0,
+            grow: 2.0,
+            round: true,
+        });
+    }
+    sounds.push(SoundEvent::Impact { at: ort, animal: false, killed: false });
+}
+
+/// Ein Strahl sofort von `von` nach `nach` (Blitz mit Zickzack, Sonnenstrahl gerade).
+#[allow(clippy::too_many_arguments)]
+fn strahl(ctx: &mut Context, rng: &mut Rng, von: Vec3, nach: Vec3, farbe: Vec3, glow: f32, dicke: f32, zickzack: f32) {
+    let weite = von.distance(nach);
+    let schritte = (weite / 0.5).clamp(6.0, 90.0) as usize;
+    let mut versatz = Vec3::ZERO;
+    for i in 0..=schritte {
+        let t = i as f32 / schritte as f32;
+        if zickzack > 0.0 {
+            versatz = (versatz + vec3(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)) * zickzack).clamp_length_max(zickzack * 3.0) * (t * (1.0 - t) * 4.0).min(1.0);
+        }
+        ctx.particles.burst(Burst {
+            position: von.lerp(nach, t) + versatz,
+            count: 1,
+            color: farbe,
+            color_variation: 0.1,
+            speed: 0.05,
+            direction: Vec3::ZERO,
+            size: dicke,
+            life: 0.14 + t * 0.12,
+            gravity: 0.0,
+            glow,
+            grow: 0.0,
+            round: true,
+        });
+    }
+}
+
+/// Kurzes Aufblitzen (Mündungsfeuer, Abschuss).
+fn blitz_funken(ctx: &mut Context, ort: Vec3, farbe: Vec3, glow: f32, anzahl: u32) {
+    ctx.particles.burst(Burst {
+        position: ort,
+        count: anzahl,
+        color: farbe,
+        color_variation: 0.25,
+        speed: 2.5,
+        direction: Vec3::ZERO,
+        size: if glow > 0.0 { 0.12 } else { 0.18 },
+        life: 0.3,
+        gravity: if glow > 0.0 { 0.0 } else { -0.5 },
+        glow,
+        grow: if glow > 0.0 { 0.0 } else { 1.5 },
+        round: true,
+    });
 }

@@ -89,13 +89,9 @@ impl Replica {
         }
     }
 
-    /// Turm aufwerten bzw. eigenes Gebäude abreißen (der Server prüft).
-    pub fn send_upgrade(&mut self, id: u32) {
-        self.net.send(Channel::Reliable, encode(&ClientMessage::Upgrade(id)));
-    }
-
-    pub fn send_demolish(&mut self, id: u32) {
-        self.net.send(Channel::Reliable, encode(&ClientMessage::Demolish(id)));
+    /// Befehl zur Verteidigung: aufwerten, abreißen, zielen, Welle rufen, Straße wählen (der Server prüft).
+    pub fn send_td(&mut self, befehl: crate::td::TdBefehl) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Td(befehl)));
     }
 
     /// Schickt einen Befehl aus dem Admin-Panel an den Server.
@@ -221,6 +217,7 @@ impl Replica {
             ServerMessage::BuildingChanged(building) => world.replace_building(ctx, building),
             ServerMessage::BuildingRemoved(id) => world.remove_building(ctx, id),
             ServerMessage::Notice(text) => world.chat_events.push(crate::world::ChatLine::notice(text)),
+            ServerMessage::Bericht(bericht) => world.berichte.push(bericht),
         }
     }
 
@@ -231,9 +228,9 @@ impl Replica {
             self.last_enemy_tick = snapshot.tick;
             world.feinde = std::mem::take(&mut snapshot.enemies);
             world.set_weather(snapshot.weather);
-            world.heer.enabled = snapshot.waves;
-            world.heer.sync(snapshot.welle, snapshot.leben, snapshot.naechste);
+            world.td_uebernehmen(std::mem::take(&mut snapshot.td));
         }
+        world.ereignisse.append(&mut snapshot.ereignisse);
         world.strikes.append(&mut snapshot.strikes);
         world.tower_shots.append(&mut snapshot.shots);
         let tick = snapshot.tick as f64;

@@ -184,6 +184,17 @@ pub struct World {
     /// Schutzsteine an den Straßenenden (Mitte am Boden) und die zuletzt gezeigten Leben
     pub schutzsteine: Vec<Vec3>,
     shown_leben: u32,
+    /// Stand der Verteidigung (beim Server selbst gerechnet, beim Client aus dem Schnappschuss)
+    pub td: crate::td::TdStand,
+    /// Kills und Schaden je Turm, Schaden und Kills je Spieler (zuletzt gemeldet)
+    pub td_stats: HashMap<u32, (u32, u32)>,
+    pub td_beitrag: Vec<(String, u32, u32)>,
+    /// Auswertungen überstandener Wellen (die Oberfläche zeigt die neueste)
+    pub berichte: Vec<crate::td::WellenBericht>,
+    /// Ereignisse der Verteidigung, die noch gezeigt werden sollen
+    pub ereignisse: Vec<crate::td::Ereignis>,
+    /// Brand- und Giftfelder am Boden, Runen- und Frostfelder (Mitte, Radius, Restzeit, Art)
+    felder: Vec<(Vec3, f32, f32, u8)>,
 }
 
 impl World {
@@ -236,6 +247,12 @@ impl World {
             tower_shots: Vec::new(),
             schutzsteine: Vec::new(),
             shown_leben: crate::heer::MAX_LEBEN,
+            td: Default::default(),
+            td_stats: HashMap::new(),
+            td_beitrag: Vec::new(),
+            berichte: Vec::new(),
+            ereignisse: Vec::new(),
+            felder: Vec::new(),
         };
         // Schutzsteine am Ende jeder Heerstraße (etwas hinter dem Ende, quer zur Straße)
         for (ende, richtung) in world.heer.enden() {
@@ -342,9 +359,31 @@ impl World {
         }
     }
 
-    /// Gegner unter dem Fadenkreuz: Art, Lebenspunkte, Mitte.
-    pub fn aimed_enemy(&self, from: Vec3, direction: Vec3, max: f32) -> Option<(crate::heer::EnemyKind, u8, Vec3)> {
+    /// Gegner unter dem Fadenkreuz: Art, Lebenspunkte, Mitte, Zustände.
+    pub fn aimed_enemy(&self, from: Vec3, direction: Vec3, max: f32) -> Option<(crate::heer::EnemyKind, u8, Vec3, u16)> {
         self.heer_ansicht.aimed(from, direction, max)
+    }
+
+    /// Schadenszahlen über den Einheiten und die Bosse, die zu sehen sind (für die Oberfläche).
+    pub fn schadenszahlen(&self) -> &[crate::heer::Schadenszahl] {
+        &self.heer_ansicht.zahlen
+    }
+
+    pub fn sichtbare_bosse(&self) -> Vec<(&'static str, u8)> {
+        self.heer_ansicht.bosse()
+    }
+
+    /// Neuen Stand der Verteidigung übernehmen (Statistik nur, wenn sie mitgekommen ist).
+    pub fn td_uebernehmen(&mut self, mut td: crate::td::TdStand) {
+        if !td.turm_stats.is_empty() {
+            self.td_stats = td.turm_stats.iter().map(|&(id, k, s)| (id, (k, s))).collect();
+        }
+        if !td.beitrag.is_empty() {
+            self.td_beitrag = std::mem::take(&mut td.beitrag);
+            self.td_beitrag.sort_by(|a, b| b.1.cmp(&a.1));
+        }
+        td.turm_stats.clear();
+        self.td = td;
     }
 
     /// Vorschau beim Platzieren (Art, Ort, Drehung, passt?) – `None` blendet sie aus.
@@ -1043,7 +1082,7 @@ impl World {
             self.chat_events.push(ChatLine::notice(text));
         }
         // Durchbruch: die Schutzsteine blitzen auf
-        if self.heer.leben < self.shown_leben {
+        if self.td.leben < self.shown_leben && self.td.welle > 0 {
             for &stein in &self.schutzsteine {
                 ctx.particles.burst(Burst {
                     position: stein + Vec3::Y * 5.8,
@@ -1061,14 +1100,22 @@ impl World {
                 });
             }
         }
-        self.shown_leben = self.heer.leben;
+        self.shown_leben = self.td.leben;
+        if !ctx.is_headless() {
+            for ereignis in std::mem::take(&mut self.ereignisse) {
+                crate::td_ansicht::ereignis(ctx, &mut self.sound_events, &mut self.felder, ereignis);
+            }
+            crate::td_ansicht::felder(ctx, &mut self.felder, &mut self.effects_rng);
+        } else {
+            self.ereignisse.clear();
+        }
         for shot in std::mem::take(&mut self.tower_shots) {
             if let Some(building) = self.buildings.iter().find(|b| b.id == shot.turm) {
                 self.bau.shot(ctx, building, shot.ziel, &mut self.sound_events);
             }
         }
         if !ctx.is_headless() {
-            self.heer_ansicht.update(ctx, &self.feinde, &mut self.sound_events);
+            self.heer_ansicht.update(ctx, &self.feinde, &self.td.soldaten, &mut self.sound_events);
             for (kind, from, target) in std::mem::take(&mut self.strikes) {
                 strike_visual(ctx, &mut self.sound_events, kind, from, target);
             }

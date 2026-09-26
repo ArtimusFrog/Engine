@@ -1,7 +1,7 @@
 //! Die Seite, die das Sagen hat: rechnet die echte Physik und verteilt den Zustand.
 //! Läuft beim Host, auf dem dedizierten Server und im Einzelspieler (dann ohne Netzwerk).
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,7 +10,9 @@ use engine::prelude::*;
 use crate::bauten::{self, Building, BuildingKind, PRODUCTION_SECONDS};
 use crate::characters::Action;
 use crate::protocol::*;
+use crate::heer::{Blocker, Quelle, Ziel};
 use crate::save::{player_key, WorldSave};
+use crate::td::{Ereignis, TdBefehl, TdStand};
 use crate::world::{World, BOLT_SPEED, CAST_COOLDOWN_TICKS, CAST_DELAY, CAST_RANGE, HARVEST_COOLDOWN_TICKS, MINE_COOLDOWN_TICKS};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
@@ -61,6 +63,14 @@ pub struct Authority {
     /// Türme im Kampf und ihre Schüsse seit dem letzten Schnappschuss
     verteidigung: crate::tuerme::Verteidigung,
     shots: Vec<crate::tuerme::Schuss>,
+    /// Angriffe der Truppen aus dem letzten Takt der Verteidigung
+    neue_strikes: Vec<crate::heer::Strike>,
+    /// Ereignisse der Verteidigung seit dem letzten Schnappschuss
+    ereignisse: Vec<Ereignis>,
+    /// Wer welche Heerstraße verteidigt (Name je Straße)
+    strassen_spieler: Vec<Option<String>>,
+    /// Wer sein Startgold schon bekommen hat (nach Namen)
+    startgold: BTreeSet<String>,
 }
 
 impl Authority {
@@ -77,6 +87,10 @@ impl Authority {
             strikes: Vec::new(),
             verteidigung: Default::default(),
             shots: Vec::new(),
+            neue_strikes: Vec::new(),
+            ereignisse: Vec::new(),
+            strassen_spieler: Vec::new(),
+            startgold: BTreeSet::new(),
         }
     }
 
@@ -125,23 +139,8 @@ impl Authority {
         world.advance_buildings(Physics::FIXED_DT);
         self.produce(world);
         world.think_animals(ctx);
-        // Truppen der Festung: marschieren, kämpfen gegen Spieler in der Nähe (nicht gegen Flieger)
-        let players: Vec<Vec3> = world.players.values().filter(|a| !a.noclip).map(|a| ctx.physics.character_position(a.character)).collect();
-        let strikes = world.heer.tick(Physics::FIXED_DT, &players);
-        // Türme schießen; Beute für besiegte Einheiten an den, der sie besiegt hat
-        let shots = self.verteidigung.tick(Physics::FIXED_DT, &world.buildings, &mut world.heer);
-        world.tower_shots.extend(shots.iter().copied());
-        self.shots.extend(shots);
-        for text in std::mem::take(&mut world.heer.meldungen) {
-            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
-            self.broadcast(ServerMessage::Notice(text));
-        }
-        for (name, kind) in std::mem::take(&mut world.heer.gefallen) {
-            let beute: Vec<(Item, u32)> = crate::tuerme::beute(kind).to_vec();
-            self.give(world, &name, &beute);
-        }
-        world.feinde = world.heer.states();
-        for strike in strikes {
+        self.verteidigen(ctx, world);
+        for strike in std::mem::take(&mut self.neue_strikes) {
             let entry = (strike.kind, strike.from, strike.target);
             self.strikes.push(entry);
             world.strikes.push(entry);
@@ -178,6 +177,7 @@ impl Authority {
         if self.net.is_none() {
             self.strikes.clear();
             self.shots.clear();
+            self.ereignisse.clear();
         }
         if let Some(net) = &mut self.net {
             net.flush();
@@ -260,7 +260,7 @@ impl Authority {
             if hit.enemy {
                 let name = world.players.get(&hit.by).map(|a| player_key(&a.name)).unwrap_or_default();
                 let zauber = crate::heer::Hit { schaden: 20.0, art: crate::tuerme::DamageKind::Arcane, ..Default::default() };
-                world.heer.damage(hit.animal, zauber, &name);
+                world.heer.damage(hit.animal, zauber, Quelle { name: &name, turm: None });
                 continue;
             }
             let Some(animal) = world.animals.get_mut(hit.animal as usize) else { continue };
@@ -295,7 +295,7 @@ impl Authority {
         let ground = bauten::check_site(world, kind, at, Some(builder)).map_err(str::to_string)?;
         let inventory = world.inventories.entry(player).or_default();
         if !bauten::affordable(inventory, kind) {
-            return Err(format!("Nicht genug Rohstoffe für {}", kind.with_article()));
+            return Err(format!("Nicht genug Gold oder Rohstoffe für {}", kind.with_article()));
         }
         for (item, amount) in kind.cost() {
             inventory.remove_item(item, amount);
@@ -303,7 +303,7 @@ impl Authority {
         let inventory = *inventory;
         let id = world.buildings.iter().map(|b| b.id + 1).max().unwrap_or(1);
         let yaw = if yaw.is_finite() { yaw.rem_euclid(std::f32::consts::TAU) } else { 0.0 };
-        let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS, level: 1 };
+        let building = Building { id, kind, position: vec3(at.x, ground, at.y), yaw, progress: 0.0, owner, produce_in: PRODUCTION_SECONDS, level: 1, zweig: 0, ziel: Default::default() };
         log::info!("{name} baut {} bei ({:.0}, {:.0})", kind.with_article(), at.x, at.y);
         world.place_building(ctx, building.clone());
         world.chat_events.push(crate::world::ChatLine::notice(format!("{name} baut {}", kind.with_article())));
@@ -313,8 +313,8 @@ impl Authority {
         Ok(())
     }
 
-    /// Befehl aus dem Admin-Panel (Wetter, Truppen der Festung).
-    pub fn admin(&mut self, world: &mut World, command: AdminCommand) {
+    /// Befehl aus dem Admin-Panel (Wetter, Truppen der Festung, Tower Defense).
+    pub fn admin(&mut self, world: &mut World, player: PlayerId, command: AdminCommand) {
         log::info!("Admin: {command:?}");
         match command {
             AdminCommand::Weather(choice) => world.set_weather(choice.min(WETTER.len() as u8 - 1)),
@@ -322,6 +322,179 @@ impl Authority {
             AdminCommand::WaveNow => world.heer.spawn_wave(),
             AdminCommand::ClearEnemies => world.heer.clear(),
             AdminCommand::ResetWaves => world.heer.reset(),
+            AdminCommand::Schwierigkeit(s) => world.heer.set_schwierigkeit(s),
+            AdminCommand::Endlos(an) => {
+                world.heer.endlos = an;
+                world.heer.meldungen.push(if an { "Endlosmodus: nach Welle 30 geht es weiter.".into() } else { "Ziel: Welle 30 überstehen.".into() });
+            }
+            AdminCommand::Gold(n) => {
+                let inventory = world.inventories.entry(player).or_default();
+                inventory.gold += n.min(100_000);
+                let inventory = *inventory;
+                self.send_inventory(player, inventory);
+            }
+            AdminCommand::SpringeZuWelle(w) => {
+                world.heer.clear();
+                world.heer.springe_zu_welle(w.min(200));
+            }
+        }
+    }
+
+    /// Ein Takt der Verteidigung: Truppen marschieren und kämpfen, Soldaten und Türme wehren sich,
+    /// Beute, Kopfgeld, Auswertungen und der Stand für alle.
+    fn verteidigen(&mut self, ctx: &mut Context, world: &mut World) {
+        let dt = Physics::FIXED_DT;
+        world.heer.spieler = world.players.len().max(1);
+        // Was die Truppen aufhält: Spieler (nicht im Flug), Soldaten und Barrikaden
+        let mut blocker: Vec<Blocker> = world
+            .players
+            .values()
+            .filter(|a| !a.noclip)
+            .map(|a| Blocker { ort: ctx.physics.character_position(a.character), ziel: Ziel::Spieler })
+            .collect();
+        blocker.extend(self.verteidigung.blocker(&world.buildings));
+        let terrain = &world.terrain;
+        let boden = |p: Vec2| terrain.height_at(p.x, p.y);
+        let strikes = world.heer.tick(dt, &blocker, &boden);
+        let shots = self.verteidigung.tick(dt, &world.buildings, &mut world.heer, &strikes, &boden);
+        self.neue_strikes = strikes;
+        world.tower_shots.extend(shots.iter().copied());
+        self.shots.extend(shots);
+        // Zerschlagene Barrikaden
+        for id in std::mem::take(&mut self.verteidigung.zerstoert) {
+            world.remove_building(ctx, id);
+            self.broadcast(ServerMessage::BuildingRemoved(id));
+            world.heer.meldungen.push("Eine Barrikade wurde zerschlagen!".into());
+        }
+        for text in std::mem::take(&mut world.heer.meldungen) {
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            self.broadcast(ServerMessage::Notice(text));
+        }
+        // Beute und Kopfgeld für besiegte Einheiten (Schatzkammern in der Nähe: mehr davon)
+        let schwierigkeit = world.heer.schwierigkeit;
+        let kammern: Vec<(Vec3, f32, f32)> = world
+            .buildings
+            .iter()
+            .filter(|b| b.finished() && b.tower() == Some(crate::tuerme::TowerKind::Treasury))
+            .map(|b| {
+                let w = b.kind_werte();
+                (b.position, w.reichweite, w.beute)
+            })
+            .collect();
+        for g in std::mem::take(&mut world.heer.gefallen) {
+            let bonus = kammern.iter().filter(|(ort, weite, _)| ort.distance(g.ort) <= *weite).map(|k| k.2).fold(0.0f32, f32::max);
+            let mut beute: Vec<(Item, u32)> = crate::tuerme::beute(g.kind).iter().map(|&(item, n)| (item, (n as f32 * (1.0 + bonus)).round() as u32)).collect();
+            let gold = (crate::td::kopfgeld(g.kind, g.boss, g.welle, schwierigkeit) as f32 * (1.0 + bonus + g.bonus)).round() as u32;
+            beute.push((Item::Gold, gold));
+            self.give(world, &g.von, &beute);
+        }
+        for (owner, gold) in std::mem::take(&mut self.verteidigung.gold) {
+            self.give(world, &owner, &[(Item::Gold, gold)]);
+        }
+        // Auswertungen überstandener Wellen: Wellenbonus für alle
+        for (mut bericht, bester) in std::mem::take(&mut world.heer.berichte) {
+            bericht.bester_turm = bester.and_then(|(id, kills)| world.buildings.iter().find(|b| b.id == id).map(|b| (b.kind.label().to_string(), b.owner.clone(), kills)));
+            bericht.gold = crate::td::wellenbonus(bericht.welle, schwierigkeit);
+            let namen: Vec<String> = world.players.values().map(|a| player_key(&a.name)).collect();
+            for name in namen {
+                self.give(world, &name, &[(Item::Gold, bericht.gold)]);
+            }
+            let mut text = format!("Welle {} überstanden: {} besiegt, {} durchgebrochen · +{} Gold für alle", bericht.welle, bericht.besiegt, bericht.durchgebrochen, bericht.gold);
+            if let Some((name, schaden)) = &bericht.bester_spieler {
+                text += &format!(" · Bester: {name} ({schaden} Schaden)");
+            }
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            self.broadcast(ServerMessage::Notice(text));
+            world.berichte.push(bericht.clone());
+            self.broadcast(ServerMessage::Bericht(bericht));
+        }
+        // Sieg: Belohnung für alle
+        if std::mem::take(&mut world.heer.sieg_neu) {
+            let namen: Vec<String> = world.players.values().map(|a| player_key(&a.name)).collect();
+            for name in namen {
+                self.give(world, &name, &[(Item::Gold, 500), (Item::Ore, 20)]);
+            }
+            let text = "Belohnung für alle Verteidiger: 500 Gold und 20 Eisenerz!".to_string();
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            self.broadcast(ServerMessage::Notice(text));
+        }
+        let mut ereignisse = std::mem::take(&mut world.heer.ereignisse);
+        ereignisse.append(&mut self.verteidigung.ereignisse);
+        world.ereignisse.extend(ereignisse.iter().copied());
+        self.ereignisse.extend(ereignisse);
+        world.feinde = world.heer.states();
+        let stand = self.td_stand(world, ctx.time.tick % 60 == 0);
+        world.td_uebernehmen(stand);
+    }
+
+    /// Stand der Verteidigung für alle (mit Statistik nur etwa einmal pro Sekunde).
+    fn td_stand(&self, world: &World, mit_stats: bool) -> TdStand {
+        let heer = &world.heer;
+        let (vorschau, vorschau_boss) = heer.vorschau();
+        TdStand {
+            aktiv: heer.enabled,
+            welle: heer.welle,
+            leben: heer.leben,
+            max_leben: heer.schwierigkeit.leben(),
+            naechste: heer.naechste_in(),
+            vorschau,
+            vorschau_boss,
+            schwierigkeit: heer.schwierigkeit,
+            endlos: heer.endlos,
+            sieg: heer.sieg,
+            strassen: heer.strassen_namen().iter().enumerate().map(|(i, n)| (n.to_string(), self.strassen_spieler.get(i).cloned().flatten())).collect(),
+            soldaten: self.verteidigung.soldaten(),
+            barrikaden: self.verteidigung.barrikaden(),
+            turm_stats: if mit_stats { heer.turm_stats.iter().map(|(&id, &(s, k))| (id, k, s.round() as u32)).collect() } else { Vec::new() },
+            beitrag: if mit_stats { heer.beitrag.iter().map(|(n, &(s, k))| (n.clone(), s.round() as u32, k)).collect() } else { Vec::new() },
+        }
+    }
+
+    /// Befehle der Spieler zur Verteidigung: aufwerten, abreißen, zielen, Welle rufen, Straße wählen.
+    pub fn td(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, befehl: TdBefehl) -> Result<(), String> {
+        let name = world.players.get(&player).map(|a| a.name.clone()).unwrap_or_default();
+        match befehl {
+            TdBefehl::Aufwerten(id, zweig) => self.upgrade(ctx, world, player, id, zweig),
+            TdBefehl::Abreissen(id) => self.demolish(ctx, world, player, id),
+            TdBefehl::Zielen(id, modus) => {
+                let Some(building) = world.buildings.iter_mut().find(|b| b.id == id) else { return Err("Das Gebäude gibt es nicht mehr".into()) };
+                if building.tower().is_none() {
+                    return Err("Nur Türme zielen".into());
+                }
+                building.ziel = modus;
+                let neu = building.clone();
+                self.broadcast(ServerMessage::BuildingChanged(neu));
+                Ok(())
+            }
+            TdBefehl::WelleRufen => {
+                let Some(gespart) = world.heer.rufen() else { return Err("Gerade lässt sich keine Welle rufen".into()) };
+                let gold = (gespart * 0.8).round() as u32;
+                let namen: Vec<String> = world.players.values().map(|a| player_key(&a.name)).collect();
+                for key in namen {
+                    self.give(world, &key, &[(Item::Gold, gold)]);
+                }
+                let text = format!("{name} ruft Welle {} früher – +{gold} Gold für alle", world.heer.welle);
+                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                self.broadcast(ServerMessage::Notice(text));
+                Ok(())
+            }
+            TdBefehl::Strasse(index) => {
+                let key = player_key(&name);
+                let namen = world.heer.strassen_namen();
+                self.strassen_spieler.resize(namen.len(), None);
+                for eintrag in &mut self.strassen_spieler {
+                    if eintrag.as_deref() == Some(key.as_str()) {
+                        *eintrag = None;
+                    }
+                }
+                if let Some(eintrag) = self.strassen_spieler.get_mut(index as usize) {
+                    *eintrag = Some(key);
+                    let text = format!("{name} verteidigt jetzt die Straße {}", namen[index as usize]);
+                    world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                    self.broadcast(ServerMessage::Notice(text));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -365,8 +538,9 @@ impl Authority {
         }
     }
 
-    /// Einen Turm um eine Stufe aufwerten (jeder darf, der die Rohstoffe hat).
-    pub fn upgrade(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) -> Result<(), String> {
+    /// Einen Turm um eine Stufe aufwerten (jeder darf, der die Rohstoffe hat). Auf Stufe 3 wird
+    /// dabei die Richtung gewählt (`zweig` 1 = A, 2 = B).
+    pub fn upgrade(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32, zweig: u8) -> Result<(), String> {
         let Some(building) = world.buildings.iter().find(|b| b.id == id).cloned() else { return Err("Das Gebäude gibt es nicht mehr".into()) };
         if building.tower().is_none() {
             return Err("Nur Türme lassen sich aufwerten".into());
@@ -377,16 +551,20 @@ impl Authority {
         if building.level >= crate::tuerme::MAX_STUFE {
             return Err("Schon auf der höchsten Stufe".into());
         }
+        if building.level + 1 == crate::tuerme::MAX_STUFE && !(1..=2).contains(&zweig) {
+            return Err("Für Stufe 3 eine Richtung wählen".into());
+        }
         let cost = building.kind.upgrade_cost(building.level + 1);
         let inventory = world.inventories.entry(player).or_default();
         if !bauten::can_pay(inventory, &cost) {
-            return Err("Nicht genug Rohstoffe zum Aufwerten".into());
+            return Err("Nicht genug Gold oder Rohstoffe zum Aufwerten".into());
         }
         for &(item, n) in &cost {
             inventory.remove_item(item, n);
         }
         let inventory = *inventory;
-        let neu = Building { level: building.level + 1, progress: 0.0, ..building };
+        let level = building.level + 1;
+        let neu = Building { level, progress: 0.0, zweig: if level == crate::tuerme::MAX_STUFE { zweig } else { building.zweig }, ..building };
         world.replace_building(ctx, neu.clone());
         self.broadcast(ServerMessage::BuildingChanged(neu));
         self.send_inventory(player, inventory);
@@ -449,7 +627,6 @@ impl Authority {
                     let (name, class) = (hello.name, hello.class);
                     world.spawn_player(ctx, id, &name, class, spawn);
                     world.chat_events.push(crate::world::ChatLine::notice(format!("{name} ist beigetreten")));
-                    let returning = self.inventories.contains_key(&player_key(&name));
                     // Neuer Spieler: begrüßen und über alles informieren, was schon da ist.
                     let mut intro = vec![ServerMessage::Welcome { player_id: id, tick: ctx.time.tick as u32 }];
                     intro.extend(
@@ -479,9 +656,7 @@ impl Authority {
                         id,
                         RemoteClient { inputs: VecDeque::new(), last_received: 0, last_processed: 0, credit: 0 },
                     );
-                    if returning {
-                        deferred_welcome.push(id);
-                    }
+                    deferred_welcome.push(id);
                     self.send_full_snapshot = true;
                 }
                 ServerEvent::Disconnected(id, reason) => {
@@ -504,15 +679,14 @@ impl Authority {
         let mut chats = Vec::new();
         let mut builds = Vec::new();
         let mut admins = Vec::new();
-        let mut changes = Vec::new();
+        let mut changes: Vec<(ClientId, TdBefehl)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
                     Some(ClientMessage::Chat(text)) => chats.push((id, text)),
                     Some(ClientMessage::Build { kind, at, yaw }) => builds.push((id, kind, at, yaw)),
-                    Some(ClientMessage::Admin(command)) => admins.push(command),
-                    Some(ClientMessage::Upgrade(building)) => changes.push((id, building, true)),
-                    Some(ClientMessage::Demolish(building)) => changes.push((id, building, false)),
+                    Some(ClientMessage::Admin(command)) => admins.push((id, command)),
+                    Some(ClientMessage::Td(befehl)) => changes.push((id, befehl)),
                     _ => {}
                 }
             }
@@ -536,11 +710,11 @@ impl Authority {
         for (id, text) in chats {
             self.chat(ctx, world, id, &text);
         }
-        for command in admins {
-            self.admin(world, command);
+        for (id, command) in admins {
+            self.admin(world, id, command);
         }
-        for (id, building, upgrade) in changes {
-            let result = if upgrade { self.upgrade(ctx, world, id, building) } else { self.demolish(ctx, world, id, building) };
+        for (id, befehl) in changes {
+            let result = self.td(ctx, world, id, befehl);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }
@@ -584,13 +758,21 @@ impl Authority {
             save.buildings.len()
         );
         self.inventories = save.inventories;
+        self.startgold = save.startgold;
     }
 
-    /// Gibt einem (wieder)kommenden Spieler sein altes Inventar zurück.
+    /// Gibt einem (wieder)kommenden Spieler sein altes Inventar zurück; wer zum ersten Mal da ist
+    /// (oder zum ersten Mal, seit es Gold gibt), bekommt Startgold.
     pub fn welcome_back(&mut self, world: &mut World, player: PlayerId) {
         let Some(avatar) = world.players.get(&player) else { return };
-        let Some(&inventory) = self.inventories.get(&player_key(&avatar.name)) else { return };
-        world.inventories.insert(player, inventory);
+        let key = player_key(&avatar.name);
+        if let Some(&inventory) = self.inventories.get(&key) {
+            world.inventories.insert(player, inventory);
+        }
+        if self.startgold.insert(key) {
+            world.inventories.entry(player).or_default().gold += crate::td::STARTGOLD;
+        }
+        let inventory = world.inventories.get(&player).copied().unwrap_or_default();
         if player != HOST_PLAYER {
             if let Some(net) = &mut self.net {
                 net.send(player, Channel::Reliable, encode(&ServerMessage::Inventory(inventory)));
@@ -601,7 +783,8 @@ impl Authority {
     /// Schreibt den Spielstand (falls ein Speicherort festgelegt ist).
     pub fn save(&mut self, world: &World) {
         let Some(path) = &self.save_path else { return };
-        let save = WorldSave::capture(world, self.tick, &self.inventories);
+        let mut save = WorldSave::capture(world, self.tick, &self.inventories);
+        save.startgold = self.startgold.clone();
         self.inventories = save.inventories.clone();
         match save.store(path) {
             Ok(()) => log::debug!("Spielstand gespeichert: {}", path.display()),
@@ -660,11 +843,10 @@ impl Authority {
             enemies: world.feinde.clone(),
             strikes: std::mem::take(&mut self.strikes),
             weather: world.weather_choice,
-            waves: world.heer.enabled,
             shots: std::mem::take(&mut self.shots),
-            welle: world.heer.welle,
-            leben: world.heer.leben,
-            naechste: world.heer.naechste_in(),
+            // Statistik nur etwa einmal pro Sekunde mitschicken
+            td: if ctx.time.tick % 60 == 0 { self.td_stand(world, true) } else { world.td.clone() },
+            ereignisse: std::mem::take(&mut self.ereignisse),
         });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));

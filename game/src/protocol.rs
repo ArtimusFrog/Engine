@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0014;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0015;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -51,6 +51,14 @@ pub enum AdminCommand {
     ClearEnemies,
     /// Wellen zurück auf Welle 1, volle Leben
     ResetWaves,
+    /// Schwierigkeit (setzt die Wellen zurück)
+    Schwierigkeit(crate::td::Schwierigkeit),
+    /// Nach Welle 30 weiter (Endlosmodus) oder Schluss mit Sieg
+    Endlos(bool),
+    /// Gold für den, der den Befehl gibt (zum Testen)
+    Gold(u32),
+    /// Zu einer Welle springen (die nächste ist dann diese + 1)
+    SpringeZuWelle(u32),
 }
 
 /// Werkzeuge in der Auswahlleiste. Jeder Spieler hat sie von Anfang an.
@@ -132,15 +140,14 @@ pub struct Snapshot {
     pub enemies: Vec<crate::heer::EnemyState>,
     /// Angriffe der Truppen seit dem letzten Schnappschuss: (Art, von, Ziel)
     pub strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
-    /// Erzwungenes Wetter (Index in `WETTER`) und ob die Festung Truppen schickt
+    /// Erzwungenes Wetter (Index in `WETTER`)
     pub weather: u8,
-    pub waves: bool,
     /// Schüsse der Türme seit dem letzten Schnappschuss
     pub shots: Vec<crate::tuerme::Schuss>,
-    /// Wellen: Nummer, Leben der Insel, Sekunden bis zur nächsten
-    pub welle: u32,
-    pub leben: u32,
-    pub naechste: f32,
+    /// Stand der Verteidigung: Wellen, Leben, Vorschau, Soldaten …
+    pub td: crate::td::TdStand,
+    /// Ereignisse seit dem letzten Schnappschuss (Bossfähigkeiten, Explosionen …)
+    pub ereignisse: Vec<crate::td::Ereignis>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -179,6 +186,8 @@ pub enum ServerMessage {
     BuildingRemoved(u32),
     /// Meldung an alle (neue Welle, Durchbruch, Niederlage)
     Notice(String),
+    /// Auswertung einer überstandenen Welle
+    Bericht(crate::td::WellenBericht),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,9 +200,8 @@ pub enum ClientMessage {
     Build { kind: crate::bauten::BuildingKind, at: Vec2, yaw: f32 },
     /// Befehl aus dem Admin-Panel
     Admin(AdminCommand),
-    /// Turm aufwerten bzw. eigenes Gebäude abreißen
-    Upgrade(u32),
-    Demolish(u32),
+    /// Verteidigung: Turm aufwerten, abreißen, Zielmodus, Welle rufen, Straße wählen
+    Td(crate::td::TdBefehl),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -241,11 +249,15 @@ pub struct Inventory {
     pub wool: u32,
     #[serde(default)]
     pub ore: u32,
+    /// Gold: Kopfgeld, Wellenbonus – die Währung für Türme und Fallen
+    #[serde(default)]
+    pub gold: u32,
 }
 
 /// Alles, was im Inventar liegen kann.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Item {
+    Gold,
     Wood,
     Stone,
     Ore,
@@ -255,10 +267,11 @@ pub enum Item {
 }
 
 impl Item {
-    pub const ALL: [Item; 6] = [Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
+    pub const ALL: [Item; 7] = [Item::Gold, Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
 
     pub fn label(self) -> &'static str {
         match self {
+            Item::Gold => "Gold",
             Item::Wood => "Holz",
             Item::Stone => "Stein",
             Item::Ore => "Eisenerz",
@@ -271,6 +284,7 @@ impl Item {
     /// Dateiname des Symbols in `game/assets/icons/` (gerendert von `art/icons/gegenstaende.py`).
     pub fn icon_file(self) -> &'static str {
         match self {
+            Item::Gold => "gold",
             Item::Wood => "holz",
             Item::Stone => "stein",
             Item::Ore => "erz",
@@ -288,6 +302,7 @@ impl Item {
     /// Art des Gegenstands (Zeile unter dem Namen im Tooltip).
     pub fn kind_line(self) -> &'static str {
         match self {
+            Item::Gold => "Währung · für Türme und Fallen",
             Item::Wood | Item::Stone => "Rohstoff · Baumaterial",
             Item::Ore => "Rohstoff · Metall",
             Item::Meat => "Tierbeute · Nahrung",
@@ -297,6 +312,7 @@ impl Item {
 
     pub fn description(self) -> &'static str {
         match self {
+            Item::Gold => "Kopfgeld für besiegte Truppen der Schattenfestung und Lohn für überstandene Wellen.",
             Item::Wood => "Von Bäumen geschlagen. Brennt gut und lässt sich verbauen.",
             Item::Stone => "Mit der Spitzhacke aus Steinvorkommen gebrochen. Hart und schwer.",
             Item::Ore => "Rostrotes Eisenerz aus dunklen Erzvorkommen. Lässt sich zu Eisen schmelzen.",
@@ -318,6 +334,7 @@ impl Inventory {
 
     pub fn count(&self, item: Item) -> u32 {
         match item {
+            Item::Gold => self.gold,
             Item::Wood => self.wood,
             Item::Stone => self.stone,
             Item::Ore => self.ore,
@@ -329,6 +346,7 @@ impl Inventory {
 
     pub fn add_item(&mut self, item: Item, amount: u32) {
         let slot = match item {
+            Item::Gold => &mut self.gold,
             Item::Wood => &mut self.wood,
             Item::Stone => &mut self.stone,
             Item::Ore => &mut self.ore,
@@ -342,6 +360,7 @@ impl Inventory {
     /// Nimmt `amount` Stück heraus, wenn so viele da sind.
     pub fn remove_item(&mut self, item: Item, amount: u32) -> bool {
         let slot = match item {
+            Item::Gold => &mut self.gold,
             Item::Wood => &mut self.wood,
             Item::Stone => &mut self.stone,
             Item::Ore => &mut self.ore,

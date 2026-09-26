@@ -32,6 +32,8 @@ pub struct Settings {
     pub volume_effects: f32,
     pub volume_ambient: f32,
     pub volume_music: f32,
+    /// Schadenszahlen über getroffenen Einheiten
+    pub schadenszahlen: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +53,7 @@ impl Default for Settings {
             volume_effects: 0.8,
             volume_ambient: 0.7,
             volume_music: 0.45,
+            schadenszahlen: true,
         }
     }
 }
