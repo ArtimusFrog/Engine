@@ -124,6 +124,23 @@ impl MapUi {
                 diamond(&clip, at, 4.0 + self.zoom.sqrt(), Color32::from_rgb(170, 60, 40), INK);
                 label(&clip, at + egui::vec2(0.0, -14.0), name, 13.0 + self.zoom.sqrt(), INK);
             }
+            // Gebäude der Spieler: kleines Haus (halb durchsichtig, solange gebaut wird)
+            for building in &world.buildings {
+                let at = to_screen(vec2(building.position.x, building.position.z));
+                let size = 4.0 + self.zoom.sqrt();
+                let alpha = if building.finished() { 255 } else { 140 };
+                let wall = Color32::from_rgba_unmultiplied(214, 170, 110, alpha);
+                let roof = Color32::from_rgba_unmultiplied(170, 60, 40, alpha);
+                clip.rect_filled(Rect::from_center_size(at + egui::vec2(0.0, size * 0.35), egui::vec2(size * 1.6, size * 1.1)), 1.0, wall);
+                clip.add(egui::Shape::convex_polygon(
+                    vec![at + egui::vec2(-size, -size * 0.2), at + egui::vec2(0.0, -size * 1.1), at + egui::vec2(size, -size * 0.2)],
+                    roof,
+                    Stroke::new(1.0, INK),
+                ));
+                if self.zoom > 2.0 {
+                    label(&clip, at + egui::vec2(0.0, size + 8.0), building.kind.label(), 11.0 + self.zoom.sqrt(), INK);
+                }
+            }
             let start = to_screen(vec2(world.spawn.x, world.spawn.z));
             clip.circle_filled(start, 7.0, GOLD);
             clip.circle_stroke(start, 7.0, Stroke::new(2.0, INK));
