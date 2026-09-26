@@ -494,6 +494,33 @@ mod tests {
     }
 
     #[test]
+    fn einzelspieler_baut_direkt() {
+        use crate::bauten::{check_site, BuildingKind};
+        let mut ctx = Context::headless();
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("Nils"), None).unwrap();
+        let local = session.local_player().unwrap();
+        let kind = BuildingKind::Mine;
+        let world = session.world();
+        let spawn = vec2(world.spawn.x, world.spawn.z);
+        let at = (0..480)
+            .map(|i| spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0))
+            .find(|&at| check_site(world, kind, at, None).is_ok())
+            .expect("Kein Bauplatz");
+        let character = world.players[&local].character;
+        let stand = at + vec2(0.0, kind.radius() + 3.0);
+        let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
+        ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
+        session.world_mut().inventories.insert(local, Inventory { wood: 30, stone: 20, ..Default::default() });
+        session.request_build(&mut ctx, kind, at, 1.0);
+        assert_eq!(session.world().buildings.len(), 1, "Einzelspieler baut nicht");
+        assert_eq!(session.local_inventory().wood, 0);
+        // Zweites Gebäude an derselben Stelle geht nicht
+        session.world_mut().inventories.insert(local, Inventory { wood: 30, stone: 20, ..Default::default() });
+        session.request_build(&mut ctx, kind, at, 1.0);
+        assert_eq!(session.world().buildings.len(), 1, "Zwei Gebäude übereinander");
+    }
+
+    #[test]
     fn chat_kommt_bei_allen_an_und_wird_gebremst() {
         let mut pair = Pair::start(false);
         pair.run(60);
