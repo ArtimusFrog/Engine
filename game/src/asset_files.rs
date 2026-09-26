@@ -131,6 +131,7 @@ fn rules_for(path: &Path) -> Option<Rules> {
         // Große Bauwerke (Burg): ein Wahrzeichen, dafür viele Details
         "bauwerke" => Some(Rules { max_triangles: 320_000, required_clips: &[], below_ground: 0.05 }),
         "bauten" => Some(Rules { max_triangles: 30_000, required_clips: &[], below_ground: 3.0 }),
+        "gegner" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen", "Angriff"], below_ground: 0.05 }),
         _ => None,
     }
 }
