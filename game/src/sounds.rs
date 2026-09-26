@@ -1,4 +1,4 @@
-//! Alle Geräusche des Spiels und die Klangkulisse (Wind, Wellen, Vögel, Musik).
+//! Alle Geräusche des Spiels und die Klangkulisse (Regen, Vögel, Wölfe, Musik – ohne Rauschen).
 //!
 //! Jeder Klang kann durch eine Aufnahme ersetzt werden: `game/assets/sounds/<name>.ogg`
 //! (oder .wav/.flac). Solange es keine gibt, erzeugt das Spiel ihn selbst (Synthese).
@@ -205,7 +205,7 @@ impl Sounds {
         self.ambience(ctx, world);
     }
 
-    /// Wind je nach Höhe, Regen, Möwen, Wölfe, Musik (kein Meeresrauschen mehr).
+    /// Regen, Möwen, Wölfe, Musik (kein Meeres- oder Windrauschen).
     fn ambience(&mut self, ctx: &mut Context, world: &World) {
         let camera = ctx.camera.position;
         let terrain = &world.terrain;
@@ -223,10 +223,8 @@ impl Sounds {
             }
         }
 
-        // Wind: am Boden kaum hörbar, erst hoch oben (Gebirge, Türme) deutlicher
-        let ueber_boden = (camera.y - terrain.height_at(camera.x, camera.z).max(0.0)).max(0.0);
-        let wind = 0.05 + ((ueber_boden - 4.0) / 60.0).clamp(0.0, 0.15) + ((camera.y - 28.0) / 80.0).clamp(0.0, 0.25);
-        ctx.audio.set_loop(self.wind, wind, None, 1.0);
+        // Kein Dauerrauschen mehr: das gefilterte Windrauschen klang wie Meeresrauschen und ist aus
+        ctx.audio.set_loop(self.wind, 0.0, None, 1.0);
         let rain = world.weather.state().rain;
         ctx.audio.set_loop(self.rain, rain * 0.7, None, 1.0);
 
@@ -271,7 +269,7 @@ impl Sounds {
     /// Im Menü: die Menümusik und etwas Wind (ohne eigene Menümusik die Tagesmusik).
     pub fn menu(&mut self, ctx: &mut Context) {
         self.menu_music(ctx, 0.75);
-        ctx.audio.set_loop(self.wind, 0.15, None, 1.0);
+        ctx.audio.set_loop(self.wind, 0.0, None, 1.0);
         for quiet in [self.rain, self.music_night, self.music_magic] {
             ctx.audio.set_loop(quiet, 0.0, None, 1.0);
         }

@@ -190,15 +190,15 @@ impl BuildingKind {
 
 /// Bauradius der Dorfhalle je Stufe (Meter)
 pub fn bauradius(level: u8) -> f32 {
-    [30.0, 42.0, 55.0][(level.clamp(1, 3) - 1) as usize]
+    [70.0, 95.0, 120.0][(level.clamp(1, 3) - 1) as usize]
 }
 
 /// Was die Stufen der Dorfhalle freischalten (für Menü und Fenster).
 pub fn dorfhalle_freischaltung(level: u8) -> &'static str {
     match level {
         1 => "Holzfäller und Steinbruch",
-        2 => "Erzmine, 42 m Bauradius, mehr Gold je Welle",
-        _ => "55 m Bauradius, am meisten Gold je Welle",
+        2 => "Erzmine, 95 m Bauradius, mehr Gold je Welle",
+        _ => "120 m Bauradius, am meisten Gold je Welle",
     }
 }
 

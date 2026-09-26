@@ -79,10 +79,10 @@ pub struct Island {
 
 /// Siedlungsplatz: so weit hinter dem Straßenende liegt die Mitte, bis hierhin ist der Boden eben,
 /// bis hierhin läuft er weich ins Gelände aus, und in diesem Umkreis wächst nichts.
-pub const SIEDLUNG_ABSTAND: f32 = 22.0;
-pub const SIEDLUNG_EBEN: f32 = 34.0;
-pub const SIEDLUNG_RAND: f32 = 62.0;
-pub const SIEDLUNG_FREI: f32 = 40.0;
+pub const SIEDLUNG_ABSTAND: f32 = 28.0;
+pub const SIEDLUNG_EBEN: f32 = 50.0;
+pub const SIEDLUNG_RAND: f32 = 90.0;
+pub const SIEDLUNG_FREI: f32 = 52.0;
 
 /// Die Siedlungsplätze am Ende der Heerstraßen: Mitte etwas hinter dem Ende (in Straßenrichtung),
 /// Höhe = mittlere Geländehöhe dort (mindestens knapp über dem Strand).

@@ -585,6 +585,8 @@ const MAX_ENEMIES: usize = 140;
 const ENGAGE: f32 = 16.0;
 /// So nah muss die Spitze an Soldaten oder einer Barrikade sein, damit die Gruppe stehen bleibt.
 const SPERRE: f32 = 4.5;
+/// So weit dürfen Einheiten seitlich von der Mitte ihrer Straße abweichen (Pflaster bis 2,35 m)
+const STRASSEN_RAND: f32 = 2.2;
 /// Flughöhe der Harpyien über dem Boden
 const FLUGHOEHE: f32 = 5.0;
 
@@ -1147,6 +1149,12 @@ impl Heer {
                     }
                     None => member.offset *= (1.0 - dt * 1.5).max(0.0),
                 }
+                // Auf der Straße bleiben: zum Kämpfen höchstens ein paar Schritte vor oder zurück und
+                // seitlich nur bis zum Straßenrand (keine Einheit verlässt ihre Straße)
+                let quer = vec2(-dir.y, dir.x);
+                let laengs = member.offset.dot(dir).clamp(-3.0, 3.0);
+                let seitlich = member.offset.dot(quer).clamp(-STRASSEN_RAND - member.side * 1.5, STRASSEN_RAND - member.side * 1.5);
+                member.offset = dir * laengs + quer * seitlich;
                 let flat = home + member.offset;
                 // Auf der Straße steht jede Einheit auf dem Gelände unter ihren Füßen; im Hof, am Tor
                 // und auf der Rampe gilt die Höhe der Route (dort liegt der Boden nicht im Gelände)
@@ -2282,7 +2290,9 @@ mod tests {
         let mut heer = std::mem::replace(&mut world.heer, Heer::new(Vec::new()));
         heer.spawn_wave();
         // Ein Spieler steht auf der Südstraße ein Stück vor der Rampe
-        let (spieler, _) = heer.routes[0].sample(120.0);
+        // … und zwar 8 m neben der Straße: die Truppen greifen an, verlassen die Straße aber nicht
+        let (mitte, dir) = heer.routes[0].sample(120.0);
+        let spieler = mitte + vec3(-dir.y, 0.0, dir.x) * 8.0;
         let mut angriffe = 0;
         for _ in 0..1200 {
             angriffe += heer.tick(0.1, &[Blocker { ort: spieler, ziel: Ziel::Spieler }], &boden(&world)).len();
@@ -2290,6 +2300,11 @@ mod tests {
         assert!(angriffe > 0, "niemand greift an");
         let nah = heer.states().iter().filter(|s| s.position.distance(spieler) < 30.0).count();
         assert!(nah > 0, "die Gruppe ist am Spieler vorbeigelaufen");
+        for s in heer.states().iter().filter(|s| s.position.length() > 90.0 && s.flags & zustand::FLIEGT == 0) {
+            let (p, _, _) = heer.naechster_strassenpunkt(vec2(s.position.x, s.position.z)).unwrap();
+            let abstand = vec2(p.x - s.position.x, p.z - s.position.z).length();
+            assert!(abstand < 2.4, "{} steht {abstand:.1} m neben der Straße", s.kind.label());
+        }
     }
 
     #[test]

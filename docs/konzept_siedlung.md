@@ -1,14 +1,14 @@
 # Konzept: Siedlungen am Ende der Heerstraßen
 
-Am Ende jeder der vier Heerstraßen liegt ein **Siedlungsplatz**: ebener Boden (34 m, weich auslaufend
-bis 62 m), ohne Bäume und Felsen im Kern, mit einem Dorfweg vom Straßenende bis in die Mitte.
+Am Ende jeder der vier Heerstraßen liegt ein **Siedlungsplatz**: ebener Boden (50 m, weich auslaufend
+bis 90 m), ohne Bäume und Felsen im Kern, mit einem Dorfweg vom Straßenende bis in die Mitte.
 
 ## Die Dorfhalle
 
 - Jeder Spieler baut genau **eine** Dorfhalle, jeder Siedlungsplatz trägt genau **eine** Siedlung.
   Wer am Ende einer Straße siedelt, verteidigt diese Straße (Fenster T).
-- Stufen: **Dorfhalle** (30 m Bauradius, 30 Holz + 15 Stein) → **Rathaus** (42 m, schaltet die Erzmine
-  frei; 120 Gold, 40 Holz, 30 Stein, 8 Erz) → **Burgfried** (55 m; 300 Gold, 60 Holz, 60 Stein, 25 Erz).
+- Stufen: **Dorfhalle** (70 m Bauradius, 30 Holz + 15 Stein) → **Rathaus** (95 m, schaltet die Erzmine
+  frei; 120 Gold, 40 Holz, 30 Stein, 8 Erz) → **Burgfried** (120 m; 300 Gold, 60 Holz, 60 Stein, 25 Erz).
   Nur der Besitzer baut aus (E auf die Halle).
 - Holzfäller, Steinbruch und Erzmine gehen nur im Radius der eigenen Dorfhalle; Türme und Fallen
   weiterhin an der ganzen Straße.
