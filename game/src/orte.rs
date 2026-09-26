@@ -25,6 +25,8 @@ pub struct Places {
     pub surf: Vec<(Vec3, Vec2)>,
     /// Wegelaternen (Fuß am Boden)
     pub lanterns: Vec<Vec3>,
+    /// Windmühlenflügel: Objekt, Nabe, Grunddrehung (die Flügel drehen um die eigene X-Achse)
+    pub windmills: Vec<(EntityId, Vec3, Quat)>,
 }
 
 /// Mitte des Startlagers: ein Stück vom Startpunkt landeinwärts.
@@ -271,6 +273,8 @@ pub struct SightSpots {
     pub wreck: Option<(Vec2, Vec2)>,
     pub lighthouse: Option<(Vec2, Vec2)>,
     pub cave: Option<(Vec2, Vec2)>,
+    /// Mühlenhof: Mitte (Windmühle) und Richtung zum Lager
+    pub farm: Option<(Vec2, Vec2)>,
 }
 
 /// Fester Kasten relativ zu einem aufgestellten Modell (`offset` und `yaw` in dessen Achsen).
@@ -370,6 +374,36 @@ pub fn build_sights(ctx: &mut Context, terrain: &Terrain, spots: &SightSpots, pl
             places.labels.push(("Leuchtturm", at));
             blocked.push((at, 5.0));
         }
+    }
+    if let Some((at, look)) = spots.farm {
+        let rotation = facing(look);
+        let side = look.perp();
+        if let Some(entity) = prop(ctx, terrain, "windmuehle", at, rotation, None) {
+            let base = ground(terrain, at);
+            solid(ctx, entity, base, rotation, Vec3::Y * 4.0, vec3(4.6, 8.0, 4.6), 0.0);
+            if let Some((mesh, _)) = asset_files::load_variants(ctx, "teile", "windmuehle_fluegel", Vec3::ONE, 0.0).first().copied() {
+                // Nabe vorne oben an der Kappe (Blender 2,05 / 0 / 8,35)
+                let hub = base + rotation * vec3(2.05, 8.35, 0.0);
+                let sails = ctx.scene.spawn(Entity::new("Windmühlenflügel", mesh).with_transform(Transform::from_position(hub).with_rotation(rotation)));
+                places.windmills.push((sails, hub, rotation));
+            }
+            places.labels.push(("Mühlenhof", at));
+            // Der ganze Hof bleibt frei von Bäumen und Büschen
+            blocked.push((at, 24.0));
+        }
+        // Brunnen, Bienenstöcke, Weizenfeld mit Vogelscheuche rund um die Mühle
+        let spots_around: [(&str, Vec2, Vec2, Option<Vec3>, f32); 4] = [
+            ("brunnen", at + side * 9.0 + look * 4.0, look, Some(vec3(2.4, 1.0, 2.4)), 3.0),
+            ("bienenstoecke", at - side * 8.0 + look * 5.0, side, None, 3.0),
+            ("weizenfeld", at - look * 11.0 + side * 3.0, side, None, 7.0),
+            ("vogelscheuche", at - look * 11.5 + side * 2.0, look, None, 1.0),
+        ];
+        for (name, spot, dir, collider, radius) in spots_around {
+            if prop(ctx, terrain, name, spot, facing(dir), collider).is_some() {
+                blocked.push((spot, radius));
+            }
+        }
+        places.lights.push((ground(terrain, at) + rotation * vec3(2.6, 2.4, 0.0), vec3(2.2, 1.5, 0.7), 8.0));
     }
     if let Some((at, out)) = spots.cave {
         let rotation = facing(out);

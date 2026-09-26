@@ -13,7 +13,7 @@ use crate::models;
 pub const SEED: u32 = 20_260_924;
 /// Kennung der Insel für Spielstände: bei jeder Änderung an Gestalt oder Verteilung der
 /// Rohstoffe hochzählen, sonst passen die Rohstoff-IDs gespeicherter Spielstände nicht mehr.
-pub const WORLD_ID: u32 = SEED + 8;
+pub const WORLD_ID: u32 = SEED + 9;
 /// Radius des Festlands in Metern (die Küste franst um diesen Wert aus).
 pub const ISLAND_RADIUS: f32 = 760.0;
 const TERRAIN_SIZE: f32 = 2040.0;
@@ -809,7 +809,25 @@ fn find_sights(terrain: &Terrain, spawn: Vec3, camp: Vec2) -> crate::orte::Sight
         let out = vec2(normal.x, normal.z).normalize_or(Vec2::Y);
         (p + out * 1.5, out)
     });
-    crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave }
+    // Mühlenhof: große, ebene Wiese ein Stück vom Lager entfernt, fern von Burg und Festung
+    let farm = best_spot(|p| {
+        let height = h(p);
+        let distance = p.distance(start);
+        let flat = unevenness(terrain, p, 14.0);
+        ((2.5..14.0).contains(&height)
+            && (110.0..280.0).contains(&distance)
+            && p.distance(camp) > 100.0
+            && p.distance(BURG_ORT) > 170.0
+            && p.length() > 190.0
+            && tower.is_none_or(|(t, _)| t.distance(p) > 70.0)
+            && magic(p) < 0.5
+            && flat < 1.1
+            // offene Wiese ringsum (dort stehen kaum Bäume)
+            && DIRECTIONS.iter().all(|&d| is_meadow(terrain, p + d * 16.0)))
+            .then(|| -(distance - 160.0).abs() * 0.01 - flat)
+    })
+    .map(|p| (p, (camp - p).normalize_or(Vec2::X)));
+    crate::orte::SightSpots { tower, circle, lake_shore, wreck, lighthouse, cave, farm }
 }
 
 

@@ -727,7 +727,7 @@ impl World {
         }
     }
 
-    /// Lampen der Sehenswürdigkeiten (nachts kräftiger) und schaukelnde Boote.
+    /// Lampen der Sehenswürdigkeiten (nachts kräftiger), schaukelnde Boote, Windmühlen.
     fn place_lights(&mut self, ctx: &mut Context) {
         let night = ctx.env.sky.stars;
         let camera = ctx.camera.position;
@@ -737,6 +737,14 @@ impl World {
             }
         }
         let t = ctx.time.elapsed;
+        // Windmühlenflügel drehen sich gemächlich im Wind
+        for &(entity, hub, rotation) in &self.places.windmills {
+            if hub.distance(camera) < 500.0 {
+                if let Some(sails) = ctx.scene.try_get_mut(entity) {
+                    sails.transform.rotation = rotation * Quat::from_rotation_x(-t * 0.55);
+                }
+            }
+        }
         for &(entity, base, rotation) in &self.places.boats {
             if let Some(boat) = ctx.scene.try_get_mut(entity) {
                 boat.transform.position = base + Vec3::Y * ((t * 1.3).sin() * 0.04);
