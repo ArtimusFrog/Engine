@@ -1386,7 +1386,7 @@ impl Playground {
             "Linksklick Bauen · Q/E oder Mausrad Drehen · Rechtsklick oder B Abbrechen"
         } else if ctx.cursor_locked || self.free_camera {
             "WASD Laufen · Shift Rennen · Leertaste Springen · 1–3 Werkzeug · Linksklick Benutzen · B Bauen · T Verteidigung · I Inventar · M Karte · Enter Chat · Esc Menü"
-        } else if self.inventory_open || self.build_menu_open || self.map_open || self.chat.open || self.td_open {
+        } else if self.inventory_open || self.build_menu_open || self.map_open || self.chat.open || self.td_open || self.admin_open || self.building_window.is_some() {
             ""
         } else {
             "Klicken zum Spielen"
