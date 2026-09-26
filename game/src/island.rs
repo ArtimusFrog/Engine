@@ -1292,6 +1292,23 @@ pub fn build(ctx: &mut Context) -> Island {
                     decor(ctx, lib.lantern[0], base, yaw, 1.0, Vec4::ONE, Material::Standard);
                     places.lanterns.push(base);
                     places.lights.push((base + vec3(0.0, 1.66, 0.0) + yaw * vec3(0.42, 0.0, 0.0), vec3(2.2, 1.35, 0.55), 8.0));
+                    // Jede zweite Laterne: Rastplatz mit Bank am Wegrand, Blick auf den Weg,
+                    // manchmal mit Fass oder Kiste daneben
+                    if places.lanterns.len() % 2 == 0 {
+                        let toward = DIRECTIONS.iter().copied().max_by(|a, b| paths.at(p + *a * 1.6).total_cmp(&paths.at(p + *b * 1.6))).unwrap_or(Vec2::X);
+                        let seat = p - toward * 1.3 + toward.perp() * 1.6;
+                        let turn = Quat::from_rotation_y((-toward.y).atan2(toward.x));
+                        let seat_base = vec3(seat.x, terrain.height_at(seat.x, seat.y) - 0.03, seat.y);
+                        if let Some(&(bench, _)) = asset_files::load_variants(ctx, "gebaeude", "bank", Vec3::ONE, 0.0).first() {
+                            ctx.scene.spawn(Entity::new("Rastbank", bench).with_transform(Transform::from_position(seat_base).with_rotation(turn * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2))));
+                        }
+                        let extra = if hash01(ix, iz, SEED + 64) < 0.5 { "fass" } else { "kiste" };
+                        let spot = seat + toward.perp() * 1.4;
+                        if let Some(&(mesh, _)) = asset_files::load_variants(ctx, "gebaeude", extra, Vec3::ONE, 0.0).first() {
+                            let at = vec3(spot.x, terrain.height_at(spot.x, spot.y) - 0.03, spot.y);
+                            ctx.scene.spawn(Entity::new("Rastplatz", mesh).with_transform(Transform::from_position(at).with_rotation(yaw)));
+                        }
+                    }
                 }
             }
 
