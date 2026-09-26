@@ -324,6 +324,20 @@ pub fn health_bar(painter: &egui::Painter, center: egui::Pos2, width: f32, fract
     painter.rect_filled(shine, 1.0, Color32::from_white_alpha((60.0 * alpha) as u8));
 }
 
+/// Schmale Lebensleiste in fester Farbe (Truppen rot, Soldaten blau), mit dunklem Rest.
+pub fn unit_bar(painter: &egui::Painter, center: egui::Pos2, width: f32, fraction: f32, alpha: f32, color: Color32) {
+    let fraction = fraction.clamp(0.0, 1.0);
+    let bar = egui::Rect::from_center_size(center, egui::vec2(width, 5.0));
+    painter.rect_filled(bar.expand(1.5), 2.5, Color32::from_black_alpha((200.0 * alpha) as u8));
+    painter.rect_filled(bar, 2.0, Color32::from_rgb(60, 25, 30).gamma_multiply(alpha * 0.8));
+    let mut fill = bar;
+    fill.set_width(bar.width() * fraction);
+    painter.rect_filled(fill, 2.0, color.gamma_multiply(alpha));
+    let mut shine = fill;
+    shine.set_height(1.5);
+    painter.rect_filled(shine, 1.0, Color32::from_white_alpha((70.0 * alpha) as u8));
+}
+
 /// Gemaltes Symbol für einen Gegenstand im Inventar.
 pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
     let c = rect.center();

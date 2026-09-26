@@ -959,6 +959,40 @@ impl Playground {
         }
     }
 
+    /// Kleine Lebensleisten über den Truppen der Festung (rot) und den Soldaten der Kasernen (blau):
+    /// volle nur aus der Nähe, verletzte weiter weg, verdeckte gar nicht.
+    fn unit_bars_visible(&self, ctx: &Context, egui_ctx: &egui::Context) {
+        if self.screen != Screen::Playing {
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        let world = session.world();
+        let ignore = session.local_player().and_then(|id| world.players.get(&id)).map(|a| a.character);
+        let painter = egui_ctx.layer_painter(egui::LayerId::background());
+        for (oben, health, freund, boss) in world.lebensleisten() {
+            let verletzt = health < 100;
+            // Soldaten nur, wenn sie verletzt sind
+            if freund && !verletzt {
+                continue;
+            }
+            let distance = ctx.camera.position.distance(oben);
+            let limit = if verletzt || boss { 55.0 } else { 30.0 };
+            if distance > limit {
+                continue;
+            }
+            let Some(screen) = ctx.world_to_screen(oben) else { continue };
+            // Hinter Bäumen, Felsen oder Hügeln verborgen?
+            let to = oben - ctx.camera.position;
+            if ctx.physics.raycast(ctx.camera.position, to / distance, distance - 0.5, ignore).is_some() {
+                continue;
+            }
+            let alpha = ((limit - distance) / 6.0).clamp(0.0, 1.0);
+            let breite = (if boss { 70.0 } else { 40.0 } * (12.0 / distance.max(6.0)).sqrt()).clamp(22.0, 80.0);
+            let farbe = if freund { Color32::from_rgb(90, 150, 255) } else if boss { Color32::from_rgb(235, 70, 60) } else { Color32::from_rgb(215, 60, 70) };
+            ui::unit_bar(&painter, egui::pos2(screen.x, screen.y), breite, health as f32 / 100.0, alpha, farbe);
+        }
+    }
+
     /// Hinweis unter dem Fadenkreuz, wenn ein Rohstoff oder Tier anvisiert ist.
     fn aim_hud(&self, egui_ctx: &egui::Context) {
         // Gebäude im Visier: Name, Stufe und „E“
@@ -1920,6 +1954,7 @@ impl Game for Playground {
         }
         if !self.inventory_open {
             self.animal_bars_visible(ctx, egui_ctx);
+            self.unit_bars_visible(ctx, egui_ctx);
         }
         self.hud(ctx, egui_ctx);
         match self.screen {

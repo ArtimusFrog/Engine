@@ -375,6 +375,11 @@ impl World {
         &self.heer_ansicht.zahlen
     }
 
+    /// Lebensleisten über Truppen und Soldaten (Oberkante, Prozent, verbündet, Boss).
+    pub fn lebensleisten(&self) -> Vec<(Vec3, u8, bool, bool)> {
+        self.heer_ansicht.leisten()
+    }
+
     pub fn sichtbare_bosse(&self) -> Vec<(&'static str, u8)> {
         self.heer_ansicht.bosse()
     }

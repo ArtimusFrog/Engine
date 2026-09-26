@@ -1901,6 +1901,19 @@ impl HeerAnsicht {
         best.and_then(|(_, f)| f.kind.map(|k| (k, f.health, f.shown + Vec3::Y * f.trefferkugel.0 * f.groesse, f.flags)))
     }
 
+    /// Lebensleisten über den Figuren: Oberkante, Lebenspunkte in Prozent, verbündet (Soldat), Boss.
+    /// Getarnte und Gefallene haben keine.
+    pub fn leisten(&self) -> Vec<(Vec3, u8, bool, bool)> {
+        self.figuren
+            .values()
+            .filter(|f| f.action != EnemyAction::Dying && f.health > 0 && f.flags & zustand::GETARNT == 0)
+            .map(|f| {
+                let oben = f.shown + Vec3::Y * ((f.trefferkugel.0 * 2.0 + 0.3) * f.groesse + 0.25);
+                (oben, f.health, f.kind.is_none(), f.kind.is_some() && f.groesse > 1.3)
+            })
+            .collect()
+    }
+
     /// Bosse, die gerade zu sehen sind: Name, Lebenspunkte in Prozent (für die Bossleiste oben).
     pub fn bosse(&self) -> Vec<(&'static str, u8)> {
         let mut bosse: Vec<(&'static str, u8)> = self
