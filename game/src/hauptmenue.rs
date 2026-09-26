@@ -56,7 +56,8 @@ impl TitleScreen {
             // Weiter Bogen um die ganze Festung, die Kugel leuchtet über allem
             Shot::Orbit { target: vec3(0.0, boden + 28.0, 0.0), distance: 125.0, height: 30.0, angle: 0.35, sweep: 0.75 },
             // Die Rampe hinauf, auf das Tor mit dem Totenschädel zu
-            Shot::Track { from: vec3(4.0, boden + 6.0, 105.0), to: vec3(1.5, hof + 3.0, 48.0),
+            // (über den Baumkronen am Weg beginnen, dann zum Tor hinab)
+            Shot::Track { from: vec3(4.0, boden + 23.0, 108.0), to: vec3(1.5, hof + 3.0, 48.0),
                           look_from: vec3(0.0, hof + 8.0, 20.0), look_to: vec3(0.0, hof + 6.0, 26.0) },
             // Hinauf zur schwebenden Zauberkugel über dem Bergfried
             Shot::Orbit { target: kugel, distance: 34.0, height: -14.0, angle: 2.2, sweep: 0.9 },
