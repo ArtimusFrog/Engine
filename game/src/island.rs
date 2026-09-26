@@ -1014,6 +1014,29 @@ fn add_lods(ctx: &mut Context, variants: &[Variant], levels: &[Level]) {
     }
 }
 
+/// Kantenlänge eines Landschaftsstücks in Zellen (40 × 3 m = 120 m).
+const CHUNK_CELLS: usize = 40;
+
+/// Die Landschaft in Stücken: Die Grafikkarte zeichnet nur, was im Blickfeld (bzw. im
+/// Schattenbereich) liegt, und ferne Stücke gröber. Stücke, die ganz unter dem Meer liegen,
+/// fallen weg – das (undurchsichtige) Wasser deckt sie ohnehin zu.
+fn spawn_ground_chunks(ctx: &mut Context, terrain: &Terrain, texture: TextureId) {
+    let tint = |c: Vec3, _: Vec3| Vec3::splat(facet_jitter(c));
+    let cells = terrain.cells();
+    for z0 in (0..cells).step_by(CHUNK_CELLS) {
+        for x0 in (0..cells).step_by(CHUNK_CELLS) {
+            if terrain.max_height_in(x0, z0, CHUNK_CELLS) < -2.0 {
+                continue;
+            }
+            let full = ctx.assets.add_mesh(terrain.chunk_mesh(x0, z0, CHUNK_CELLS, 1, texture, tint));
+            let half = ctx.assets.add_mesh(terrain.chunk_mesh(x0, z0, CHUNK_CELLS, 2, texture, tint));
+            let quarter = ctx.assets.add_mesh(terrain.chunk_mesh(x0, z0, CHUNK_CELLS, 4, texture, tint));
+            ctx.assets.set_lods(full, vec![Lod { distance: 210.0, mesh: Some(half) }, Lod { distance: 460.0, mesh: Some(quarter) }]);
+            ctx.scene.spawn(Entity::new("Boden", full).with_material(Material::Ground));
+        }
+    }
+}
+
 /// Baut die Insel in die Szene: Landschaft, Wasser und Deko. Die abbaubaren Rohstoffe
 /// werden nur beschrieben – die Welt erzeugt sie, damit sie verschwinden und
 /// nachwachsen können.
@@ -1025,15 +1048,19 @@ pub fn build(ctx: &mut Context) -> Island {
     let spawn = find_spawn(&terrain);
     let paths = Paths::build(&terrain, spawn);
     // Mit Fenster: fein aufgelöste Bodentextur; der Server braucht nur die Form.
-    let terrain_mesh = if ctx.is_headless() {
-        ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(|c, n| ground_color(c, n) * facet_jitter(c)))
+    let ground = if ctx.is_headless() {
+        let terrain_mesh = ctx.assets.named_mesh(&format!("insel{SEED}"), || terrain.mesh(|c, n| ground_color(c, n) * facet_jitter(c)));
+        ctx.scene.spawn(Entity::new("Insel", terrain_mesh).with_material(Material::Ground))
     } else {
         let started = std::time::Instant::now();
         let texture = ctx.assets.named_texture(&format!("boden{WORLD_ID}"), || ground_texture(&terrain, &paths));
         log::info!("Bodentextur in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
-        ctx.assets.named_mesh(&format!("insel{WORLD_ID}"), || terrain.mesh_textured(texture, |c, _| Vec3::splat(facet_jitter(c))))
+        spawn_ground_chunks(ctx, &terrain, texture);
+        // Die Kollision gehört zu einem unsichtbaren Objekt „Insel“; gezeichnet werden die Stücke.
+        let mut ground = Entity::new("Insel", ctx.assets.cube());
+        ground.visible = false;
+        ctx.scene.spawn(ground)
     };
-    let ground = ctx.scene.spawn(Entity::new("Insel", terrain_mesh).with_material(Material::Ground));
     let (vertices, triangles) = terrain.collision_mesh();
     ctx.physics.add_static_mesh(Some(ground), vertices, triangles);
 

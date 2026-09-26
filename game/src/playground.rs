@@ -652,6 +652,15 @@ impl Playground {
                 ui.checkbox(&mut s.vsync, "");
                 ui.end_row();
 
+                ui.label("Auflösung (3D)");
+                let scale_label = |p: u8| if p == 0 { "Automatisch".to_string() } else { format!("{p} %") };
+                egui::ComboBox::from_id_salt("aufloesung").selected_text(scale_label(s.render_scale)).show_ui(ui, |ui| {
+                    for p in [0u8, 100, 85, 70, 50] {
+                        ui.selectable_value(&mut s.render_scale, p, scale_label(p));
+                    }
+                });
+                ui.end_row();
+
                 let percent = |value: f64, _: std::ops::RangeInclusive<usize>| format!("{:.0} %", value * 100.0);
                 for (label, value) in [
                     ("Lautstärke", &mut s.volume_master),

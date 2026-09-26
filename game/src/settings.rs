@@ -23,6 +23,8 @@ pub struct Settings {
     pub fov_degrees: f32,
     pub fullscreen: bool,
     pub vsync: bool,
+    /// Auflösung der 3D-Welt in Prozent, 0 = automatisch (siehe `Display::render_scale`).
+    pub render_scale: u8,
     /// Zuletzt benutzte Server-Adresse.
     pub last_address: String,
     /// Lautstärken 0..1.
@@ -43,6 +45,7 @@ impl Default for Settings {
             fov_degrees: 70.0,
             fullscreen: true,
             vsync: true,
+            render_scale: 0,
             last_address: "127.0.0.1".into(),
             volume_master: 0.8,
             volume_effects: 0.8,
@@ -101,7 +104,9 @@ impl Settings {
         ctx.camera.fov_y = self.fov_degrees.clamp(50.0, 120.0).to_radians();
         // `--ohne-vsync`: zum Messen der echten Bildrate (Screenshots, Leistungstests)
         let vsync = self.vsync && !std::env::args().any(|a| a == "--ohne-vsync");
-        ctx.display = Display { fullscreen: self.fullscreen, vsync };
+        // `--aufloesung N`: feste Renderauflösung in Prozent (Leistungstests)
+        let render_scale = std::env::args().skip_while(|a| a != "--aufloesung").nth(1).and_then(|v| v.parse().ok()).unwrap_or(self.render_scale);
+        ctx.display = Display { fullscreen: self.fullscreen, vsync, render_scale };
         ctx.audio.set_master_volume(self.volume_master);
         ctx.audio.set_volume(Bus::Effects, self.volume_effects);
         ctx.audio.set_volume(Bus::Ambient, self.volume_ambient);

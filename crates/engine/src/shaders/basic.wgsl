@@ -400,7 +400,11 @@ fn point_lights(world_pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         let position = g.lights[i * 2];
         let color = g.lights[i * 2 + 1].rgb;
         let to_light = position.xyz - world_pos;
-        let distance = length(to_light);
+        let d2 = dot(to_light, to_light);
+        if (d2 >= position.w * position.w) {
+            continue;
+        }
+        let distance = sqrt(d2);
         let falloff = clamp(1.0 - distance / position.w, 0.0, 1.0);
         // Etwas "Umlicht", damit auch abgewandte Flächen nicht ganz schwarz sind.
         let facing = max(dot(n, to_light / max(distance, 0.001)), 0.0) * 0.8 + 0.2;
@@ -439,27 +443,40 @@ fn ground_detail(albedo: vec3<f32>, world: vec3<f32>, n: vec3<f32>, path_mask: f
     // Wie „grasig“ ist die Farbe? (Grün deutlich über Rot und Blau)
     let grass = clamp((albedo.g - max(albedo.r, albedo.b)) / max(albedo.g, 0.001) * 2.5, 0.0, 1.0);
 
-    // Büschel von 1–2 m und feine Körnung
+    // Büschel von 1–2 m und (nur aus der Nähe) feine Körnung. Die Rauschwerte sind teuer,
+    // deshalb wird nur berechnet, was bei dieser Entfernung überhaupt zu sehen ist.
     let clumps = value_noise(w * 0.55) * 0.6 + value_noise(w * 1.3 + vec2<f32>(7.1, 3.3)) * 0.4;
-    let grain = value_noise(w * 4.5 + vec2<f32>(1.7, 9.2)) * 0.5 + value_noise(w * 9.0) * 0.5;
+    var grain = 0.5;
+    if (very_near > 0.0) {
+        grain = value_noise(w * 4.5 + vec2<f32>(1.7, 9.2)) * 0.5 + value_noise(w * 9.0) * 0.5;
+    }
     var c = albedo * (1.0 + (clumps - 0.5) * 0.28 * near + (grain - 0.5) * 0.16 * very_near);
 
     // Wiesen: sonnige, gelbgrüne Spitzen und sattere, kühle Senken im Wechsel
-    let hue = value_noise(w * 0.18 + vec2<f32>(31.0, 5.0));
-    c = mix(c, c * vec3<f32>(1.18, 1.08, 0.72), grass * smoothstep(0.5, 0.85, hue) * 0.55);
-    c = mix(c, c * vec3<f32>(0.82, 0.95, 1.0), grass * smoothstep(0.45, 0.15, hue) * 0.45);
-    // Kleine dunkle Kleeflecken
-    let clover = smoothstep(0.72, 0.8, value_noise(w * 0.9 + vec2<f32>(3.0, 17.0)));
-    c = mix(c, c * vec3<f32>(0.7, 0.85, 0.75), grass * clover * 0.5 * near);
+    if (grass > 0.0) {
+        let hue = value_noise(w * 0.18 + vec2<f32>(31.0, 5.0));
+        c = mix(c, c * vec3<f32>(1.18, 1.08, 0.72), grass * smoothstep(0.5, 0.85, hue) * 0.55);
+        c = mix(c, c * vec3<f32>(0.82, 0.95, 1.0), grass * smoothstep(0.45, 0.15, hue) * 0.45);
+        // Kleine dunkle Kleeflecken
+        if (near > 0.0) {
+            let clover = smoothstep(0.72, 0.8, value_noise(w * 0.9 + vec2<f32>(3.0, 17.0)));
+            c = mix(c, c * vec3<f32>(0.7, 0.85, 0.75), grass * clover * 0.5 * near);
+        }
+    }
 
     // Steile Hänge: waagerechte Gesteinsschichten
-    let steep = 1.0 - smoothstep(0.62, 0.8, n.y);
-    let strata = 0.86 + 0.14 * sin(world.y * 2.6 + value_noise(w * 0.25) * 5.0) + (value_noise(vec2<f32>(world.y * 3.0, w.x * 0.6 + w.y * 0.6)) - 0.5) * 0.16;
-    c *= mix(1.0, strata, steep * (1.0 - grass));
+    let steep = (1.0 - smoothstep(0.62, 0.8, n.y)) * (1.0 - grass);
+    if (steep > 0.0) {
+        let strata = 0.86 + 0.14 * sin(world.y * 2.6 + value_noise(w * 0.25) * 5.0) + (value_noise(vec2<f32>(world.y * 3.0, w.x * 0.6 + w.y * 0.6)) - 0.5) * 0.16;
+        c *= mix(1.0, strata, steep);
+    }
 
     // Trampelpfade (Weg-Anteil aus dem Alphakanal der Bodentextur): ausgefranster Rand,
     // niedergetretenes Gras daneben, festgetretene Erde mit Steinchen in der Mitte.
     let path = clamp(path_mask, 0.0, 1.0);
+    if (path < 0.002) {
+        return c;
+    }
     let fray = (value_noise(w * 1.6 + vec2<f32>(5.0, 1.0)) - 0.5) * 0.42 + (value_noise(w * 5.5) - 0.5) * 0.2;
     let sharp = smoothstep(0.42, 0.5, path + fray);
     let soft = smoothstep(0.25, 0.7, path);
@@ -468,16 +485,17 @@ fn ground_detail(albedo: vec3<f32>, world: vec3<f32>, n: vec3<f32>, path_mask: f
     var dirt = mix(vec3<f32>(0.115, 0.075, 0.036), vec3<f32>(0.16, 0.108, 0.056), smoothstep(0.65, 1.0, path));
     dirt *= 1.0 + (clumps - 0.5) * 0.35 + (grain - 0.5) * 0.3 * very_near;
     // Steinchen: kleine runde Kiesel in einem Zufallsraster, nur aus der Nähe
-    let cell = floor(w * 2.6);
-    let center = vec2<f32>(hash2(cell), hash2(cell + vec2<f32>(17.0, 3.0))) * 0.5 + 0.25;
-    let offset = fract(w * 2.6) - center;
-    let size = 0.07 + hash2(cell + vec2<f32>(9.0, 1.0)) * 0.07;
-    let pebble = (1.0 - smoothstep(size * 0.75, size, length(offset))) * step(0.62, hash2(cell + vec2<f32>(5.0, 5.0))) * very_near;
-    // oben etwas heller (Licht von oben), unten dunkler Rand
-    let lit = 1.0 + clamp(-offset.y / size, -1.0, 1.0) * 0.15;
-    dirt = mix(dirt, vec3<f32>(0.135, 0.125, 0.11) * lit * (0.85 + hash2(cell + vec2<f32>(2.0, 8.0)) * 0.3), pebble);
-    c = mix(c, dirt, on_path);
-    return c;
+    if (very_near > 0.0 && on_path > 0.0) {
+        let cell = floor(w * 2.6);
+        let center = vec2<f32>(hash2(cell), hash2(cell + vec2<f32>(17.0, 3.0))) * 0.5 + 0.25;
+        let offset = fract(w * 2.6) - center;
+        let size = 0.07 + hash2(cell + vec2<f32>(9.0, 1.0)) * 0.07;
+        let pebble = (1.0 - smoothstep(size * 0.75, size, length(offset))) * step(0.62, hash2(cell + vec2<f32>(5.0, 5.0))) * very_near;
+        // oben etwas heller (Licht von oben), unten dunkler Rand
+        let lit = 1.0 + clamp(-offset.y / size, -1.0, 1.0) * 0.15;
+        dirt = mix(dirt, vec3<f32>(0.135, 0.125, 0.11) * lit * (0.85 + hash2(cell + vec2<f32>(2.0, 8.0)) * 0.3), pebble);
+    }
+    return mix(c, dirt, on_path);
 }
 
 // Nachtsicht: Im Dunkeln verlieren Farben an Sättigung und wirken bläulich.
@@ -498,6 +516,9 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     // (nur in der Ferne – nahe Mauern und Decken hoher Bauwerke bleiben klar)
     let peaks = smoothstep(34.0, 48.0, world_pos.y) * 0.5 * smoothstep(60.0, 160.0, dist);
     fog = max(fog, (1.0 - exp(-dist * 0.03)) * max(valley * 0.75, peaks));
+    if (fog < 0.004) {
+        return color;
+    }
     return mix(color, sky_base(to_point / max(dist, 0.001)), fog);
 }
 
@@ -630,6 +651,10 @@ fn surface_pattern(albedo: vec3<f32>, uv: vec2<f32>, w: f32) -> vec3<f32> {
     return albedo;
 }
 
+// Zwei Einstiege: `fs_main` für ausgeschnittene Flächen (Blätter, Gräser) darf Pixel
+// verwerfen, `fs_opaque` für alles Feste nicht. Allein ein mögliches `discard` im Shader
+// schaltet auf der Grafikkarte den frühen Tiefentest ab – dann würde jeder verdeckte Pixel
+// voll berechnet. Deshalb zeichnet der Renderer Festes mit `fs_opaque`.
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Textur vor allen Verzweigungen lesen (WGSL verlangt einheitlichen Kontrollfluss).
@@ -643,6 +668,27 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     if (texel.a < 0.5 && kind != MAT_GROUND) {
         discard;
     }
+    // Blattkarten, die man fast von der Kante sieht, würden als Striche auffallen:
+    // sie werden mit feinem Raster ausgedünnt, je flacher der Blick, desto stärker.
+    if (kind == MAT_FOLIAGE && in.material.z > 0.5) {
+        let facing = abs(dot(face, normalize(g.camera_pos.xyz - in.world_pos)));
+        let noise = fract(sin(dot(floor(in.clip.xy), vec2<f32>(12.9898, 78.233))) * 43758.5453);
+        if (noise > smoothstep(0.05, 0.3, facing)) {
+            discard;
+        }
+    }
+    return shade(in, front, texel, pattern_w);
+}
+
+@fragment
+fn fs_opaque(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let texel = textureSample(albedo_texture, albedo_sampler, in.uv);
+    let pattern_w = max(fwidth(in.uv.x), fwidth(in.uv.y));
+    return shade(in, front, texel, pattern_w);
+}
+
+fn shade(in: VertexOut, front: bool, texel: vec4<f32>, pattern_w: f32) -> vec4<f32> {
+    let kind = in.material.x;
     var albedo = in.color * texel.rgb;
     if (in.uv.x >= 1000.0) {
         albedo = surface_pattern(albedo, in.uv, pattern_w);
@@ -654,15 +700,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     var n = normalize(in.normal);
     // Blattkarten tragen weiche Kugel-Normalen aus Blender – die gelten für beide Seiten.
     let leaves = kind == MAT_FOLIAGE && in.material.z > 0.5;
-    // Blattkarten, die man fast von der Kante sieht, würden als Striche auffallen:
-    // sie werden mit feinem Raster ausgedünnt, je flacher der Blick, desto stärker.
-    if (leaves) {
-        let facing = abs(dot(face, normalize(g.camera_pos.xyz - in.world_pos)));
-        let noise = fract(sin(dot(floor(in.clip.xy), vec2<f32>(12.9898, 78.233))) * 43758.5453);
-        if (noise > smoothstep(0.05, 0.3, facing)) {
-            discard;
-        }
-    }
     // Beidseitige Flächen: von hinten gesehen zeigt die Normale zum Betrachter.
     if (!front && !leaves) {
         n = -n;
@@ -715,7 +752,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         color += sky_base(reflect(-view, n)) * fres * g.weather.y * 0.35;
     }
     // Warmes Licht von Feuer und Laternen – nicht entsättigt, es soll nachts leuchten.
-    color += albedo * point_lights(in.world_pos, n);
+    if (g.sky_misc.z > 0.5) {
+        color += albedo * point_lights(in.world_pos, n);
+    }
     // Selbstleuchtendes bleibt farbig – nachts stechen Pilze, Kristalle und Funken heraus.
     if (kind == MAT_EMISSIVE) {
         color += albedo * in.material.y;

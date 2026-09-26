@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::app::Context;
+use crate::scene::{Entity, EntityId};
 use crate::assets::MeshId;
 use crate::mesh::{SkinVertex, Vertex};
 
@@ -88,11 +89,28 @@ pub(crate) struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
+    /// Die Welt in geringerer Auflösung (Renderauflösung unter 100 %) und die Bindung, mit der
+    /// sie aufs Fenster hochskaliert wird. `None` = direkt ins Fenster.
+    scene_target: Option<(wgpu::TextureView, wgpu::BindGroup)>,
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_layout: wgpu::BindGroupLayout,
+    blit_sampler: wgpu::Sampler,
+    /// Gewünschte Renderauflösung in Prozent, 0 = automatisch
+    scale_setting: u8,
+    /// Aktuelle Renderauflösung (Anteil je Achse)
+    scale: f32,
+    gpu_timer: Option<GpuTimer>,
+    /// Für die Automatik: Rechenzeit der Grafikkarte (Summe, Anzahl) seit der letzten Anpassung
+    scale_samples: (f32, u32),
+    last_frame: Option<std::time::Instant>,
     pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     double_sided_pipeline: wgpu::RenderPipeline,
     shadow_cutout_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// Ausgeschnittene Flächen (Blätter, Gräser): dürfen Pixel verwerfen
+    cutout_pipeline: wgpu::RenderPipeline,
+    double_sided_cutout_pipeline: wgpu::RenderPipeline,
     /// Verformte Figuren: Bild und Schatten, dazu die Knochenmatrizen aller Figuren des Bildes
     skinned_pipeline: wgpu::RenderPipeline,
     skinned_shadow_pipeline: wgpu::RenderPipeline,
@@ -136,8 +154,10 @@ impl Renderer {
         let adapter_name = format!("{} ({:?})", info.name, info.backend);
         log::info!("Grafikkarte: {adapter_name}");
 
+        // Zeitmessung auf der Grafikkarte (für die automatische Renderauflösung), wenn vorhanden
+        let required_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor { label: Some("engine"), ..Default::default() })
+            .request_device(&wgpu::DeviceDescriptor { label: Some("engine"), required_features, ..Default::default() })
             .await
             .expect("Grafikkarte konnte nicht initialisiert werden");
 
@@ -317,7 +337,8 @@ impl Renderer {
             immediate_size: 0,
         });
         // Normal nur Vorderseiten; beidseitige Meshes (Blätter) ohne Rückseiten-Culling.
-        let main_pipeline = |cull_mode: Option<wgpu::Face>| {
+        // `cutout`: darf Pixel verwerfen (Blätter) – sonst bleibt der frühe Tiefentest an.
+        let main_pipeline = |cull_mode: Option<wgpu::Face>, cutout: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("basic"),
                 layout: Some(&pipeline_layout),
@@ -338,7 +359,7 @@ impl Renderer {
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some(if cutout { "fs_main" } else { "fs_opaque" }),
                     compilation_options: Default::default(),
                     targets: &[Some(config.format.into())],
                 }),
@@ -346,8 +367,10 @@ impl Renderer {
                 cache: None,
             })
         };
-        let pipeline = main_pipeline(Some(wgpu::Face::Back));
-        let double_sided_pipeline = main_pipeline(None);
+        let pipeline = main_pipeline(Some(wgpu::Face::Back), false);
+        let double_sided_pipeline = main_pipeline(None, false);
+        let cutout_pipeline = main_pipeline(Some(wgpu::Face::Back), true);
+        let double_sided_cutout_pipeline = main_pipeline(None, true);
 
         // Schatten ausgeschnittener Flächen: Textur lesen und durchsichtige Pixel weglassen.
         let shadow_cutout_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -462,11 +485,12 @@ impl Renderer {
                 buffers: &[],
             },
             primitive: Default::default(),
-            // Der Himmel liegt hinter allem: nie verdecken, nie in den Tiefenpuffer schreiben.
+            // Der Himmel liegt hinter allem (Tiefe 1): er wird zuletzt gezeichnet und nur dort,
+            // wo der Tiefenpuffer noch leer ist; nie in den Tiefenpuffer schreiben.
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -481,6 +505,61 @@ impl Renderer {
             cache: None,
         });
 
+        // Hochskalieren der Welt aufs Fenster
+        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blit"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+        });
+        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("blit"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blit"),
+            bind_group_layouts: &[Some(&blit_layout)],
+            immediate_size: 0,
+        });
+        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit"),
+            layout: Some(&blit_pipeline_layout),
+            vertex: wgpu::VertexState { module: &blit_shader, entry_point: Some("vs_blit"), compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &blit_shader,
+                entry_point: Some("fs_blit"),
+                compilation_options: Default::default(),
+                targets: &[Some(config.format.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("blit"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let gpu_timer = device.features().contains(wgpu::Features::TIMESTAMP_QUERY).then(|| GpuTimer::new(&device, &queue));
+
         let ui = egui_wgpu::Renderer::new(&device, config.format, egui_wgpu::RendererOptions::default());
 
         let instance_capacity = 256;
@@ -493,11 +572,22 @@ impl Renderer {
             queue,
             config,
             depth,
+            scene_target: None,
+            blit_pipeline,
+            blit_layout,
+            blit_sampler,
+            scale_setting: 0,
+            scale: 1.0,
+            gpu_timer,
+            scale_samples: (0.0, 0),
+            last_frame: None,
             pipeline,
             sky_pipeline,
             double_sided_pipeline,
             shadow_cutout_pipeline,
             shadow_pipeline,
+            cutout_pipeline,
+            double_sided_cutout_pipeline,
             skinned_pipeline,
             skinned_shadow_pipeline,
             palette_layout,
@@ -533,7 +623,106 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        self.rebuild_targets();
+    }
+
+    /// Renderauflösung in Prozent (50–100) oder 0 = automatisch: die Grafikkarte soll dann
+    /// etwa 75 Bilder pro Sekunde schaffen, die Auflösung sinkt dafür bis auf die Hälfte.
+    pub fn set_render_scale(&mut self, percent: u8) {
+        if percent == self.scale_setting {
+            return;
+        }
+        self.scale_setting = percent;
+        self.scale = if percent == 0 { 1.0 } else { (percent as f32 / 100.0).clamp(0.5, 1.0) };
+        self.scale_samples = (0.0, 0);
+        self.rebuild_targets();
+    }
+
+    /// Aktuelle Renderauflösung (Anteil je Achse, 1 = volle Auflösung).
+    pub fn render_scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Tiefenpuffer und (bei verkleinerter Auflösung) die Farbfläche für die Welt neu anlegen.
+    fn rebuild_targets(&mut self) {
+        let (width, height) = self.scene_size();
         self.depth = Self::create_depth(&self.device, width, height);
+        self.scene_target = (self.scale < 0.999).then(|| {
+            let view = self
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("welt"),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("blit"),
+                layout: &self.blit_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.blit_sampler) },
+                ],
+            });
+            (view, bind_group)
+        });
+    }
+
+    /// Größe, in der die Welt gezeichnet wird.
+    fn scene_size(&self) -> (u32, u32) {
+        let scaled = |v: u32| ((v as f32 * self.scale).round() as u32).max(1);
+        (scaled(self.config.width), scaled(self.config.height))
+    }
+
+    /// Automatik: je nach Rechenzeit der Grafikkarte die Auflösung senken oder wieder anheben.
+    /// Ohne Zeitmessung auf der Grafikkarte dient die Bildrate als Maß.
+    fn adapt_scale(&mut self) {
+        let now = std::time::Instant::now();
+        let frame_ms = self.last_frame.replace(now).map(|t| (now - t).as_secs_f32() * 1000.0);
+        if self.scale_setting != 0 {
+            return;
+        }
+        let sample = match &self.gpu_timer {
+            Some(timer) => timer.last_ms,
+            None => frame_ms,
+        };
+        let Some(ms) = sample else { return };
+        self.scale_samples.0 += ms;
+        self.scale_samples.1 += 1;
+        if self.scale_samples.1 < 20 {
+            return;
+        }
+        let average = self.scale_samples.0 / self.scale_samples.1 as f32;
+        self.scale_samples = (0.0, 0);
+        const TARGET_MS: f32 = 13.0;
+        let wanted = if average > TARGET_MS * 1.15 {
+            // Pixelzahl wächst mit dem Quadrat der Auflösung
+            self.scale * (TARGET_MS / average).sqrt()
+        } else if average < TARGET_MS * 0.7 {
+            self.scale + 0.05
+        } else {
+            return;
+        };
+        let wanted = ((wanted * 20.0).round() / 20.0).clamp(0.5, 1.0);
+        if (wanted - self.scale).abs() > 0.01 {
+            self.scale = wanted;
+            self.rebuild_targets();
+        }
+    }
+
+    /// Rechenzeit der Grafikkarte für die Welt im letzten gemessenen Bild (ms), wenn messbar.
+    pub fn gpu_ms(&self) -> Option<f32> {
+        self.gpu_timer.as_ref().and_then(|t| t.last_ms)
+    }
+
+    /// Davon der Schattendurchgang (ms).
+    pub fn gpu_shadow_ms(&self) -> Option<f32> {
+        self.gpu_timer.as_ref().and_then(|t| t.shadow_ms)
     }
 
     /// Zeichnet einen Frame ins Fenster.
@@ -638,6 +827,10 @@ impl Renderer {
 
     fn draw(&mut self, ctx: &Context, target: &wgpu::TextureView, ui: Option<&UiFrame>) {
         self.sync_assets(&ctx.assets);
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.collect(&self.device);
+        }
+        self.adapt_scale();
 
         let env = &ctx.env;
         let aspect = self.config.width as f32 / self.config.height as f32;
@@ -681,60 +874,59 @@ impl Renderer {
         // und zwar in der Detailstufe, die zur Entfernung passt.
         let camera_planes = frustum_planes(view_proj);
         let shadow_planes = frustum_planes(light_view_proj);
-        let slots = ctx.assets.mesh_slots();
-        let mut main_list: Vec<(MeshId, Instance)> = Vec::new();
-        let mut shadow_list: Vec<(MeshId, Instance)> = Vec::new();
-        // Verformte Figuren gehen in eigene Listen; ihre Knochenmatrizen in `palette`
+        // Über 100.000 Objekte: die Prüfung läuft auf allen Prozessorkernen, jeder Kern nimmt
+        // sich einen Abschnitt der Szene vor.
+        let skinnable: Vec<bool> = self.meshes.iter().map(|m| m.skin.is_some()).collect();
+        let view = CullView { ctx, camera_planes: &camera_planes, shadow_planes: &shadow_planes, skinnable: &skinnable };
+        let entities = ctx.scene.slots();
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        let chunk = entities.len().div_ceil(threads).max(4096);
+        let parts: Vec<Culled> = if entities.len() <= chunk {
+            vec![view.cull(entities, 0)]
+        } else {
+            std::thread::scope(|s| {
+                let view = &view;
+                let handles: Vec<_> = entities.chunks(chunk).enumerate().map(|(k, part)| s.spawn(move || view.cull(part, k * chunk))).collect();
+                handles.into_iter().map(|h| h.join().expect("Sichtprüfung")).collect()
+            })
+        };
+        let mut main_list: Vec<(MeshId, Instance)> = Vec::with_capacity(parts.iter().map(|p| p.main.len()).sum());
+        let mut shadow_list: Vec<(MeshId, Instance)> = Vec::with_capacity(parts.iter().map(|p| p.shadow.len()).sum());
         let mut skinned_main: Vec<(MeshId, Instance)> = Vec::new();
         let mut skinned_shadow: Vec<(MeshId, Instance)> = Vec::new();
         let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
-        for (id, entity) in ctx.scene.iter_entities() {
-            if !entity.visible {
-                continue;
+        for mut part in parts {
+            main_list.append(&mut part.main);
+            shadow_list.append(&mut part.shadow);
+            // Die Knochen jedes Abschnitts beginnen hinter denen der vorigen
+            let base = palette.len() as f32;
+            for (_, instance) in part.skinned_main.iter_mut().chain(part.skinned_shadow.iter_mut()) {
+                instance.material[3] += base;
             }
-            let (center, radius) = slots[entity.mesh.0 as usize].bounds;
-            // Objekte ohne Eltern (fast alles: Bäume, Gras, Felsen) werden erst geprüft und nur
-            // bei Bedarf in eine Matrix gerechnet – bei über 100.000 Objekten spart das viel Zeit.
-            let (world_center, scale, model) = match entity.parent {
-                None => {
-                    let t = &entity.transform;
-                    (t.position + t.rotation * (center * t.scale), t.scale.abs().max_element(), None)
-                }
-                Some(_) => {
-                    let model = ctx.scene.world_matrix(id);
-                    let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
-                    (model.transform_point3(center), scale, Some(model))
-                }
-            };
-            // Etwas Luft für Wind und Wellen, die der Shader noch verschiebt.
-            let world_radius = radius * scale + 1.0;
-            let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
-            let seen = sphere_visible(&camera_planes, world_center, world_radius);
-            let casts_shadow = sphere_visible(&shadow_planes, world_center, world_radius);
-            if !seen && !casts_shadow {
-                continue;
-            }
-            let model = model.unwrap_or_else(|| entity.transform.matrix());
-            let gpu_skin = !entity.joints.is_empty() && self.meshes.get(mesh.0 as usize).is_some_and(|m| m.skin.is_some());
-            let mut params = entity.material.shader_params();
-            if gpu_skin {
-                params[3] = palette.len() as f32;
-                palette.extend(entity.joints.iter().map(|m| m.to_cols_array_2d()));
-            }
-            let item = (mesh, instance(model, entity.color, params));
-            let (main, shadow) = if gpu_skin { (&mut skinned_main, &mut skinned_shadow) } else { (&mut main_list, &mut shadow_list) };
-            if seen {
-                main.push(item);
-            }
-            if casts_shadow {
-                shadow.push(item);
-            }
+            skinned_main.append(&mut part.skinned_main);
+            skinned_shadow.append(&mut part.skinned_shadow);
+            palette.append(&mut part.palette);
         }
 
         // Nach Mesh sortiert: jedes Mesh mit einem einzigen Draw-Call (Instancing).
         let mut instances: Vec<Instance> = Vec::with_capacity(main_list.len() + shadow_list.len());
         let mut shadow_batches = batch(&mut shadow_list, &mut instances);
-        let mut batches = batch(&mut main_list, &mut instances);
+        let batches = batch(&mut main_list, &mut instances);
+        // Von vorn nach hinten, feste Flächen vor ausgeschnittenen (Blätter): Verdecktes
+        // scheitert dann schon am frühen Tiefentest und kostet keine Beleuchtung.
+        let eye = ctx.camera.position;
+        let mut keyed: Vec<((bool, f32), (usize, std::ops::Range<u32>))> = batches
+            .into_iter()
+            .map(|(mesh, range)| {
+                let nearest = instances[range.start as usize..range.end as usize]
+                    .iter()
+                    .map(|i| Vec3::new(i.model[3][0], i.model[3][1], i.model[3][2]).distance_squared(eye))
+                    .fold(f32::MAX, f32::min);
+                ((self.meshes[mesh].alpha_cutout, nearest), (mesh, range))
+            })
+            .collect();
+        keyed.sort_by(|a, b| a.0 .0.cmp(&b.0 .0).then(a.0 .1.total_cmp(&b.0 .1)));
+        let mut batches: Vec<(usize, std::ops::Range<u32>)> = keyed.into_iter().map(|(_, b)| b).collect();
         let skinned_shadow_batches = batch(&mut skinned_shadow, &mut instances);
         let skinned_batches = batch(&mut skinned_main, &mut instances);
         let drawn = main_list.len() + skinned_main.len();
@@ -767,6 +959,8 @@ impl Renderer {
 
         let sky = env.sky_color;
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        let timing = self.gpu_timer.as_mut().and_then(|t| t.begin());
+        let scene_view = self.scene_target.as_ref().map_or(target, |(view, _)| view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow"),
@@ -776,7 +970,11 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timing.as_ref().map(|query_set| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -790,7 +988,7 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: scene_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -803,18 +1001,44 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timing.as_ref().map(|query_set| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(2),
+                }),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
-            pass.set_bind_group(1, &self.white_texture, &[]);
-            pass.set_pipeline(&self.sky_pipeline);
-            pass.draw(0..3, 0..1);
-            pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             self.draw_batches(&mut pass, &batches, false);
             self.draw_skinned(&mut pass, &skinned_batches, false);
+            // Himmel zuletzt: er wird nur dort berechnet, wo noch nichts gezeichnet ist.
+            pass.set_bind_group(1, &self.white_texture, &[]);
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.draw(0..3, 0..1);
+        }
+        // Verkleinert gezeichnete Welt aufs Fenster hochskalieren
+        if let Some((_, bind_group)) = &self.scene_target {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blit"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.blit_pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.resolve(&mut encoder);
         }
         self.stats = RenderStats {
             instances: drawn,
@@ -852,6 +1076,9 @@ impl Renderer {
             }
         } else {
             self.queue.submit([encoder.finish()]);
+        }
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.request_readback();
         }
     }
 
@@ -891,8 +1118,10 @@ impl Renderer {
             let (pipeline, textured) = match (shadow, mesh.alpha_cutout, mesh.double_sided) {
                 (true, true, _) => (&self.shadow_cutout_pipeline, true),
                 (true, false, _) => (&self.shadow_pipeline, false),
-                (false, _, true) => (&self.double_sided_pipeline, true),
-                (false, _, false) => (&self.pipeline, true),
+                (false, true, true) => (&self.double_sided_cutout_pipeline, true),
+                (false, true, false) => (&self.cutout_pipeline, true),
+                (false, false, true) => (&self.double_sided_pipeline, true),
+                (false, false, false) => (&self.pipeline, true),
             };
             if current != Some(pipeline as *const _) {
                 pass.set_pipeline(pipeline);
@@ -1113,8 +1342,82 @@ fn sphere_visible(planes: &[glam::Vec4; 6], center: glam::Vec3, radius: f32) -> 
 }
 
 /// Sortiert nach Mesh, hängt die Instanzen an und liefert die Stapel (Mesh, Instanzbereich).
+/// Was ein Abschnitt der Szene zum Bild beiträgt (siehe `CullView::cull`).
+#[derive(Default)]
+struct Culled {
+    main: Vec<(MeshId, Instance)>,
+    shadow: Vec<(MeshId, Instance)>,
+    /// Verformte Figuren; ihre Knochenmatrizen in `palette` (Beginn in `material[3]`)
+    skinned_main: Vec<(MeshId, Instance)>,
+    skinned_shadow: Vec<(MeshId, Instance)>,
+    palette: Vec<[[f32; 4]; 4]>,
+}
+
+/// Alles, was die Sichtprüfung eines Bildes braucht (wird von mehreren Kernen gleichzeitig gelesen).
+struct CullView<'a> {
+    ctx: &'a Context,
+    camera_planes: &'a [glam::Vec4; 6],
+    shadow_planes: &'a [glam::Vec4; 6],
+    /// Je Mesh: hat es Knochendaten auf der Grafikkarte?
+    skinnable: &'a [bool],
+}
+
+impl CullView<'_> {
+    /// Prüft einen Abschnitt der Szene (`first` = Nummer des ersten Objekts): nur was im
+    /// Blickfeld liegt (bzw. für den Schatten im Bereich der Sonne), in passender Detailstufe.
+    fn cull(&self, entities: &[Option<Entity>], first: usize) -> Culled {
+        let ctx = self.ctx;
+        let slots = ctx.assets.mesh_slots();
+        let mut out = Culled::default();
+        for (i, entity) in entities.iter().enumerate() {
+            let Some(entity) = entity else { continue };
+            if !entity.visible {
+                continue;
+            }
+            let (center, radius) = slots[entity.mesh.0 as usize].bounds;
+            // Objekte ohne Eltern (fast alles: Bäume, Gras, Felsen) werden erst geprüft und nur
+            // bei Bedarf in eine Matrix gerechnet.
+            let (world_center, scale, model) = match entity.parent {
+                None => {
+                    let t = &entity.transform;
+                    (t.position + t.rotation * (center * t.scale), t.scale.abs().max_element(), None)
+                }
+                Some(_) => {
+                    let model = ctx.scene.world_matrix(EntityId(first + i));
+                    let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
+                    (model.transform_point3(center), scale, Some(model))
+                }
+            };
+            // Etwas Luft für Wind und Wellen, die der Shader noch verschiebt.
+            let world_radius = radius * scale + 1.0;
+            let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
+            let seen = sphere_visible(self.camera_planes, world_center, world_radius);
+            let casts_shadow = sphere_visible(self.shadow_planes, world_center, world_radius);
+            if !seen && !casts_shadow {
+                continue;
+            }
+            let model = model.unwrap_or_else(|| entity.transform.matrix());
+            let gpu_skin = !entity.joints.is_empty() && self.skinnable.get(mesh.0 as usize).copied().unwrap_or(false);
+            let mut params = entity.material.shader_params();
+            if gpu_skin {
+                params[3] = out.palette.len() as f32;
+                out.palette.extend(entity.joints.iter().map(|m| m.to_cols_array_2d()));
+            }
+            let item = (mesh, instance(model, entity.color, params));
+            let (main, shadow) = if gpu_skin { (&mut out.skinned_main, &mut out.skinned_shadow) } else { (&mut out.main, &mut out.shadow) };
+            if seen {
+                main.push(item);
+            }
+            if casts_shadow {
+                shadow.push(item);
+            }
+        }
+        out
+    }
+}
+
 fn batch(list: &mut [(MeshId, Instance)], instances: &mut Vec<Instance>) -> Vec<(usize, std::ops::Range<u32>)> {
-    list.sort_by_key(|(mesh, _)| *mesh);
+    list.sort_unstable_by_key(|(mesh, _)| *mesh);
     let mut batches: Vec<(usize, std::ops::Range<u32>)> = Vec::new();
     for (mesh, instance) in list.iter() {
         let index = instances.len() as u32;
@@ -1125,6 +1428,96 @@ fn batch(list: &mut [(MeshId, Instance)], instances: &mut Vec<Instance>) -> Vec<
         }
     }
     batches
+}
+
+/// Misst, wie lange die Grafikkarte für Schatten und Welt eines Bildes braucht (Zeitstempel am
+/// Anfang des Schatten- und am Ende des Hauptdurchgangs). Das Ergebnis kommt ein paar Bilder
+/// später an; mehrere Auslesepuffer, damit nie auf die Grafikkarte gewartet wird.
+struct GpuTimer {
+    query_set: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    slots: Vec<(wgpu::Buffer, Arc<std::sync::atomic::AtomicU8>)>,
+    /// Platz, in den dieses Bild gemessen wird (None = alle belegt, dieses Bild nicht messen)
+    current: Option<usize>,
+    period_ns: f32,
+    last_ms: Option<f32>,
+    /// Davon der Schattendurchgang
+    shadow_ms: Option<f32>,
+}
+
+const SLOT_FREE: u8 = 0;
+const SLOT_PENDING: u8 = 1;
+const SLOT_READY: u8 = 2;
+
+impl GpuTimer {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuTimer {
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("zeit"), ty: wgpu::QueryType::Timestamp, count: 3 });
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("zeit"),
+            size: 24,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let slots = (0..4)
+            .map(|_| {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("zeit lesen"),
+                    size: 24,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                (buffer, Arc::new(std::sync::atomic::AtomicU8::new(SLOT_FREE)))
+            })
+            .collect();
+        GpuTimer { query_set, resolve, slots, current: None, period_ns: queue.get_timestamp_period(), last_ms: None, shadow_ms: None }
+    }
+
+    /// Fertige Messungen abholen.
+    fn collect(&mut self, device: &wgpu::Device) {
+        use std::sync::atomic::Ordering;
+        let _ = device.poll(wgpu::PollType::Poll);
+        for (buffer, state) in &self.slots {
+            if state.load(Ordering::Acquire) != SLOT_READY {
+                continue;
+            }
+            if let Ok(data) = buffer.slice(..).get_mapped_range() {
+                let stamps: &[u64] = bytemuck::cast_slice(&data);
+                let ms = |a: u64, b: u64| (b.saturating_sub(a) as f64 * self.period_ns as f64 / 1_000_000.0) as f32;
+                let total = ms(stamps[0], stamps[2]);
+                // Unsinnige Werte (Zähler übergelaufen, Treiber-Eigenheiten) verwerfen
+                if stamps[2] > stamps[0] && total < 1000.0 {
+                    self.last_ms = Some(total);
+                    self.shadow_ms = Some(ms(stamps[0], stamps[1]));
+                }
+            }
+            buffer.unmap();
+            state.store(SLOT_FREE, Ordering::Release);
+        }
+    }
+
+    /// Einen freien Auslesepuffer für dieses Bild wählen; gibt die Messpunkte zurück.
+    fn begin(&mut self) -> Option<wgpu::QuerySet> {
+        use std::sync::atomic::Ordering;
+        self.current = self.slots.iter().position(|(_, state)| state.load(Ordering::Acquire) == SLOT_FREE);
+        self.current.map(|_| self.query_set.clone())
+    }
+
+    fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(slot) = self.current else { return };
+        encoder.resolve_query_set(&self.query_set, 0..3, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.slots[slot].0, 0, 24);
+    }
+
+    fn request_readback(&mut self) {
+        use std::sync::atomic::Ordering;
+        let Some(slot) = self.current.take() else { return };
+        let (buffer, state) = &self.slots[slot];
+        state.store(SLOT_PENDING, Ordering::Release);
+        let state = state.clone();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            state.store(if result.is_ok() { SLOT_READY } else { SLOT_FREE }, Ordering::Release);
+        });
+    }
 }
 
 #[cfg(test)]

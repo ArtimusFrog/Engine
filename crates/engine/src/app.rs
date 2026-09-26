@@ -144,11 +144,14 @@ impl Default for SkyBodies {
 pub struct Display {
     pub fullscreen: bool,
     pub vsync: bool,
+    /// Auflösung, in der die Welt gezeichnet wird, in Prozent (50–100); 0 = automatisch
+    /// (sinkt, wenn die Grafikkarte nicht hinterherkommt). Die Oberfläche bleibt immer scharf.
+    pub render_scale: u8,
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Display { fullscreen: false, vsync: true }
+        Display { fullscreen: false, vsync: true, render_scale: 0 }
     }
 }
 
@@ -176,6 +179,12 @@ pub struct FrameStats {
     pub ui_ms: f32,
     pub render_ms: f32,
     pub gpu_wait_ms: f32,
+    /// Rechenzeit der Grafikkarte für Schatten und Welt (ms, 0 = nicht messbar)
+    pub gpu_ms: f32,
+    /// Davon der Schattendurchgang
+    pub gpu_shadow_ms: f32,
+    /// Aktuelle Renderauflösung (Anteil je Achse)
+    pub render_scale: f32,
 }
 
 /// Alles, worauf das Spiel zugreifen kann.
@@ -459,8 +468,9 @@ impl App {
 
         // Wünsche des Spiels ans Fenster übernehmen
         // Automatische Screenshots immer im Fenster (gleiche Größe auf jedem Rechner).
+        // Screenshots im Fenster – außer mit `--vollbild` (Leistung messen wie beim Spielen)
         if self.auto_screenshot.is_some() {
-            self.ctx.display.fullscreen = false;
+            self.ctx.display.fullscreen = std::env::args().any(|a| a == "--vollbild");
         }
         if self.ctx.cursor_locked != self.applied_cursor_locked {
             self.applied_cursor_locked = self.ctx.cursor_locked;
@@ -473,6 +483,7 @@ impl App {
             if self.ctx.display.vsync != self.applied_display.vsync {
                 renderer.set_vsync(self.ctx.display.vsync);
             }
+            renderer.set_render_scale(self.ctx.display.render_scale);
             self.applied_display = self.ctx.display;
         }
 
@@ -502,7 +513,7 @@ impl App {
             if self.ctx.time.frame + 1 >= shot.after_frames {
                 match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &shot.path) {
                     Ok(()) => println!(
-                        "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls; ms: Takt {:.1}, Update {:.1}, UI {:.1}, Zeichnen {:.1}, Warten {:.1})",
+                        "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls; ms: Takt {:.1}, Update {:.1}, UI {:.1}, Zeichnen {:.1}, Warten {:.1}, GPU {:.1} (Schatten {:.1}); Auflösung {:.0} %)",
                         shot.path.display(),
                         self.ctx.stats.fps,
                         self.ctx.stats.render.instances,
@@ -511,7 +522,10 @@ impl App {
                         self.ctx.stats.update_ms,
                         self.ctx.stats.ui_ms,
                         self.ctx.stats.render_ms,
-                        self.ctx.stats.gpu_wait_ms
+                        self.ctx.stats.gpu_wait_ms,
+                        self.ctx.stats.gpu_ms,
+                        self.ctx.stats.gpu_shadow_ms,
+                        self.ctx.stats.render_scale * 100.0
                     ),
                     Err(e) => eprintln!("Screenshot fehlgeschlagen: {e}"),
                 }
@@ -536,6 +550,9 @@ impl App {
             self.fps_frames = 0;
         }
         self.ctx.stats.render = renderer.stats();
+        self.ctx.stats.gpu_ms = renderer.gpu_ms().unwrap_or(0.0);
+        self.ctx.stats.gpu_shadow_ms = renderer.gpu_shadow_ms().unwrap_or(0.0);
+        self.ctx.stats.render_scale = renderer.render_scale();
         // Texturänderungen sind jetzt auf der Grafikkarte angekommen.
         ui_frame.textures_delta.clear();
 

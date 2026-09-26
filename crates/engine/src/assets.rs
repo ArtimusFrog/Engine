@@ -164,7 +164,8 @@ pub struct Assets {
     named: HashMap<String, MeshId>,
     named_textures: HashMap<String, TextureId>,
     /// Detailstufen je Mesh, nach Entfernung sortiert.
-    lods: HashMap<MeshId, Vec<Lod>>,
+    /// Detailstufen je Mesh (Index = Mesh-Nummer, leer = keine)
+    lods: Vec<Vec<Lod>>,
     cube: MeshId,
     plane: MeshId,
     sphere: MeshId,
@@ -177,7 +178,7 @@ impl Assets {
             textures: Vec::new(),
             named: HashMap::new(),
             named_textures: HashMap::new(),
-            lods: HashMap::new(),
+            lods: Vec::new(),
             cube: MeshId(0),
             plane: MeshId(0),
             sphere: MeshId(0),
@@ -253,17 +254,21 @@ impl Assets {
     /// wird (`None` = gar nicht mehr). Gilt für alle Objekte mit diesem Mesh.
     pub fn set_lods(&mut self, mesh: MeshId, mut levels: Vec<Lod>) {
         levels.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        self.lods.insert(mesh, levels);
+        let slot = mesh.0 as usize;
+        if self.lods.len() <= slot {
+            self.lods.resize_with(slot + 1, Vec::new);
+        }
+        self.lods[slot] = levels;
     }
 
     /// Hat dieses Mesh schon Detailstufen?
     pub fn has_lods(&self, mesh: MeshId) -> bool {
-        self.lods.contains_key(&mesh)
+        self.lods.get(mesh.0 as usize).is_some_and(|l| !l.is_empty())
     }
 
     /// Das Mesh, das in `distance` Metern Entfernung gezeichnet wird.
     pub fn mesh_at_distance(&self, mesh: MeshId, distance: f32) -> Option<MeshId> {
-        match self.lods.get(&mesh).and_then(|levels| levels.iter().rev().find(|l| distance >= l.distance)) {
+        match self.lods.get(mesh.0 as usize).and_then(|levels| levels.iter().rev().find(|l| distance >= l.distance)) {
             Some(level) => level.mesh,
             None => Some(mesh),
         }

@@ -120,7 +120,7 @@ impl Entity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EntityId(usize);
+pub struct EntityId(pub(crate) usize);
 
 impl EntityId {
     pub(crate) fn index(self) -> usize {
@@ -201,6 +201,11 @@ impl Scene {
     }
 
     /// Alle Objekte mit ihrer ID (ohne Weltmatrix – die ist nur bei Bedarf zu berechnen).
+    /// Alle Plätze (auch freie) – Index = `EntityId`. Für Schleifen, die sich aufteilen lassen.
+    pub(crate) fn slots(&self) -> &[Option<Entity>] {
+        &self.entities
+    }
+
     pub fn iter_entities(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
         self.entities.iter().enumerate().filter_map(|(i, e)| e.as_ref().map(|e| (EntityId(i), e)))
     }
