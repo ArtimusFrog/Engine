@@ -714,11 +714,13 @@ impl Renderer {
         self.scale_samples = (0.0, 0);
         // Ziel: ~14 ms für die Grafikkarte (Luft für 60 Bilder/s samt CPU). Die Pixelzahl wächst
         // mit dem Quadrat der Auflösung; hochgeregelt wird nur, wenn die nächste Stufe noch passt.
-        const TARGET_MS: f32 = 14.0;
+        // Ohne Zeitmessung auf der Grafikkarte zählt die ganze Bildzeit (mit VSync nie unter
+        // 16,7 ms): dann erst unter ~55 Bildern pro Sekunde eingreifen.
+        let target_ms: f32 = if self.gpu_timer.is_some() { 14.0 } else { 18.2 };
         let up = self.scale + 0.05;
-        let wanted = if average > TARGET_MS * 1.12 {
-            self.scale * (TARGET_MS / average).sqrt()
-        } else if self.scale < 1.0 && average * (up / self.scale).powi(2) < TARGET_MS {
+        let wanted = if average > target_ms * 1.12 {
+            self.scale * (target_ms / average).sqrt()
+        } else if self.scale < 1.0 && average * (up / self.scale).powi(2) < target_ms {
             up
         } else {
             return;
