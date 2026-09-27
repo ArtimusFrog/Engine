@@ -310,6 +310,52 @@ STAB_X, STAB_Y = -0.37, -0.075
 AUGE = Vector((0.038, -0.094, 1.752))
 
 
+def _achsen(a, b):
+    achse = (b - a).normalized()
+    q = achse.cross(Y if abs(achse.y) < 0.9 else X).normalized()
+    return q, achse.cross(q).normalized()
+
+
+def _schlauch(f, name, punkte, radien, seg, farbe_von, gewicht, zu=True, teilung=2, form=None):
+    """Glatter Schlauch entlang einer Punktfolge (Gliedmaßen, Stiefel, Ärmel)."""
+    ringe = []
+    for i, (p, r) in enumerate(zip(punkte, radien)):
+        a = punkte[max(i - 1, 0)]
+        b = punkte[min(i + 1, len(punkte) - 1)]
+        q1, q2 = _achsen(a, b)
+        rx, ry = r if isinstance(r, tuple) else (r, r)
+        ring = (p, q1, q2, rx, ry)
+        ringe.append(ring + ((form,) if form else ()))
+    return f.loft(name, ringe, seg, farbe_von, gewicht, oben_zu=zu, unten_zu=zu, teilung=teilung, glatt=True)
+
+
+def _schale(f, name, mitte, rx, ry, rz, theta, phi, farbe_von, gewicht, innen=False, seg=(40, 16), form=None):
+    """Stück einer Ellipsoid-Schale (Kragen, Umhang): Winkel `theta` (um Z, 0 = vorne) von–bis,
+    `phi` (Höhe, -90 unten … 90 oben) von–bis. `form(theta, phi)` → Faktor auf den Radius."""
+    bm = bmesh.new()
+    nt, np_ = seg
+    reihen = []
+    for j in range(np_ + 1):
+        ph = math.radians(phi[0] + (phi[1] - phi[0]) * j / np_)
+        reihe = []
+        for i in range(nt + 1):
+            th = math.radians(theta[0] + (theta[1] - theta[0]) * i / nt)
+            fak = form(th, ph) if form else 1.0
+            p = mitte + Vector((math.sin(th) * rx * math.cos(ph), -math.cos(th) * ry * math.cos(ph), rz * math.sin(ph))) * fak
+            reihe.append(bm.verts.new(p))
+        reihen.append(reihe)
+    for j in range(np_):
+        for i in range(nt):
+            a, b, c, d = reihen[j][i], reihen[j][i + 1], reihen[j + 1][i + 1], reihen[j + 1][i]
+            bm.faces.new((a, b, c, d) if not innen else (d, c, b, a))
+    obj = f._objekt(bm, name, farbe_von, gewicht, glatt=True)
+    for poly in obj.data.polygons:
+        nach_aussen = (poly.center - mitte).dot(poly.normal) > 0
+        if nach_aussen == innen:
+            poly.flip()
+    return obj
+
+
 def _glocke(f, name, ringe, theta, farbe_von, gewicht, innen=False, seg=40, welle=0.0):
     """Offene Glocke (Umhang): Ringe (Mitte, rx, ry) von oben nach unten, nur zwischen den Winkeln
     `theta` (0 = vorne) – vorne bleibt sie offen. `welle` legt unten weiche Falten."""
@@ -488,10 +534,20 @@ def magier(seed=12, name="Magier"):
         p = poly.center
         if p.z < 0.13:
             return kragen * 0.72                                              # Saum
+        if 0.13 <= p.z < 0.16:
+            return silber_dunkel                                              # silberne Saumlinie
         return kragen * (0.88 + 0.14 * max(0.0, poly.normal.z) + 0.03 * math.sin(p.z * 9))
     _glocke(f, "Mantel", mantel, (30, 330), mantel_farbe, _robe_gewichte, seg=64, welle=0.045)
     _glocke(f, "MantelFutter", [(m, rx * 0.985, ry * 0.985) for m, rx, ry in mantel], (30, 330), lambda poly: stola * 0.6, _robe_gewichte,
             innen=True, seg=48, welle=0.045)
+    # Gestickte Silberrune auf dem Rücken: Kreis mit Stern
+    ruecken = Vector((0, 0.17, 1.14))
+    ring_punkte = []
+    for k in range(25):
+        w = math.tau * k / 24
+        ring_punkte.append(ruecken + Vector((math.cos(w) * 0.105, 0.0, math.sin(w) * 0.105)))
+    f.straehne("Rueckenrune", ring_punkte, 0.006, 0.006, silber_dunkel * 1.15, _rumpf_gewichte, 5, 0.0, 0.5, teilung=1)
+    f.stern("Rueckenstern", ruecken, Y, 0.075, silber_dunkel * 1.15, _rumpf_gewichte, zacken=6)
     # Breiter, aufgestellter Kragen
     kragen_ringe = [(Vector((0, 0.02, 1.55)), 0.13, 0.11), (Vector((0, 0.03, 1.6)), 0.15, 0.13), (Vector((0, 0.045, 1.67)), 0.175, 0.15)]
     _glocke(f, "Mantelkragen", kragen_ringe, (45, 315), lambda poly: kragen * (1.05 if poly.normal.z > 0 else 0.85), _rumpf_gewichte, seg=40)
@@ -540,11 +596,6 @@ def magier(seed=12, name="Magier"):
     f.loft("Trank", flasche, 16, lambda i, k, p: farbe("#3FB6A8") * (1.25 if i > 3.5 else 1.0), _rumpf_gewichte, unten_zu=True, teilung=2)
     f.loft("Korken", [(Vector((-0.15, -0.08, 1.035)), X, Y, 0.014, 0.014), (Vector((-0.15, -0.08, 1.055)), X, Y, 0.012, 0.012)], 10,
            lambda i, k, p: farbe("#9C7A52"), _rumpf_gewichte, oben_zu=True, unten_zu=True)
-    buch = Quaternion(Y, math.radians(-8))
-    f.kiste("Buchdeckel", (0.1, 0.13, 0.99), (0.13, 0.04, 0.17), farbe("#6E1E2A"), _rumpf_gewichte, buch)
-    f.kiste("Buchseiten", (0.1, 0.13, 0.99), (0.122, 0.044, 0.158), farbe("#EDE3C8"), _rumpf_gewichte, buch)
-    f.kiste("Buchecken", (0.1, 0.13, 0.99), (0.134, 0.036, 0.04), gold, _rumpf_gewichte, buch)
-    f.stern("Buchstern", Vector((0.1, 0.152, 0.99)), Y, 0.028, gold, _rumpf_gewichte)
 
     # ================= Ärmel =================
     for seite in (1, -1):

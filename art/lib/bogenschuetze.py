@@ -19,7 +19,7 @@ import math
 import bmesh
 from mathutils import Quaternion, Vector
 
-from figuren import HAENGT, HOCH, Figur, _axt, _clip, _gehen, _glocke, _mischen, _mit, _platte, _schleife, _spitzhacke, farbe, weich
+from figuren import HAENGT, HOCH, Figur, _achsen, _axt, _clip, _gehen, _glocke, _mischen, _mit, _platte, _schale, _schlauch, _schleife, _spitzhacke, farbe, weich
 from werkstatt import animation
 
 X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
@@ -81,52 +81,6 @@ def _arm(seite):
 def _bein(seite):
     sn = "L" if seite > 0 else "R"
     return lambda co: _mischen((f"Unterschenkel.{sn}", 1 - weich(0.45, 0.56, co.z)), (f"Oberschenkel.{sn}", weich(0.45, 0.56, co.z)))
-
-
-def _achsen(a, b):
-    achse = (b - a).normalized()
-    q = achse.cross(Y if abs(achse.y) < 0.9 else X).normalized()
-    return q, achse.cross(q).normalized()
-
-
-def _schlauch(f, name, punkte, radien, seg, farbe_von, gewicht, zu=True, teilung=2, form=None):
-    """Glatter Schlauch entlang einer Punktfolge (Gliedmaßen, Stiefel, Ärmel)."""
-    ringe = []
-    for i, (p, r) in enumerate(zip(punkte, radien)):
-        a = punkte[max(i - 1, 0)]
-        b = punkte[min(i + 1, len(punkte) - 1)]
-        q1, q2 = _achsen(a, b)
-        rx, ry = r if isinstance(r, tuple) else (r, r)
-        ring = (p, q1, q2, rx, ry)
-        ringe.append(ring + ((form,) if form else ()))
-    return f.loft(name, ringe, seg, farbe_von, gewicht, oben_zu=zu, unten_zu=zu, teilung=teilung, glatt=True)
-
-
-def _schale(f, name, mitte, rx, ry, rz, theta, phi, farbe_von, gewicht, innen=False, seg=(40, 16), form=None):
-    """Stück einer Ellipsoid-Schale (Kragen, Umhang): Winkel `theta` (um Z, 0 = vorne) von–bis,
-    `phi` (Höhe, -90 unten … 90 oben) von–bis. `form(theta, phi)` → Faktor auf den Radius."""
-    bm = bmesh.new()
-    nt, np_ = seg
-    reihen = []
-    for j in range(np_ + 1):
-        ph = math.radians(phi[0] + (phi[1] - phi[0]) * j / np_)
-        reihe = []
-        for i in range(nt + 1):
-            th = math.radians(theta[0] + (theta[1] - theta[0]) * i / nt)
-            fak = form(th, ph) if form else 1.0
-            p = mitte + Vector((math.sin(th) * rx * math.cos(ph), -math.cos(th) * ry * math.cos(ph), rz * math.sin(ph))) * fak
-            reihe.append(bm.verts.new(p))
-        reihen.append(reihe)
-    for j in range(np_):
-        for i in range(nt):
-            a, b, c, d = reihen[j][i], reihen[j][i + 1], reihen[j + 1][i + 1], reihen[j + 1][i]
-            bm.faces.new((a, b, c, d) if not innen else (d, c, b, a))
-    obj = f._objekt(bm, name, farbe_von, gewicht, glatt=True)
-    for poly in obj.data.polygons:
-        nach_aussen = (poly.center - mitte).dot(poly.normal) > 0
-        if nach_aussen == innen:
-            poly.flip()
-    return obj
 
 
 def _faust(griff, achse, seite, dicke):
@@ -203,7 +157,7 @@ def bogenschuetze(seed=31, name="Bogenschuetze"):
         h_, k_, a_ = _spiegel(HUEFTE, seite), _spiegel(KNIE, seite), _spiegel(KNOECHEL, seite)
         punkte = [h_ + Vector((0.01 * seite, 0.005, 0.02)), h_.lerp(k_, 0.35), h_.lerp(k_, 0.75), k_, k_.lerp(a_, 0.4), a_ + Vector((0, 0, 0.05))]
         radien = [0.085, 0.075, 0.058, 0.05, 0.047, 0.036]
-        _schlauch(f, "Bein", punkte, radien, 20, lambda i, k, p: navy * (0.9 if k % 10 == 0 else 1.0) * (1.08 if p.normal.x * seite > 0.6 else 1.0),
+        _schlauch(f, "Bein", punkte, radien, 20, lambda i, k, p: navy_hell if p.normal.x * seite > 0.85 else navy * (0.94 + 0.08 * max(0.0, -p.normal.y)),
                   _bein(seite), zu=False, teilung=3)
         # Hoher Stiefel: Schaft bis übers Knie, weißer Kniepanzer, Absatz, weiße Spitze
         schaft = [a_ + Vector((0, 0.005, -0.02)), a_ + Vector((0, 0.0, 0.1)), k_.lerp(a_, 0.45), k_ + Vector((0, 0, -0.02)), k_ + Vector((0, 0.0, 0.045))]
@@ -295,6 +249,30 @@ def bogenschuetze(seed=31, name="Bogenschuetze"):
         _platte(f, "Schulterplatte", mitte, 0.16 - 0.025 * j, 0.06 - 0.008 * j, 0.012, Vector((0, 1, -0.25)), Vector((-1, 0, 0.35)),
                 lambda i, k, p, j=j: (weiss if j % 2 == 0 else weiss_schatten) * (0.96 + 0.04 * (k % 2)), schulter_gewicht, spitz=0.6, wolbung=1.4)
     f.stern("Schulterstein", sr + Vector((-0.03, -0.05, 0.07)), Vector((-0.3, -1, 0.6)), 0.014, kristall, lambda co: _mischen(("Oberarm.R", 0.6), ("Brust", 0.4)), zacken=4)
+
+    # Silberne Armreifen am Oberarm, eingelegt mit einem Kristall
+    for seite in (1, -1):
+        s_, e_ = _spiegel(SCHULTER, seite), _spiegel(ELLBOGEN, seite)
+        q1, q2 = _achsen(s_, e_)
+        for t in (0.5, 0.56):
+            f.loft("Armreif", [(s_.lerp(e_, t), q1, q2, 0.046, 0.046), (s_.lerp(e_, t + 0.03), q1, q2, 0.046, 0.046)], 16,
+                   lambda i, k, p: silber if k % 4 else weiss_schatten, _arm(seite), oben_zu=True, unten_zu=True, glatt=True)
+        f.kugel("Armreifstein", s_.lerp(e_, 0.545) + Vector((0.044 * seite, -0.01, 0)), (0.006, 0.009, 0.009), kristall, _arm(seite), 8, 6)
+    koecher_unten, koecher_oben = Vector((-0.2, 0.06, 0.64)), Vector((-0.23, 0.02, 0.98))
+    q1, q2 = _achsen(koecher_unten, koecher_oben)
+    f.loft("Koecher", [(koecher_unten.lerp(koecher_oben, t), q1, q2, rad, rad * 0.8) for t, rad in ((0.0, 0.032), (0.1, 0.045), (0.85, 0.05), (1.0, 0.054))],
+           16, lambda i, k, p: weiss if i < 0.3 or i > 2.6 else (blau if k % 8 in (0, 1) else navy), _huefte_bein, unten_zu=True, teilung=2, glatt=True)
+    richtung = (koecher_oben - koecher_unten).normalized()
+    for n in range(5):
+        w = math.tau * n / 5
+        basis = koecher_oben + (q1 * math.cos(w) + q2 * math.sin(w)) * 0.025
+        spitze = basis + richtung * (0.1 + 0.02 * (n % 2))
+        f.loft("Pfeilschaft", [(basis - richtung * 0.05, q1, q2, 0.005, 0.005), (spitze, q1, q2, 0.005, 0.005)], 5, lambda i, k, p: silber,
+               _huefte_bein, oben_zu=True)
+        _platte(f, "Pfeilfeder", spitze - richtung * 0.03, 0.07, 0.014, 0.004, richtung, q1 * math.cos(w) + q2 * math.sin(w),
+                lambda i, k, p: kristall if n % 2 else blau_hell, _huefte_bein, spitz=0.6)
+    f.loft("Koechergurt", [(Vector((-0.12, -0.08, 1.0)), X, Y, 0.012, 0.006), (Vector((-0.2, -0.02, 0.9)), X, Y, 0.012, 0.006)], 6,
+           lambda i, k, p: leder, _huefte_bein, oben_zu=True, unten_zu=True)
 
     # Hände: links Faust um den Bogengriff, rechts um einen senkrechten Stiel; braune, fingerlose Handschuhe
     handschuh = leder
@@ -433,7 +411,10 @@ def bogenschuetze(seed=31, name="Bogenschuetze"):
         p = poly.center
         if p.z < 1.305:
             return weiss                                                           # weißer Saum
-        # zum Saum hin heller, oben satt blau
+        # vorne an der Öffnung eine weiße Zierkante, zum Saum hin heller, oben satt blau
+        winkel = abs(math.degrees(math.atan2(p.x, -(p.y - 0.01))))
+        if winkel < 36:
+            return weiss
         return blau.lerp(blau_hell, weich(1.42, 1.32, p.z) * 0.6) * (0.92 + 0.12 * max(0.0, poly.normal.z))
     # Glocke vom Kragen über die Schultern, vorne offen (dort sitzt die Mondsichel)
     glocke = [(Vector((0, 0.012, 1.535)), 0.085, 0.075), (Vector((0, 0.01, 1.5)), 0.15, 0.11), (Vector((0, 0.008, 1.46)), 0.2, 0.135),
