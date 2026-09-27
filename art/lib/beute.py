@@ -70,11 +70,14 @@ GEGENSTAENDE = {"beute_gold": _gold, "beute_runenfragment": _runenfragment, "beu
 
 def _waffe_liegend(art):
     """Eine Waffe aus waffen.py, auf den Boden gelegt (mit den Farben der Figuren)."""
+    import ruestung
     import waffen
     from figuren import Figur
     f = Figur(art, 5)
     ohne = lambda co: {}
-    if art in waffen.STAEBE:
+    if art in ruestung.ALLE:
+        ruestung.bauen(f, art)
+    elif art in waffen.STAEBE:
         waffen.stab(f, art, 0.0, 0.0, ohne)
     elif art in waffen.BOEGEN:
         waffen.bogen(f, art, Vector((0.0, 0.0, 0.0)), ohne)
@@ -105,7 +108,10 @@ def _waffe_liegend(art):
     obj.data.materials.append(mat)
     # Hinlegen: die Längsachse (Z) wird zur X-Achse, dann mittig auf den Boden
     mesh = obj.data
-    if art in waffen.BOEGEN:
+    if art in ruestung.ALLE:
+        # Rüstung steht aufrecht wie ausgestellt, etwas kleiner
+        mesh.transform(Matrix.Scale(0.85, 4))
+    elif art in waffen.BOEGEN:
         # Der Bogen liegt schon längs (Y) und krümmt sich in Z: flach auf die Seite legen
         mesh.transform(Matrix.Scale(0.8, 4) @ Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Rotation(math.radians(90), 4, "Y"))
     else:

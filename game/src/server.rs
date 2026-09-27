@@ -245,6 +245,8 @@ impl Authority {
         }
         for (id, avatar) in world.players.iter_mut() {
             avatar.waffe = world.inventories.get(id).map_or(0, |i| i.waffe);
+            avatar.ruestung = world.inventories.get(id).map_or([0; 3], |i| i.ruestung);
+            avatar.leben = avatar.leben.min(avatar.max_leben());
         }
         self.wildnis_takt(ctx, world);
         self.verteidigen(ctx, world);
@@ -350,7 +352,7 @@ impl Authority {
     /// `faehigkeiten.rs`, Kombo und arkane Ladungen zählt der Server je Spieler.
     fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
         use crate::faehigkeiten::*;
-        let waffe = world.inventories.get(&player).map_or(0, |i| i.waffe);
+        let (waffe, ruestung) = world.inventories.get(&player).map_or((0, [0; 3]), |i| (i.waffe, i.ruestung));
         let tick = ctx.time.tick;
         let Some(avatar) = world.players.get_mut(&player) else { return };
         let Tool::Faehigkeit(platz) = avatar.tool else { return };
@@ -374,7 +376,9 @@ impl Authority {
         if art == Faehigkeit::Arkangeschoss && stufe == 1 {
             avatar.ladung = 0;
         }
-        let (f_schaden, f_wirkung, f_abklingen) = crate::waffen::faktoren(waffe, avatar.class, art);
+        let (f_schaden, f_wirkung, f_abklingen, krit) = crate::waffen::faktoren(waffe, ruestung, avatar.class, art);
+        // Kritischer Treffer (Waffe und Rüstung): die ganze Fähigkeit trifft härter
+        let f_schaden = if self.rng.chance(krit) { f_schaden * crate::waffen::KRIT_FAKTOR } else { f_schaden };
         avatar.abklingen[fach] = tick + (art.abklingen(stufe) as f32 * f_abklingen).round() as u64;
         let center = ctx.physics.character_position(avatar.character);
         let facing = avatar.facing;
@@ -737,6 +741,8 @@ impl Authority {
         if avatar.noclip || avatar.leben <= 0.0 || schaden <= 0.0 {
             return;
         }
+        // Rüstung schützt
+        let schaden = schaden * (1.0 - crate::ruestung::summe(avatar.ruestung, avatar.class).schutz);
         avatar.leben -= schaden;
         avatar.getroffen = ctx.time.tick;
         let wert = schaden.round().max(1.0) as u16;
@@ -812,6 +818,16 @@ impl Authority {
                     }
                 }
             }
+            if self.rng.chance(crate::waffen::waffen_chance(g.gefahr, g.anfuehrer)) {
+                // Ebenso oft ein Rüstungsteil für die Klasse des Siegers
+                let class = world.players.values().find(|a| player_key(&a.name) == g.von).map_or(CharacterClass::Mage, |a| a.class);
+                let seltenheit = crate::waffen::seltenheit_fuer(g.gefahr, self.rng.range(0.0, 1.0));
+                let passend: Vec<u8> = crate::ruestung::RUESTUNGEN.iter().filter(|r| r.klasse == class && r.seltenheit == seltenheit).map(|r| r.id).collect();
+                if !passend.is_empty() {
+                    let id = passend[(self.rng.next_u32() % passend.len() as u32) as usize];
+                    self.beute_ablegen(world, g.ort, Fund::Ruestung(id));
+                }
+            }
         }
     }
 
@@ -850,8 +866,8 @@ impl Authority {
                 let Some(w) = crate::waffen::waffe(waffe) else { return Ok(()) };
                 let bit = 1u32 << w.id;
                 if inventory.waffen & bit != 0 {
-                    inventory.gold += w.seltenheit.gold_fuer_doppelte();
-                    meldung = Some((format!("{} hast du schon – eingeschmolzen für {} Gold.", w.name, w.seltenheit.gold_fuer_doppelte()), false));
+                    inventory.gold += w.gold_fuer_doppelte();
+                    meldung = Some((format!("{} hast du schon – eingeschmolzen für {} Gold.", w.name, w.gold_fuer_doppelte()), false));
                 } else {
                     inventory.waffen |= bit;
                     // Die erste Waffe der eigenen Klasse gleich in die Hand nehmen
@@ -860,6 +876,24 @@ impl Authority {
                     }
                     let wertvoll = w.seltenheit >= crate::waffen::Seltenheit::Episch;
                     meldung = Some((format!("{name} findet: {} ({})!", w.name, w.seltenheit.label()), wertvoll));
+                }
+            }
+            crate::beute::Fund::Ruestung(teil) => {
+                let Some(r) = crate::ruestung::ruestung(teil) else { return Ok(()) };
+                let bit = 1u32 << r.id;
+                if inventory.ruestungen & bit != 0 {
+                    let gold = (r.wert() / 4).max(5);
+                    inventory.gold += gold;
+                    meldung = Some((format!("{} hast du schon – verkauft für {gold} Gold.", r.name), false));
+                } else {
+                    inventory.ruestungen |= bit;
+                    // Ein leerer Platz wird gleich belegt
+                    let platz = r.platz.index();
+                    if r.klasse == class && crate::ruestung::ruestung(inventory.ruestung[platz]).is_none_or(|alt| alt.klasse != class) {
+                        inventory.ruestung[platz] = r.id;
+                    }
+                    let wertvoll = r.seltenheit >= crate::waffen::Seltenheit::Episch;
+                    meldung = Some((format!("{name} findet: {} ({})!", r.name, r.seltenheit.label()), wertvoll));
                 }
             }
         }
@@ -897,6 +931,29 @@ impl Authority {
             }
         }
         inventory.waffe = waffe;
+        let inventory = *inventory;
+        self.send_inventory(player, inventory);
+        Ok(())
+    }
+
+    /// Ein Rüstungsteil anlegen (`id` 0 = den Platz leeren).
+    pub fn ruestung_anlegen(&mut self, world: &mut World, player: PlayerId, platz: u8, id: u8) -> Result<(), String> {
+        let class = world.players.get(&player).map(|a| a.class).ok_or("Unbekannter Spieler")?;
+        let platz = (platz as usize).min(2);
+        let inventory = world.inventories.entry(player).or_default();
+        if id != 0 {
+            let r = crate::ruestung::ruestung(id).ok_or("Dieses Rüstungsteil gibt es nicht")?;
+            if inventory.ruestungen & (1u32 << r.id) == 0 {
+                return Err("Dieses Rüstungsteil hast du nicht".into());
+            }
+            if r.klasse != class {
+                return Err(format!("{} passt nur zum {}", r.name, r.klasse.label()));
+            }
+            if r.platz.index() != platz {
+                return Err(format!("{} gehört auf den Platz {}", r.name, r.platz.label()));
+            }
+        }
+        inventory.ruestung[platz] = id;
         let inventory = *inventory;
         self.send_inventory(player, inventory);
         Ok(())
@@ -1445,6 +1502,7 @@ impl Authority {
         let mut runen: Vec<(ClientId, RunenBefehl)> = Vec::new();
         let mut aufheben: Vec<(ClientId, u32)> = Vec::new();
         let mut ausruesten: Vec<(ClientId, u8)> = Vec::new();
+        let mut anlegen: Vec<(ClientId, u8, u8)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -1455,6 +1513,7 @@ impl Authority {
                     Some(ClientMessage::Runen(befehl)) => runen.push((id, befehl)),
                     Some(ClientMessage::Aufheben(beute)) => aufheben.push((id, beute)),
                     Some(ClientMessage::Ausruesten(waffe)) => ausruesten.push((id, waffe)),
+                    Some(ClientMessage::RuestungAnlegen(platz, teil)) => anlegen.push((id, platz, teil)),
                     _ => {}
                 }
             }
@@ -1495,6 +1554,12 @@ impl Authority {
         }
         for (id, waffe) in ausruesten {
             let result = self.ausruesten(world, id, waffe);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, platz, teil) in anlegen {
+            let result = self.ruestung_anlegen(world, id, platz, teil);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }
@@ -1609,6 +1674,7 @@ impl Authority {
                     leben: avatar.leben.max(0.0).ceil() as u16,
                     waffe: avatar.waffe,
                     ladung: avatar.ladung,
+                    ruestung: avatar.ruestung,
                 }
             })
             .collect();

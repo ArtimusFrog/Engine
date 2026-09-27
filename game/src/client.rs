@@ -103,6 +103,10 @@ impl Replica {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Ausruesten(waffe)));
     }
 
+    pub fn send_ruestung(&mut self, platz: u8, teil: u8) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::RuestungAnlegen(platz, teil)));
+    }
+
     /// Runenstein schmieden oder einsetzen (der Server prüft Ort und Inventar).
     pub fn send_runen(&mut self, befehl: crate::protocol::RunenBefehl) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Runen(befehl)));
@@ -259,6 +263,7 @@ impl Replica {
                 if let Some(avatar) = world.players.get_mut(&state.id) {
                     avatar.leben = state.leben as f32;
                     avatar.waffe = state.waffe;
+                    avatar.ruestung = state.ruestung;
                     avatar.ladung = state.ladung;
                 }
             }
@@ -366,6 +371,7 @@ impl Replica {
             avatar.tool = target.tool;
             avatar.leben = target.leben as f32;
             avatar.waffe = target.waffe;
+            avatar.ruestung = target.ruestung;
             avatar.ladung = target.ladung;
         }
 

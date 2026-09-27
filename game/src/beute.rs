@@ -21,6 +21,8 @@ pub enum Fund {
     Gegenstand(Item, u32),
     /// Waffe (ID aus `waffen.rs`)
     Waffe(u8),
+    /// Rüstungsteil (ID aus `ruestung.rs`)
+    Ruestung(u8),
 }
 
 impl Fund {
@@ -29,6 +31,7 @@ impl Fund {
             Fund::Gegenstand(item, 1) => item.label().to_string(),
             Fund::Gegenstand(item, n) => format!("{n} {}", item.label()),
             Fund::Waffe(id) => crate::waffen::waffe(id).map_or("Waffe".into(), |w| w.name.to_string()),
+            Fund::Ruestung(id) => crate::ruestung::ruestung(id).map_or("Rüstung".into(), |r| r.name.to_string()),
         }
     }
 
@@ -36,6 +39,7 @@ impl Fund {
     pub fn farbe(&self) -> [f32; 3] {
         match *self {
             Fund::Waffe(id) => crate::waffen::waffe(id).map_or([1.0; 3], |w| w.seltenheit.farbe()),
+            Fund::Ruestung(id) => crate::ruestung::ruestung(id).map_or([1.0; 3], |r| r.seltenheit.farbe()),
             Fund::Gegenstand(Item::Runenfragment | Item::Runenstein, _) => [0.45, 0.8, 1.0],
             Fund::Gegenstand(Item::Gold, _) => [1.0, 0.82, 0.35],
             Fund::Gegenstand(..) => [0.92, 0.9, 0.85],
@@ -46,6 +50,7 @@ impl Fund {
     pub fn modell(&self) -> &'static str {
         match *self {
             Fund::Waffe(id) => crate::waffen::waffe(id).map_or("beute_gold", |w| w.datei),
+            Fund::Ruestung(id) => crate::ruestung::ruestung(id).map_or("beute_gold", |r| r.datei),
             Fund::Gegenstand(Item::Gold, _) => "beute_gold",
             Fund::Gegenstand(Item::Runenfragment | Item::Runenstein, _) => "beute_runenfragment",
             Fund::Gegenstand(Item::Meat, _) => "beute_fleisch",
@@ -57,7 +62,7 @@ impl Fund {
 
     /// Wertvolles bekommt eine Lichtsäule.
     fn strahl(&self) -> bool {
-        matches!(self, Fund::Waffe(_) | Fund::Gegenstand(Item::Runenfragment | Item::Runenstein, _))
+        matches!(self, Fund::Waffe(_) | Fund::Ruestung(_) | Fund::Gegenstand(Item::Runenfragment | Item::Runenstein, _))
     }
 }
 

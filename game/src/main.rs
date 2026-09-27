@@ -29,6 +29,7 @@ mod orte;
 mod wachen;
 mod playground;
 mod protocol;
+mod ruestung;
 mod server;
 mod save;
 mod session;

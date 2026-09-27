@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001E;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001F;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -146,6 +146,8 @@ pub struct PlayerState {
     pub waffe: u8,
     /// Arkane Ladungen (Magier)
     pub ladung: u8,
+    /// Getragene Rüstung (Kopf, Brust, Füße)
+    pub ruestung: [u8; 3],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -251,6 +253,17 @@ pub enum ClientMessage {
     Aufheben(u32),
     /// Waffe ausrüsten (0 = Startwaffe)
     Ausruesten(u8),
+    /// Rüstung anlegen: Platz (0 Kopf, 1 Brust, 2 Füße) und Teil (0 = ablegen)
+    RuestungAnlegen(u8, u8),
+}
+
+/// Was im Inventar angelegt werden soll (Klick oder auf einen Ausrüstungsplatz gezogen).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anlegen {
+    /// Waffe (0 = Startwaffe)
+    Waffe(u8),
+    /// Platz (0 Kopf, 1 Brust, 2 Füße) und Teil (0 = ablegen)
+    Ruestung(u8, u8),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -311,6 +324,11 @@ pub struct Inventory {
     pub waffen: u32,
     #[serde(default)]
     pub waffe: u8,
+    /// Erbeutete Rüstung (Bit n = Teil n aus `ruestung.rs`) und die getragene (Kopf, Brust, Füße; 0 = nichts)
+    #[serde(default)]
+    pub ruestungen: u32,
+    #[serde(default)]
+    pub ruestung: [u8; 3],
 }
 
 /// Alles, was im Inventar liegen kann.

@@ -36,13 +36,13 @@ impl Seltenheit {
         }
     }
 
-    /// Gold, wenn man eine Waffe aufhebt, die man schon hat.
-    pub fn gold_fuer_doppelte(self) -> u32 {
+    /// Grundwert in Gold (Waffen und Rüstung rechnen ihren Wert davon aus).
+    pub fn grundwert(self) -> u32 {
         match self {
-            Seltenheit::Gewoehnlich => 15,
-            Seltenheit::Selten => 40,
-            Seltenheit::Episch => 90,
-            Seltenheit::Legendaer => 200,
+            Seltenheit::Gewoehnlich => 40,
+            Seltenheit::Selten => 120,
+            Seltenheit::Episch => 300,
+            Seltenheit::Legendaer => 700,
         }
     }
 }
@@ -56,6 +56,8 @@ pub struct Waffe {
     /// Faktor auf allen Schaden und auf alle Abklingzeiten
     pub schaden: f32,
     pub abklingen: f32,
+    /// Chance auf kritische Treffer (×1,5 Schaden)
+    pub krit: f32,
     /// Eine Fähigkeit wirkt stärker: Schaden und Nachwirkung (Brand, Verlangsamung, Betäubung) × Faktor
     pub bonus: Option<(Faehigkeit, f32)>,
     /// Name des Anbauteils im Figurenmodell und Dateiname von Bodenmodell und Symbol
@@ -66,46 +68,49 @@ pub struct Waffe {
 use Faehigkeit::*;
 use Seltenheit::*;
 
+/// Gleiche Stufen für alle Klassen: Gewöhnlich +12 % Schaden; Selten +8 % und eine Fähigkeit +45 %;
+/// Episch +15 %, −15 % Abklingzeiten und eine Fähigkeit +30 %; Legendär +28 %, −15 % und die
+/// ultimative Fähigkeit +30 %. Dazu je nach Stufe 3–10 % Chance auf kritische Treffer (×1,5).
 pub const WAFFEN: [Waffe; 20] = [
-    Waffe { id: 1, name: "Eichenstab", klasse: CharacterClass::Mage, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "stab_eiche",
-            beschreibung: "Ein knorriger Eichenstab mit Bernstein. Etwas mehr Kraft in jedem Zauber." },
-    Waffe { id: 2, name: "Glutstab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Feuerball, 1.45)), datei: "stab_glut",
-            beschreibung: "In seiner Krone glimmt ein Feuerstein. Feuerbälle brennen heißer und länger." },
-    Waffe { id: 3, name: "Froststab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Frostnova, 1.45)), datei: "stab_frost",
-            beschreibung: "Eiskristalle wachsen um die Spitze. Die Frostnova trifft härter und bremst stärker." },
-    Waffe { id: 4, name: "Sturmstab", klasse: CharacterClass::Mage, seltenheit: Episch, schaden: 1.15, abklingen: 0.75, bonus: None, datei: "stab_sturm",
-            beschreibung: "Blitze tanzen um den Silberring. Alle Zauber sind viel schneller wieder bereit." },
-    Waffe { id: 5, name: "Sternenstab", klasse: CharacterClass::Mage, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Arkangeschoss, 1.25)),
-            datei: "stab_sternen", beschreibung: "Ein gefangener Stern in goldener Fassung. Mehr Schaden, schnellere Zauber, stärkere Arkangeschosse." },
-    Waffe { id: 6, name: "Eisenhammer", klasse: CharacterClass::Zwerg, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "hammer_eisen",
-            beschreibung: "Grob geschmiedet, aber schwer. Etwas mehr Wucht in jedem Schlag." },
-    Waffe { id: 7, name: "Runenhammer", klasse: CharacterClass::Zwerg, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Wurfhammer, 1.45)), datei: "hammer_runen",
-            beschreibung: "Leuchtende Runen lassen ihn zurückkehren. Der Wurfhammer trifft härter und betäubt länger." },
-    Waffe { id: 8, name: "Streithammer", klasse: CharacterClass::Zwerg, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Hammerschlag, 1.45)), datei: "hammer_streit",
-            beschreibung: "Mit Dorn und Schlagfläche. Der Hammerschlag trifft viel härter." },
-    Waffe { id: 9, name: "Donnerhammer", klasse: CharacterClass::Zwerg, seltenheit: Episch, schaden: 1.15, abklingen: 0.85, bonus: Some((Erdbeben, 1.4)), datei: "hammer_donner",
-            beschreibung: "Er grollt bei jedem Schlag. Erdbeben sind stärker und alles ist schneller bereit." },
-    Waffe { id: 10, name: "Drachenhammer", klasse: CharacterClass::Zwerg, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Hammerschlag, 1.25)),
-            datei: "hammer_drachen", beschreibung: "Aus Drachenschuppe geschmiedet. Mehr Schaden, schnellere Fähigkeiten, wuchtigere Hammerschläge." },
-    Waffe { id: 11, name: "Eibenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "bogen_eibe",
-            beschreibung: "Zäh und biegsam, mit Hornspitzen. Etwas mehr Kraft in jedem Schuss." },
-    Waffe { id: 12, name: "Langbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Pfeilschuss, 1.4)), datei: "bogen_lang",
-            beschreibung: "Mannshoch und kraftvoll. Pfeilschüsse treffen härter." },
-    Waffe { id: 13, name: "Glutbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Explosivpfeil, 1.45)), datei: "bogen_glut",
-            beschreibung: "Die Sehne glimmt wie Kohle. Explosivpfeile zünden heftiger und brennen länger." },
-    Waffe { id: 14, name: "Elfenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Episch, schaden: 1.15, abklingen: 0.8, bonus: Some((Salve, 1.35)), datei: "bogen_elfen",
-            beschreibung: "Aus hellem Silberholz mit Blattranken. Salven treffen härter, alles ist schneller bereit." },
-    Waffe { id: 15, name: "Sturmbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Pfeilregen, 1.3)),
+    Waffe { id: 1, name: "Eichenstab", klasse: CharacterClass::Mage, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, krit: 0.03, bonus: None,
+            datei: "stab_eiche", beschreibung: "Ein knorriger Eichenstab mit Bernstein. Etwas mehr Kraft in jedem Zauber." },
+    Waffe { id: 2, name: "Glutstab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Feuerball, 1.45)),
+            datei: "stab_glut", beschreibung: "In seiner Krone glimmt ein Feuerstein. Feuerbälle brennen heißer und länger." },
+    Waffe { id: 3, name: "Froststab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Frostnova, 1.45)),
+            datei: "stab_frost", beschreibung: "Eiskristalle wachsen um die Spitze. Die Frostnova trifft härter und friert länger ein." },
+    Waffe { id: 4, name: "Sturmstab", klasse: CharacterClass::Mage, seltenheit: Episch, schaden: 1.15, abklingen: 0.85, krit: 0.06, bonus: Some((Arkangeschoss, 1.3)),
+            datei: "stab_sturm", beschreibung: "Blitze tanzen um den Silberring. Alle Zauber sind schneller bereit, Arkangeschosse treffen härter." },
+    Waffe { id: 5, name: "Sternenstab", klasse: CharacterClass::Mage, seltenheit: Legendaer, schaden: 1.28, abklingen: 0.85, krit: 0.1, bonus: Some((Meteorsturm, 1.3)),
+            datei: "stab_sternen", beschreibung: "Ein gefangener Stern in goldener Fassung. Mehr Schaden, schnellere Zauber, ein gewaltiger Meteorsturm." },
+    Waffe { id: 6, name: "Eisenhammer", klasse: CharacterClass::Zwerg, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, krit: 0.03, bonus: None,
+            datei: "hammer_eisen", beschreibung: "Grob geschmiedet, aber schwer. Etwas mehr Wucht in jedem Schlag." },
+    Waffe { id: 7, name: "Runenhammer", klasse: CharacterClass::Zwerg, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Wurfhammer, 1.45)),
+            datei: "hammer_runen", beschreibung: "Leuchtende Runen lassen ihn zurückkehren. Der Wurfhammer trifft härter und betäubt länger." },
+    Waffe { id: 8, name: "Streithammer", klasse: CharacterClass::Zwerg, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Hammerschlag, 1.45)),
+            datei: "hammer_streit", beschreibung: "Mit Dorn und Schlagfläche. Der Hammerschlag trifft viel härter." },
+    Waffe { id: 9, name: "Donnerhammer", klasse: CharacterClass::Zwerg, seltenheit: Episch, schaden: 1.15, abklingen: 0.85, krit: 0.06, bonus: Some((Erdbeben, 1.3)),
+            datei: "hammer_donner", beschreibung: "Er grollt bei jedem Schlag. Erdbeben sind stärker und alles ist schneller bereit." },
+    Waffe { id: 10, name: "Drachenhammer", klasse: CharacterClass::Zwerg, seltenheit: Legendaer, schaden: 1.28, abklingen: 0.85, krit: 0.1, bonus: Some((Ahnenhammer, 1.3)),
+            datei: "hammer_drachen", beschreibung: "Aus Drachenschuppe geschmiedet. Mehr Schaden, schnellere Fähigkeiten, ein wuchtigerer Ahnenhammer." },
+    Waffe { id: 11, name: "Eibenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, krit: 0.03, bonus: None,
+            datei: "bogen_eibe", beschreibung: "Zäh und biegsam, mit Hornspitzen. Etwas mehr Kraft in jedem Schuss." },
+    Waffe { id: 12, name: "Langbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Pfeilschuss, 1.45)),
+            datei: "bogen_lang", beschreibung: "Mannshoch und kraftvoll. Pfeilschüsse treffen härter." },
+    Waffe { id: 13, name: "Glutbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Explosivpfeil, 1.45)),
+            datei: "bogen_glut", beschreibung: "Die Sehne glimmt wie Kohle. Explosivpfeile zünden heftiger und brennen länger." },
+    Waffe { id: 14, name: "Elfenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Episch, schaden: 1.15, abklingen: 0.85, krit: 0.06, bonus: Some((Salve, 1.3)),
+            datei: "bogen_elfen", beschreibung: "Aus hellem Silberholz mit Blattranken. Salven treffen härter, alles ist schneller bereit." },
+    Waffe { id: 15, name: "Sturmbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Legendaer, schaden: 1.28, abklingen: 0.85, krit: 0.1, bonus: Some((Pfeilregen, 1.3)),
             datei: "bogen_sturm", beschreibung: "Blitze knistern in der Sehne. Mehr Schaden, schnellere Fähigkeiten, ein gewaltiger Pfeilregen." },
-    Waffe { id: 16, name: "Eisenklinge", klasse: CharacterClass::Rogue, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "klinge_eisen",
-            beschreibung: "Ein schlichtes Kurzschwert aus gutem Eisen. Etwas mehr Schärfe in jedem Hieb." },
-    Waffe { id: 17, name: "Giftzahn", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Wurfdolche, 1.45)), datei: "klinge_gift",
-            beschreibung: "Die Klinge schwitzt grünes Gift. Wurfdolche treffen härter und lähmen länger." },
-    Waffe { id: 18, name: "Rußklinge", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Rauchbombe, 1.45)), datei: "klinge_russ",
-            beschreibung: "Aus rußschwarzem Stahl geschmiedet. Rauchbomben treffen härter und betäuben länger." },
-    Waffe { id: 19, name: "Mondsichel", klasse: CharacterClass::Rogue, seltenheit: Episch, schaden: 1.15, abklingen: 0.8, bonus: Some((Klingenhieb, 1.35)), datei: "klinge_mond",
-            beschreibung: "Eine silberne Krummklinge, leicht wie ein Lufthauch. Hiebe treffen härter, alles ist schneller bereit." },
-    Waffe { id: 20, name: "Schattenzahn", klasse: CharacterClass::Rogue, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Schattenklingen, 1.3)),
+    Waffe { id: 16, name: "Eisenklinge", klasse: CharacterClass::Rogue, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, krit: 0.03, bonus: None,
+            datei: "klinge_eisen", beschreibung: "Ein schlichtes Kurzschwert aus gutem Eisen. Etwas mehr Schärfe in jedem Hieb." },
+    Waffe { id: 17, name: "Giftzahn", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Wurfdolche, 1.45)),
+            datei: "klinge_gift", beschreibung: "Die Klinge schwitzt grünes Gift. Wurfdolche treffen härter und lähmen länger." },
+    Waffe { id: 18, name: "Rußklinge", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.08, abklingen: 1.0, krit: 0.03, bonus: Some((Rauchbombe, 1.45)),
+            datei: "klinge_russ", beschreibung: "Aus rußschwarzem Stahl geschmiedet. Rauchbomben treffen härter und betäuben länger." },
+    Waffe { id: 19, name: "Mondsichel", klasse: CharacterClass::Rogue, seltenheit: Episch, schaden: 1.15, abklingen: 0.85, krit: 0.06, bonus: Some((Klingenhieb, 1.3)),
+            datei: "klinge_mond", beschreibung: "Eine silberne Krummklinge, leicht wie ein Lufthauch. Hiebe treffen härter, alles ist schneller bereit." },
+    Waffe { id: 20, name: "Schattenzahn", klasse: CharacterClass::Rogue, seltenheit: Legendaer, schaden: 1.28, abklingen: 0.85, krit: 0.1, bonus: Some((Schattenklingen, 1.3)),
             datei: "klinge_schatten", beschreibung: "In ihr wohnt ein Schatten. Mehr Schaden, schnellere Fähigkeiten, gewaltigere Schattenklingen." },
 ];
 
@@ -128,24 +133,45 @@ pub fn ausgeruestet(id: u8, class: CharacterClass) -> Option<&'static Waffe> {
     waffe(id).filter(|w| w.klasse == class)
 }
 
-/// Wie eine Fähigkeit mit einer Waffe wirkt: Schaden, Nachwirkung, Abklingzeit (Faktoren).
-pub fn faktoren(id: u8, class: CharacterClass, art: Faehigkeit) -> (f32, f32, f32) {
-    let Some(w) = ausgeruestet(id, class) else { return (1.0, 1.0, 1.0) };
+/// Kritischer Treffer: so viel mehr Schaden.
+pub const KRIT_FAKTOR: f32 = 1.5;
+
+/// Wie eine Fähigkeit mit Waffe und Rüstung wirkt: Schaden, Nachwirkung, Abklingzeit (Faktoren)
+/// und die Chance auf einen kritischen Treffer.
+pub fn faktoren(id: u8, ruestung: [u8; 3], class: CharacterClass, art: Faehigkeit) -> (f32, f32, f32, f32) {
+    let r = crate::ruestung::summe(ruestung, class);
+    let Some(w) = ausgeruestet(id, class) else { return (r.schaden, 1.0, r.abklingen, r.krit) };
     let bonus = w.bonus.filter(|b| b.0 == art).map_or(1.0, |b| b.1);
-    (w.schaden * bonus, bonus, w.abklingen)
+    (w.schaden * bonus * r.schaden, bonus, w.abklingen * r.abklingen, w.krit + r.krit)
 }
 
-/// Werte einer Waffe für Tooltip und Hinweise.
-pub fn werte_zeile(w: &Waffe) -> String {
-    let mut teile = vec![format!("Schaden +{:.0} %", (w.schaden - 1.0) * 100.0)];
-    if w.abklingen < 1.0 {
-        teile.push(format!("Abklingzeiten −{:.0} %", (1.0 - w.abklingen) * 100.0));
+impl Waffe {
+    /// Wert in Gold.
+    pub fn wert(&self) -> u32 {
+        let bonus = self.bonus.map_or(0.0, |b| (b.1 - 1.0) * 150.0);
+        let budget = (self.schaden - 1.0) * 800.0 + (1.0 - self.abklingen) * 700.0 + self.krit * 800.0 + bonus;
+        (self.seltenheit.grundwert() as f32 + budget).round() as u32 / 5 * 5
     }
-    if let Some((art, f)) = w.bonus {
-        teile.push(format!("{} +{:.0} %", art.label(), (f - 1.0) * 100.0));
+
+    /// Gold, wenn man die Waffe aufhebt, obwohl man sie schon hat (ein Viertel des Werts).
+    pub fn gold_fuer_doppelte(&self) -> u32 {
+        (self.wert() / 4).max(5)
     }
-    teile.join(" · ")
+
+    /// Werte als Zeilen für den Tooltip.
+    pub fn werte_zeilen(&self) -> Vec<String> {
+        let mut z = vec![format!("Schaden +{:.0} %", (self.schaden - 1.0) * 100.0)];
+        if self.abklingen < 1.0 {
+            z.push(format!("Abklingzeiten −{:.0} %", (1.0 - self.abklingen) * 100.0));
+        }
+        z.push(format!("Kritische Treffer {:.0} % (×{KRIT_FAKTOR})", self.krit * 100.0));
+        if let Some((art, f)) = self.bonus {
+            z.push(format!("{} +{:.0} %", art.label(), (f - 1.0) * 100.0));
+        }
+        z
+    }
 }
+
 
 /// Welche Seltenheit ein Lager der Gefahr 1–3 fallen lässt (Wurf 0..1).
 pub fn seltenheit_fuer(gefahr: u8, wurf: f32) -> Seltenheit {
@@ -202,8 +228,8 @@ mod tests {
         assert_eq!(seltenheit_fuer(3, 0.99), Seltenheit::Legendaer);
         assert!(waffen_chance(3, true) > waffen_chance(1, true));
         // Fremde Waffen wirken nicht
-        assert_eq!(faktoren(5, CharacterClass::Zwerg, Faehigkeit::Hammerschlag), (1.0, 1.0, 1.0));
-        let (s, n, a) = faktoren(2, CharacterClass::Mage, Faehigkeit::Feuerball);
+        assert_eq!(faktoren(5, [0; 3], CharacterClass::Zwerg, Faehigkeit::Hammerschlag), (1.0, 1.0, 1.0, 0.0));
+        let (s, n, a, _) = faktoren(2, [0; 3], CharacterClass::Mage, Faehigkeit::Feuerball);
         assert!(s > 1.5 && n > 1.4 && a == 1.0);
     }
 }

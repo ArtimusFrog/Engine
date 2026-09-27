@@ -54,11 +54,14 @@ pub struct Avatar {
     pub getroffen: u64,
     /// Waffe in der Hand (0 = Startwaffe)
     pub waffe: u8,
+    /// Getragene Rüstung (Kopf, Brust, Füße)
+    pub ruestung: [u8; 3],
 }
 
 impl Avatar {
+    /// Leben der Klasse plus Rüstung.
     pub fn max_leben(&self) -> f32 {
-        self.class.max_leben() as f32
+        (self.class.max_leben() + crate::ruestung::summe(self.ruestung, self.class).leben) as f32
     }
 }
 
@@ -577,6 +580,7 @@ impl World {
                 leben: class.max_leben() as f32,
                 getroffen: 0,
                 waffe: 0,
+                ruestung: [0; 3],
             },
         );
         self.inventories.entry(id).or_default();

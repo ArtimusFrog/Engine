@@ -780,6 +780,37 @@ def faehigkeit_schattenklingen():
         kugel(0.03, (math.cos(w) * 0.95, 0.1, math.sin(w) * 0.95), ring, "Ring", 1)
 
 
+def _aus_gegenstand(datei, drehung=None):
+    """Symbol aus einem Bodenmodell (game/assets/gegenstaende/<datei>.gltf), z. B. Rüstungsteile."""
+    bpy.ops.import_scene.gltf(filepath=str(REPO / "game" / "assets" / "gegenstaende" / f"{datei}.gltf"))
+    teile = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    daten = teile[0].data.copy()
+    daten.transform(teile[0].matrix_world)
+    mitte = sum((Vector(v.co) for v in daten.vertices), Vector()) / len(daten.vertices)
+    daten.transform(Matrix.Translation(-mitte))
+    if drehung is not None:
+        daten.transform(drehung)
+    for obj in list(bpy.context.scene.objects):
+        bpy.data.objects.remove(obj)
+    teil = bpy.data.objects.new(datei, daten)
+    bpy.context.scene.collection.objects.link(teil)
+    mat = bpy.data.materials.new("Vertexfarben")
+    setze(mat, use_nodes=True)
+    knoten_baum = mat.node_tree.nodes
+    bsdf = next(n for n in knoten_baum if n.type == "BSDF_PRINCIPLED")
+    attribut = knoten_baum.new("ShaderNodeAttribute")
+    attribut.attribute_name = daten.color_attributes[0].name if daten.color_attributes else "Col"
+    mat.node_tree.links.new(attribut.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.6
+    daten.materials.clear()
+    daten.materials.append(mat)
+
+
+RUESTUNG = ["hut_lehrling", "hut_sterne", "robe_adept", "robe_erzmagier", "schuhe_wander", "schuhe_mondschritt", "helm_eisen", "helm_runen",
+            "brust_kette", "brust_ahnen", "stiefel_gruben", "stiefel_eisen", "kappe_jaeger", "krone_mond", "wams_leder", "harnisch_nachtwind",
+            "stiefel_pirsch", "stiefel_elfen", "kapuze", "maske_schatten", "weste_leder", "mantel_daemmerung", "stiefel_leise", "stiefel_schatten"]
+
+
 def _bogen_symbol(knoten):
     # Der Bogen liegt im Modell waagerecht (entlang Y): aufrichten und schräg ins Bild legen
     return lambda: _aus_magier(knoten, Matrix.Rotation(math.radians(-40), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "X"), figur="bogenschuetze")
@@ -811,6 +842,8 @@ GEGENSTAENDE["jagdbogen"] = _bogen_symbol("Bogen")
 for _art in ("klinge_eisen", "klinge_gift", "klinge_russ", "klinge_mond", "klinge_schatten"):
     GEGENSTAENDE[_art] = _klinge_symbol(_art)
 GEGENSTAENDE["runenklinge"] = _klinge_symbol("Klinge")
+for _art in RUESTUNG:
+    GEGENSTAENDE[_art] = (lambda a: lambda: _aus_gegenstand(a))(_art)
 for _name, _bau in (("faehigkeit_klingenhieb", faehigkeit_klingenhieb), ("faehigkeit_wurfdolche", faehigkeit_wurfdolche),
                     ("faehigkeit_rauchbombe", faehigkeit_rauchbombe), ("faehigkeit_schattenklingen", faehigkeit_schattenklingen)):
     GEGENSTAENDE[_name] = _bau
@@ -822,7 +855,7 @@ for _name, _bau in (("faehigkeit_meteorsturm", faehigkeit_meteorsturm), ("faehig
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
 BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_", "bogen_", "klinge_", "faehigkeit_")) or n in ("schmiedehammer", "jagdbogen", "runenklinge")}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
          "faehigkeit_arkangeschoss": (0.0, -1.0, 0.2), "faehigkeit_feuerball": (0.0, -1.0, 0.2), "faehigkeit_hammerschlag": (0.0, -1.0, 0.2),
-         "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
+         "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), **{n: (0.45, -1.0, 0.5) for n in RUESTUNG}, "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
 
 
 # ---------------------------------------------------------------------------

@@ -133,6 +133,24 @@ impl Session {
         }
     }
 
+    /// Waffe oder Rüstung anlegen (aus dem Inventar).
+    pub fn anlegen(&mut self, was: crate::protocol::Anlegen) {
+        let crate::protocol::Anlegen::Ruestung(platz, teil) = was else {
+            if let crate::protocol::Anlegen::Waffe(waffe) = was {
+                self.ausruesten(waffe);
+            }
+            return;
+        };
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_ruestung(platz, teil);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.ruestung_anlegen(&mut self.world, local, platz, teil) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Runenstein schmieden oder einsetzen (beim Host/Einzelspieler direkt, sonst an den Server).
     pub fn runen(&mut self, ctx: &mut Context, befehl: crate::protocol::RunenBefehl) {
         let local = self.local_player();
@@ -605,6 +623,34 @@ mod tests {
         pair.run(60 * 110);
         let holz = pair.client.session.local_inventory().wood;
         assert!(holz >= 10 + crate::arbeiter::LADUNG, "Holzfäller liefert nicht ({holz} Holz)");
+    }
+
+    #[test]
+    fn ruestung_anlegen_gibt_leben_und_nur_passende_teile() {
+        use crate::protocol::Anlegen;
+        let mut ctx = Context::headless();
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello("Nils"), None).unwrap();
+        let local = session.local_player().unwrap();
+        let class = session.world().players[&local].class;
+        let eigene: Vec<&crate::ruestung::Ruestung> = crate::ruestung::RUESTUNGEN.iter().filter(|r| r.klasse == class).collect();
+        let fremd = crate::ruestung::RUESTUNGEN.iter().find(|r| r.klasse != class).unwrap();
+        let brust = eigene.iter().find(|r| r.platz == crate::ruestung::Platz::Brust).unwrap();
+        let kopf = eigene.iter().find(|r| r.platz == crate::ruestung::Platz::Kopf).unwrap();
+        session.world_mut().inventories.entry(local).or_default().ruestungen = u32::MAX;
+        let vorher = session.world().players[&local].max_leben();
+        // Falscher Platz und fremde Klasse werden abgelehnt, das richtige Teil sitzt
+        session.anlegen(Anlegen::Ruestung(0, brust.id));
+        session.anlegen(Anlegen::Ruestung(2, fremd.id));
+        session.anlegen(Anlegen::Ruestung(1, brust.id));
+        session.anlegen(Anlegen::Ruestung(0, kopf.id));
+        session.fixed_update(&mut ctx, crate::protocol::PlayerInput::default()).unwrap();
+        let inv = session.local_inventory();
+        assert_eq!(inv.ruestung, [kopf.id, brust.id, 0]);
+        let nachher = session.world().players[&local].max_leben();
+        assert_eq!(nachher, vorher + (brust.leben + kopf.leben) as f32);
+        // Ablegen
+        session.anlegen(Anlegen::Ruestung(1, 0));
+        assert_eq!(session.local_inventory().ruestung, [kopf.id, 0, 0]);
     }
 
     #[test]

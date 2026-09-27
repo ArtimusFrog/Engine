@@ -383,7 +383,8 @@ impl Playground {
         let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
         let Some((target, _)) = self.spell_aim(ctx) else { return };
         let waffe = self.session.as_ref().map_or(0, |s| s.local_inventory().waffe);
-        let (_, _, f_abklingen) = crate::waffen::faktoren(waffe, self.klasse(), art);
+        let ruestung = self.session.as_ref().map_or([0; 3], |s| s.local_inventory().ruestung);
+        let (_, _, f_abklingen, _) = crate::waffen::faktoren(waffe, ruestung, self.klasse(), art);
         // Stufe wie beim Server: Kombo des Hammerschlags, Arkanlanze mit voller Ladung
         let stufe = self.naechste_stufe(ctx, art);
         if art.ist_kombo() {
@@ -1162,9 +1163,9 @@ impl Playground {
         if self.inventory_ui.window(egui_ctx, &inventory, &name, class) {
             self.toggle_inventory(ctx);
         }
-        if let Some(waffe) = self.inventory_ui.ausruesten.take() {
+        if let Some(was) = self.inventory_ui.anlegen.take() {
             if let Some(session) = &mut self.session {
-                session.ausruesten(waffe);
+                session.anlegen(was);
             }
         }
     }
@@ -1758,7 +1759,8 @@ impl Playground {
             let f = b.fund.farbe();
             let farbe = Color32::from_rgb((f[0] * 255.0) as u8, (f[1] * 255.0) as u8, (f[2] * 255.0) as u8);
             let zeile = match b.fund {
-                crate::beute::Fund::Waffe(id) => crate::waffen::waffe(id).map_or(String::new(), |w| format!("E: {} aufheben ({}) · {}", w.name, w.seltenheit.label(), crate::waffen::werte_zeile(w))),
+                crate::beute::Fund::Waffe(id) => crate::waffen::waffe(id).map_or(String::new(), |w| format!("E: {} aufheben ({}) · {}", w.name, w.seltenheit.label(), w.werte_zeilen().join(" · "))),
+                crate::beute::Fund::Ruestung(id) => crate::ruestung::ruestung(id).map_or(String::new(), |r| format!("E: {} aufheben ({}, {}) · {}", r.name, r.seltenheit.label(), r.platz.label(), r.werte_zeilen().join(" · "))),
                 _ => format!("E: {} aufheben", b.fund.name()),
             };
             painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), Color32::BLACK);
@@ -2166,6 +2168,16 @@ impl Game for Playground {
                     for (item, amount) in [(Item::Wood, 23), (Item::Stone, 11), (Item::Ore, 7), (Item::Meat, 5), (Item::Pelt, 3), (Item::Wool, 6)] {
                         inventory.add_item(item, amount);
                     }
+                    // Nur für Screenshots: `--demo-ausruestung [platz]` – alles erbeutet, einiges angelegt, Reiter
+                    // Ausrüstung offen, Tooltip des Platzes sichtbar
+                    if let Some(i) = args.iter().position(|a| a == "--demo-ausruestung") {
+                        inventory.waffen = u32::MAX;
+                        inventory.ruestungen = u32::MAX;
+                        inventory.ruestung = [2, 4, 0];
+                        inventory.waffe = 4;
+                        let platz = args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(3);
+                        self.inventory_ui.demo(platz);
+                    }
                 }
             }
             self.inventory_open = open_inventory;
@@ -2514,6 +2526,7 @@ impl Game for Playground {
                 let class = world.players[&local].class;
                 let start = world.spawn;
                 let mut funde: Vec<Fund> = crate::waffen::WAFFEN.iter().filter(|w| w.klasse == class).map(|w| Fund::Waffe(w.id)).collect();
+                funde.extend(crate::ruestung::RUESTUNGEN.iter().filter(|r| r.klasse == class).map(|r| Fund::Ruestung(r.id)));
                 funde.extend([Fund::Gegenstand(crate::protocol::Item::Gold, 16), Fund::Gegenstand(crate::protocol::Item::Runenfragment, 1), Fund::Gegenstand(crate::protocol::Item::Meat, 2)]);
                 let vorne = vec3(0.0, 0.0, -1.0);
                 for (i, fund) in funde.into_iter().enumerate() {

@@ -20,6 +20,8 @@ const MARGIN: f32 = 16.0;
 const HEADER: f32 = 62.0;
 const TABS: f32 = 30.0;
 const FOOTER: f32 = 46.0;
+/// Ausrüstungsleiste unter dem Titel (vier Plätze und die Werte)
+const AUSRUESTUNG: f32 = 120.0;
 
 // Farben: dunkles Leder, Bronze und Gold
 pub(crate) const GOLD: Color32 = Color32::from_rgb(214, 172, 92);
@@ -37,18 +39,18 @@ enum Tab {
     All,
     Resources,
     Loot,
-    Waffen,
+    Ausruestung,
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::All, Tab::Resources, Tab::Loot, Tab::Waffen];
+    const ALL: [Tab; 4] = [Tab::All, Tab::Resources, Tab::Loot, Tab::Ausruestung];
 
     fn label(self) -> &'static str {
         match self {
             Tab::All => "Alles",
             Tab::Resources => "Rohstoffe",
             Tab::Loot => "Tierbeute",
-            Tab::Waffen => "Waffen",
+            Tab::Ausruestung => "Ausrüstung",
         }
     }
 
@@ -57,7 +59,7 @@ impl Tab {
             Tab::All => true,
             Tab::Resources => !item.is_loot(),
             Tab::Loot => item.is_loot(),
-            Tab::Waffen => false,
+            Tab::Ausruestung => false,
         }
     }
 }
@@ -90,7 +92,8 @@ impl Icons {
         let Some(dir) = crate::asset_files::asset_dir() else { return icons };
         let werkzeuge = [Tool::Pickaxe, Tool::Axe].map(|t| t.icon_file(crate::protocol::CharacterClass::Mage));
         let faehigkeiten = crate::protocol::CharacterClass::ALL.into_iter().flat_map(crate::faehigkeiten::Faehigkeit::der_klasse).map(|f| f.icon_file());
-        let waffen = crate::waffen::WAFFEN.iter().map(|w| w.datei).chain(["schmiedehammer", "zauberstab"]);
+        let waffen = crate::waffen::WAFFEN.iter().map(|w| w.datei).chain(["schmiedehammer", "zauberstab", "jagdbogen", "runenklinge"]);
+        let waffen = waffen.chain(crate::ruestung::RUESTUNGEN.iter().map(|r| r.datei));
         let files = Item::ALL.iter().map(|i| i.icon_file()).chain(werkzeuge).chain(faehigkeiten).chain(waffen);
         for file in files {
             let path = dir.join("icons").join(format!("{file}.png"));
@@ -162,17 +165,27 @@ pub struct InventoryUi {
     auswahl: (usize, f64),
     icons: Option<Icons>,
     tab: Tab,
-    /// Waffe, die im Fenster angeklickt wurde (das Spiel holt sie ab und rüstet sie aus)
-    pub ausruesten: Option<u8>,
+    /// Was im Fenster angelegt bzw. abgelegt wurde (das Spiel holt es ab und schickt es an den Server)
+    pub anlegen: Option<crate::protocol::Anlegen>,
+    /// Was gerade mit der Maus gezogen wird (und ob es von einem Ausrüstungsplatz kommt)
+    ziehen: Option<(Ding, bool)>,
+    /// Nur für Screenshots: Tooltip dieses Platzes im Reiter Ausrüstung immer zeigen
+    demo_tooltip: Option<usize>,
 }
 
 impl Default for InventoryUi {
     fn default() -> Self {
-        InventoryUi { icons: None, tab: Tab::All, ausruesten: None, auswahl: (usize::MAX, 0.0) }
+        InventoryUi { icons: None, tab: Tab::All, anlegen: None, ziehen: None, demo_tooltip: None, auswahl: (usize::MAX, 0.0) }
     }
 }
 
 impl InventoryUi {
+    /// Nur für Screenshots: Reiter Ausrüstung mit dem Tooltip eines Platzes.
+    pub fn demo(&mut self, platz: usize) {
+        self.tab = Tab::Ausruestung;
+        self.demo_tooltip = Some(platz);
+    }
+
     fn icons(&mut self, ctx: &egui::Context) -> &Icons {
         self.icons.get_or_insert_with(|| Icons::load(ctx))
     }
@@ -182,8 +195,10 @@ impl InventoryUi {
         self.icons(ctx);
         let width = MARGIN * 2.0 + COLUMNS as f32 * SLOT + (COLUMNS - 1) as f32 * GAP;
         let grid_height = ROWS as f32 * SLOT + (ROWS - 1) as f32 * GAP;
-        let height = MARGIN + HEADER + TABS + 12.0 + grid_height + FOOTER + MARGIN * 0.5;
+        let height = MARGIN + HEADER + AUSRUESTUNG + TABS + 12.0 + grid_height + FOOTER + MARGIN * 0.5;
         let mut close = false;
+        // Wohin gezogen werden kann: die vier Ausrüstungsplätze (Rechteck, Nummer)
+        let mut ziele: Vec<(Rect, usize)> = Vec::new();
 
         egui::Area::new(egui::Id::new("inventar_fenster")).anchor(Align2::RIGHT_CENTER, [-22.0, 0.0]).show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
@@ -210,9 +225,60 @@ impl InventoryUi {
             if response.on_hover_text("Schließen (I oder Esc)").clicked() {
                 close = true;
             }
+            let icons = self.icons.as_ref().expect("Symbole geladen");
+
+            // ---------- Ausrüstung: Waffe, Kopf, Brust, Füße ----------
+            let equip_top = rect.top() + MARGIN + HEADER;
+            let gezogen = self.ziehen.map(|(ding, _)| ding);
+            let getragen = getragene_dinge(inventory, class);
+            let platz_breite = 64.0;
+            let abstand = (width - MARGIN * 2.0 - 4.0 * platz_breite) / 3.0;
+            for (nummer, (titel, ding)) in ["Waffe", "Kopf", "Brust", "Füße"].into_iter().zip(getragen).enumerate() {
+                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + nummer as f32 * (platz_breite + abstand) + (platz_breite - 56.0) / 2.0, equip_top + 16.0), egui::vec2(56.0, 56.0));
+                ziele.push((slot_rect, nummer));
+                painter.text(egui::pos2(slot_rect.center().x, equip_top + 7.0), Align2::CENTER_CENTER, titel, FontId::proportional(12.5), MUTED);
+                let response = ui.interact(slot_rect, egui::Id::new(("inventar_ausruestung", nummer)), egui::Sense::click_and_drag());
+                // Leuchtet, wenn etwas Passendes gezogen wird
+                let passt = gezogen.is_some_and(|d| d.passt(class) && d.platz() == nummer);
+                slot_frame(&painter, slot_rect, response.hovered() || passt, ding.is_some());
+                if passt {
+                    painter.rect_stroke(slot_rect.expand(3.0), 6.0, Stroke::new(2.5, GOLD_LIGHT), StrokeKind::Outside);
+                }
+                match ding {
+                    Some(d) => {
+                        if let Some(s) = d.seltenheit() {
+                            painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(s)), StrokeKind::Inside);
+                        }
+                        if !icons.paint_file(&painter, slot_rect.shrink(3.0), d.datei(class), Color32::WHITE) {
+                            painter.text(slot_rect.center(), Align2::CENTER_CENTER, &d.name(class)[..1], FontId::proportional(20.0), PARCHMENT);
+                        }
+                        let abnehmbar = !matches!(d, Ding::Waffe(0));
+                        if response.drag_started() && abnehmbar {
+                            self.ziehen = Some((d, true));
+                        }
+                        if response.secondary_clicked() && abnehmbar {
+                            self.anlegen = Some(d.ablegen());
+                        }
+                        let hinweis = if abnehmbar { "Rechtsklick oder herausziehen: ablegen" } else { "Startwaffe" };
+                        response.on_hover_ui(|ui| ding_tooltip(ui, icons, d, class, Some(hinweis)));
+                    }
+                    None => {
+                        // Leerer Platz: blasses Symbol der Art
+                        painter.text(slot_rect.center(), Align2::CENTER_CENTER, ["⚔", "⛑", "🛡", "👢"][nummer], FontId::proportional(22.0), Color32::from_white_alpha(28));
+                        response.on_hover_text(format!("{titel}: leer – Rüstung hierher ziehen"));
+                    }
+                }
+            }
+            // Werte der ganzen Ausrüstung
+            let werte = gesamtwerte(inventory, class);
+            let oben = format!("{:.0} Leben  ·  Schutz {:.0} %  ·  Schaden +{:.0} %", werte.0, werte.1 * 100.0, (werte.2 - 1.0) * 100.0);
+            let unten = format!("Abklingzeiten −{:.0} %  ·  Kritische Treffer {:.0} %", (1.0 - werte.3) * 100.0, werte.4 * 100.0);
+            painter.text(egui::pos2(rect.center().x, equip_top + 84.0), Align2::CENTER_CENTER, oben, FontId::proportional(12.5), PARCHMENT);
+            painter.text(egui::pos2(rect.center().x, equip_top + 99.0), Align2::CENTER_CENTER, unten, FontId::proportional(12.5), PARCHMENT);
+            divider(&painter, rect.left() + MARGIN, rect.right() - MARGIN, equip_top + AUSRUESTUNG - 12.0);
 
             // ---------- Reiter ----------
-            let tabs_top = rect.top() + MARGIN + HEADER;
+            let tabs_top = equip_top + AUSRUESTUNG;
             let tab_width = (width - MARGIN * 2.0 - 3.0 * 6.0) / 4.0;
             for (index, tab) in Tab::ALL.into_iter().enumerate() {
                 let tab_rect = Rect::from_min_size(
@@ -229,73 +295,57 @@ impl InventoryUi {
             // ---------- Plätze ----------
             let items: Vec<(Item, u32)> = inventory.items().filter(|&(item, _)| self.tab.shows(item)).collect();
             let grid_top = tabs_top + TABS + 10.0;
-            let icons = self.icons.as_ref().expect("Symbole geladen");
-            // Waffen: Startwaffe und alle erbeuteten; Klick rüstet aus
-            let waffen: Vec<u8> = std::iter::once(0).chain(crate::waffen::WAFFEN.iter().filter(|w| inventory.waffen & (1u32 << w.id) != 0).map(|w| w.id)).collect();
+            // Ausrüstung: Startwaffe, erbeutete Waffen und Rüstung – die eigene Klasse zuerst
+            let mut dinge: Vec<Ding> = std::iter::once(Ding::Waffe(0))
+                .chain(crate::waffen::WAFFEN.iter().filter(|w| inventory.waffen & (1u32 << w.id) != 0).map(|w| Ding::Waffe(w.id)))
+                .chain(crate::ruestung::RUESTUNGEN.iter().filter(|r| inventory.ruestungen & (1u32 << r.id) != 0).map(|r| Ding::Ruestung(r.id)))
+                .collect();
+            dinge.sort_by_key(|d| (!d.passt(class), d.platz()));
             for slot in 0..COLUMNS * ROWS {
-                if self.tab != Tab::Waffen {
-                    break;
-                }
                 let (column, row) = (slot % COLUMNS, slot / COLUMNS);
                 let slot_rect = Rect::from_min_size(
                     egui::pos2(rect.left() + MARGIN + column as f32 * (SLOT + GAP), grid_top + row as f32 * (SLOT + GAP)),
                     egui::vec2(SLOT, SLOT),
                 );
-                let waffe = waffen.get(slot).copied();
-                let response = ui.interact(slot_rect, egui::Id::new(("inventar_waffe", slot)), egui::Sense::click());
-                slot_frame(&painter, slot_rect, response.hovered() && waffe.is_some(), waffe.is_some());
-                let Some(id) = waffe else { continue };
-                let w = crate::waffen::waffe(id);
-                let eigene = w.is_none_or(|w| w.klasse == class);
-                let getragen = (id == 0 && crate::waffen::ausgeruestet(inventory.waffe, class).is_none()) || (id != 0 && inventory.waffe == id && eigene);
-                if let Some(w) = w {
-                    painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(w.seltenheit)), StrokeKind::Inside);
-                }
-                let datei = w.map_or(startwaffe_symbol(class), |w| w.datei);
-                let tint = if eigene { Color32::WHITE } else { Color32::from_gray(90) };
-                if !icons.paint_file(&painter, slot_rect.shrink(3.0), datei, tint) {
-                    let name = w.map_or(crate::waffen::startwaffe(class), |w| w.name);
-                    painter.text(slot_rect.center(), Align2::CENTER_CENTER, &name[..1], FontId::proportional(20.0), PARCHMENT);
-                }
-                if getragen {
-                    painter.rect_stroke(slot_rect.expand(2.0), 6.0, Stroke::new(2.5, GOLD_LIGHT), StrokeKind::Outside);
-                    painter.text(slot_rect.right_top() + egui::vec2(-4.0, 2.0), Align2::RIGHT_TOP, "✔", FontId::proportional(14.0), GOLD_LIGHT);
-                }
-                if response.clicked() && eigene && !getragen {
-                    self.ausruesten = Some(id);
-                }
-                response.on_hover_ui(|ui| {
-                    ui.set_max_width(280.0);
-                    match w {
-                        Some(w) => {
-                            ui.label(egui::RichText::new(w.name).size(18.0).strong().color(seltenheit_farbe(w.seltenheit)));
-                            ui.label(egui::RichText::new(format!("{} · {}", w.seltenheit.label(), match w.klasse {
-                                crate::protocol::CharacterClass::Zwerg => "Hammer (Zwerg)",
-                                crate::protocol::CharacterClass::Bogenschuetze => "Bogen (Bogenschütze)",
-                                crate::protocol::CharacterClass::Rogue => "Klinge (Schurke)",
-                                _ => "Stab (Magier)",
-                            })).size(13.0).color(GOLD));
-                            ui.label(egui::RichText::new(crate::waffen::werte_zeile(w)).size(14.0).color(Color32::WHITE));
-                            ui.label(egui::RichText::new(w.beschreibung).size(13.0).italics().color(PARCHMENT));
-                        }
-                        None => {
-                            ui.label(egui::RichText::new(crate::waffen::startwaffe(class)).size(18.0).strong().color(Color32::WHITE));
-                            ui.label(egui::RichText::new("Startwaffe · keine Boni").size(13.0).color(GOLD));
-                        }
+                if self.tab == Tab::Ausruestung {
+                    let ding = dinge.get(slot).copied();
+                    let response = ui.interact(slot_rect, egui::Id::new(("inventar_ding", slot)), egui::Sense::click_and_drag());
+                    slot_frame(&painter, slot_rect, response.hovered() && ding.is_some(), ding.is_some());
+                    let Some(d) = ding else { continue };
+                    let eigene = d.passt(class);
+                    let angelegt = getragen[d.platz()] == Some(d);
+                    if let Some(s) = d.seltenheit() {
+                        painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(s)), StrokeKind::Inside);
                     }
-                    let zeile = if getragen { "In der Hand" } else if eigene { "Klick: ausrüsten" } else { "Passt nicht zu deiner Figur" };
-                    ui.label(egui::RichText::new(zeile).size(13.0).color(MUTED));
-                });
-            }
-            for slot in 0..COLUMNS * ROWS {
-                if self.tab == Tab::Waffen {
-                    break;
+                    let tint = if eigene { Color32::WHITE } else { Color32::from_gray(90) };
+                    if !icons.paint_file(&painter, slot_rect.shrink(3.0), d.datei(class), tint) {
+                        painter.text(slot_rect.center(), Align2::CENTER_CENTER, &d.name(class)[..1], FontId::proportional(20.0), PARCHMENT);
+                    }
+                    if angelegt {
+                        painter.rect_stroke(slot_rect.expand(2.0), 6.0, Stroke::new(2.5, GOLD_LIGHT), StrokeKind::Outside);
+                        painter.text(slot_rect.right_top() + egui::vec2(-4.0, 2.0), Align2::RIGHT_TOP, "✔", FontId::proportional(14.0), GOLD_LIGHT);
+                    }
+                    if response.drag_started() && eigene {
+                        self.ziehen = Some((d, false));
+                    }
+                    if (response.double_clicked() || response.clicked()) && eigene && !angelegt {
+                        self.anlegen = Some(d.anlegen());
+                    }
+                    let hinweis = if angelegt {
+                        "Angelegt"
+                    } else if eigene {
+                        "Auf den Ausrüstungsplatz ziehen oder klicken"
+                    } else {
+                        "Passt nicht zu deiner Figur"
+                    };
+                    if self.demo_tooltip == Some(slot) {
+                        egui::Area::new(egui::Id::new("inventar_demo_tooltip")).order(egui::Order::Tooltip).fixed_pos(slot_rect.left_bottom() + egui::vec2(-300.0, 8.0)).show(ui.ctx(), |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| ding_tooltip(ui, icons, d, class, Some(hinweis)));
+                        });
+                    }
+                    response.on_hover_ui(|ui| ding_tooltip(ui, icons, d, class, Some(hinweis)));
+                    continue;
                 }
-                let (column, row) = (slot % COLUMNS, slot / COLUMNS);
-                let slot_rect = Rect::from_min_size(
-                    egui::pos2(rect.left() + MARGIN + column as f32 * (SLOT + GAP), grid_top + row as f32 * (SLOT + GAP)),
-                    egui::vec2(SLOT, SLOT),
-                );
                 let filled = items.get(slot).copied();
                 let response = ui.interact(slot_rect, egui::Id::new(("inventar_platz", slot)), egui::Sense::hover());
                 let hovered = response.hovered() && filled.is_some();
@@ -321,6 +371,26 @@ impl InventoryUi {
             painter.rect_stroke(bar, 3.0, Stroke::new(1.0, BRONZE), StrokeKind::Outside);
             key_hint(&painter, egui::pos2(rect.right() - MARGIN, footer_top + 22.0), "I", "Schließen");
         });
+
+        // ---------- Ziehen: Symbol am Mauszeiger, beim Loslassen anlegen bzw. ablegen ----------
+        if let Some((ding, aus_ausruestung)) = self.ziehen {
+            let zeiger = ctx.pointer_latest_pos();
+            if let (Some(p), Some(icons)) = (zeiger, self.icons.as_ref()) {
+                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("inventar_ziehen")));
+                let r = Rect::from_center_size(p, egui::vec2(48.0, 48.0));
+                painter.rect_filled(r, 6.0, Color32::from_black_alpha(120));
+                icons.paint_file(&painter, r.shrink(2.0), ding.datei(class), Color32::from_white_alpha(230));
+            }
+            if ctx.input(|i| i.pointer.any_released()) {
+                self.ziehen = None;
+                let ziel = zeiger.and_then(|p| ziele.iter().find(|(r, _)| r.expand(6.0).contains(p)).map(|&(_, n)| n));
+                match ziel {
+                    Some(n) if n == ding.platz() && ding.passt(class) && !aus_ausruestung => self.anlegen = Some(ding.anlegen()),
+                    None if aus_ausruestung => self.anlegen = Some(ding.ablegen()),
+                    _ => {}
+                }
+            }
+        }
         close
     }
 
@@ -643,4 +713,148 @@ fn tooltip(ui: &mut egui::Ui, icons: &Icons, item: Item, count: u32) {
     ui.add_space(2.0);
     ui.label(egui::RichText::new(item.description()).size(14.0).italics().color(PARCHMENT));
     ui.label(egui::RichText::new(format!("Anzahl: {count}")).size(13.0).color(MUTED));
+}
+
+/// Ein Ausrüstungsgegenstand im Inventar: Waffe (0 = Startwaffe) oder Rüstungsteil.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ding {
+    Waffe(u8),
+    Ruestung(u8),
+}
+
+impl Ding {
+    fn waffe(self) -> Option<&'static crate::waffen::Waffe> {
+        match self {
+            Ding::Waffe(id) => crate::waffen::waffe(id),
+            Ding::Ruestung(_) => None,
+        }
+    }
+
+    fn ruestung(self) -> Option<&'static crate::ruestung::Ruestung> {
+        match self {
+            Ding::Ruestung(id) => crate::ruestung::ruestung(id),
+            Ding::Waffe(_) => None,
+        }
+    }
+
+    fn name(self, class: crate::protocol::CharacterClass) -> &'static str {
+        match self {
+            Ding::Waffe(0) => crate::waffen::startwaffe(class),
+            Ding::Waffe(_) => self.waffe().map_or("Waffe", |w| w.name),
+            Ding::Ruestung(_) => self.ruestung().map_or("Rüstung", |r| r.name),
+        }
+    }
+
+    fn datei(self, class: crate::protocol::CharacterClass) -> &'static str {
+        match self {
+            Ding::Waffe(0) => startwaffe_symbol(class),
+            Ding::Waffe(_) => self.waffe().map_or(startwaffe_symbol(class), |w| w.datei),
+            Ding::Ruestung(_) => self.ruestung().map_or("beute_gold", |r| r.datei),
+        }
+    }
+
+    fn seltenheit(self) -> Option<crate::waffen::Seltenheit> {
+        self.waffe().map(|w| w.seltenheit).or_else(|| self.ruestung().map(|r| r.seltenheit))
+    }
+
+    /// Passt zur Figur (die Startwaffe immer).
+    fn passt(self, class: crate::protocol::CharacterClass) -> bool {
+        match self {
+            Ding::Waffe(0) => true,
+            Ding::Waffe(_) => self.waffe().is_some_and(|w| w.klasse == class),
+            Ding::Ruestung(_) => self.ruestung().is_some_and(|r| r.klasse == class),
+        }
+    }
+
+    /// Ausrüstungsplatz: 0 Waffe, 1 Kopf, 2 Brust, 3 Füße.
+    fn platz(self) -> usize {
+        match self {
+            Ding::Waffe(_) => 0,
+            Ding::Ruestung(_) => self.ruestung().map_or(1, |r| r.platz.index() + 1),
+        }
+    }
+
+    fn anlegen(self) -> crate::protocol::Anlegen {
+        match self {
+            Ding::Waffe(id) => crate::protocol::Anlegen::Waffe(id),
+            Ding::Ruestung(id) => crate::protocol::Anlegen::Ruestung(self.platz() as u8 - 1, id),
+        }
+    }
+
+    fn ablegen(self) -> crate::protocol::Anlegen {
+        match self {
+            Ding::Waffe(_) => crate::protocol::Anlegen::Waffe(0),
+            Ding::Ruestung(_) => crate::protocol::Anlegen::Ruestung(self.platz() as u8 - 1, 0),
+        }
+    }
+}
+
+/// Was auf den vier Ausrüstungsplätzen liegt (nur Teile, die zur Figur passen).
+fn getragene_dinge(inventory: &Inventory, class: crate::protocol::CharacterClass) -> [Option<Ding>; 4] {
+    let waffe = Ding::Waffe(if crate::waffen::ausgeruestet(inventory.waffe, class).is_some() { inventory.waffe } else { 0 });
+    let teil = |i: usize| Some(Ding::Ruestung(inventory.ruestung[i])).filter(|d| d.passt(class));
+    [Some(waffe), teil(0), teil(1), teil(2)]
+}
+
+/// Leben, Schutz, Schaden, Abklingen und Krit der ganzen Ausrüstung.
+fn gesamtwerte(inventory: &Inventory, class: crate::protocol::CharacterClass) -> (f32, f32, f32, f32, f32) {
+    let r = crate::ruestung::summe(inventory.ruestung, class);
+    let w = crate::waffen::ausgeruestet(inventory.waffe, class);
+    let leben = (class.max_leben() + r.leben) as f32;
+    let schaden = w.map_or(1.0, |w| w.schaden) * r.schaden;
+    let abklingen = w.map_or(1.0, |w| w.abklingen) * r.abklingen;
+    let krit = w.map_or(0.0, |w| w.krit) + r.krit;
+    (leben, r.schutz, schaden, abklingen, krit)
+}
+
+/// Tooltip einer Waffe oder eines Rüstungsteils: Symbol, Name, Seltenheit und Art, alle Werte,
+/// Wert in Gold, Beschreibung und was man damit tun kann.
+fn ding_tooltip(ui: &mut egui::Ui, icons: &Icons, ding: Ding, class: crate::protocol::CharacterClass, hinweis: Option<&str>) {
+    ui.set_max_width(290.0);
+    let farbe = ding.seltenheit().map_or(Color32::WHITE, seltenheit_farbe);
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(52.0, 52.0), egui::Sense::hover());
+        slot_frame(ui.painter(), rect, false, true);
+        ui.painter().rect_stroke(rect.shrink(1.0), 4.0, Stroke::new(2.0, farbe), StrokeKind::Inside);
+        icons.paint_file(ui.painter(), rect.shrink(3.0), ding.datei(class), Color32::WHITE);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(egui::RichText::new(ding.name(class)).size(18.0).strong().color(farbe));
+            let art = match (ding.waffe(), ding.ruestung()) {
+                (Some(w), _) => format!("{} · {}", w.seltenheit.label(), waffen_art(w.klasse)),
+                (_, Some(r)) => format!("{} · {} ({})", r.seltenheit.label(), r.platz.label(), r.klasse.label()),
+                _ => "Startwaffe".to_string(),
+            };
+            ui.label(egui::RichText::new(art).size(13.0).color(GOLD));
+        });
+    });
+    ui.add_space(3.0);
+    let zeilen = match (ding.waffe(), ding.ruestung()) {
+        (Some(w), _) => w.werte_zeilen(),
+        (_, Some(r)) => r.werte_zeilen(),
+        _ => vec!["Keine Boni".to_string()],
+    };
+    for z in zeilen {
+        ui.label(egui::RichText::new(format!("• {z}")).size(14.0).color(Color32::from_rgb(170, 230, 150)));
+    }
+    let wert = ding.waffe().map(|w| w.wert()).or_else(|| ding.ruestung().map(|r| r.wert()));
+    if let Some(wert) = wert {
+        ui.label(egui::RichText::new(format!("Wert: {wert} Gold")).size(14.0).strong().color(GOLD_LIGHT));
+    }
+    let text = ding.waffe().map(|w| w.beschreibung).or_else(|| ding.ruestung().map(|r| r.beschreibung));
+    if let Some(text) = text {
+        ui.label(egui::RichText::new(text).size(13.0).italics().color(PARCHMENT));
+    }
+    if let Some(h) = hinweis {
+        ui.label(egui::RichText::new(h).size(12.5).color(MUTED));
+    }
+}
+
+fn waffen_art(klasse: crate::protocol::CharacterClass) -> &'static str {
+    match klasse {
+        crate::protocol::CharacterClass::Zwerg => "Hammer (Zwerg)",
+        crate::protocol::CharacterClass::Bogenschuetze => "Bogen (Bogenschütze)",
+        crate::protocol::CharacterClass::Rogue => "Klinge (Schurke)",
+        _ => "Stab (Magier)",
+    }
 }
