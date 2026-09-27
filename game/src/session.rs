@@ -48,7 +48,11 @@ impl Session {
                 let net = NetServer::listen(*port, PROTOCOL_ID, max_clients)
                     .map_err(|e| format!("Port {port} lässt sich nicht öffnen: {e}"))?;
                 log::info!("Server läuft an Port {}", net.port());
-                (Some(Authority::new(Some(net), save_path)), None)
+                let mut authority = Authority::new(Some(net), save_path);
+                // Für den Serverbrowser: Statusanfragen auf Port + 1 beantworten
+                let name = if matches!(mode, Mode::Host { .. }) { format!("Spiel von {}", hello.name) } else { "Insel-Server".to_string() };
+                authority.status_starten(name, *port, max_clients as u16);
+                (Some(authority), None)
             }
             Mode::Join { address } => {
                 let replica = Replica::connect(address, hello).map_err(|e| format!("{address} ist nicht erreichbar: {e}"))?;

@@ -31,6 +31,7 @@ mod protocol;
 mod server;
 mod save;
 mod session;
+mod status;
 mod sounds;
 mod settings;
 mod ui;

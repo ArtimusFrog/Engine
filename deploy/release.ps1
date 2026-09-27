@@ -75,6 +75,11 @@ if ($lauf) {
     cargo run --release -q -p launcher --bin release -- mac --von $ziel; Pruefe 'Mac-Version hinzufügen'
 }
 
+Schritt 'Serverliste für den Serverbrowser'
+$serverHost = ((Get-Content deploy\server.txt -TotalCount 1).Trim() -split '@')[-1]
+$liste = '[{"name": "Offizieller Server", "adresse": "' + $serverHost + ':7777"}]'
+Set-Content -Path dist\web\server.json -Value $liste -Encoding ascii
+
 Schritt 'Auf die Webseite hochladen'
 node deploy\web\hochladen.mjs; Pruefe 'Hochladen'
 

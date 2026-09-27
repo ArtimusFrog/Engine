@@ -39,6 +39,8 @@ echo "== Firewall: SSH und Spiel-Port (UDP $PORT) =="
 # Erst SSH erlauben, dann einschalten – sonst sperrt man sich selbst aus.
 ufw allow OpenSSH
 ufw allow "$PORT/udp"
+# Serverbrowser: Statusanfragen auf dem Port daneben
+ufw allow "$((PORT + 1))/udp"
 ufw --force enable
 
 echo "== Dienst =="

@@ -23,16 +23,38 @@ enum Screen {
     Gallery,
     Join,
     Settings,
+    /// Ladebildschirm: die Welt entsteht (danach Spielen bzw. Verbinden)
+    Laden,
     Connecting,
     Playing,
     Paused,
 }
+
+/// Tipps auf dem Ladebildschirm.
+const LADE_TIPPS: [&str; 10] = [
+    "Vier Runenfragmente aus den Lagern der Wildnis ergeben am Runenbrunnen der Burg einen Runenstein.",
+    "Gegner lassen ihre Beute fallen – mit E hebst du sie auf, bevor sie nach fünf Minuten verschwindet.",
+    "Waffen gibt es in vier Seltenheiten. Die Farbe der Lichtsäule verrät, wie wertvoll sie ist.",
+    "Je näher ein Lager an der Schattenfestung liegt, desto gefährlicher – und desto besser die Beute.",
+    "Nach acht Sekunden ohne Treffer heilst du dich von selbst.",
+    "Die Frostnova des Magiers bremst Gegner stark – ideal, um Abstand zu gewinnen.",
+    "Das Erdbeben des Zwergs betäubt alles um ihn herum.",
+    "R zeigt den Bauradius deiner Siedlung und freie Siedlungsplätze.",
+    "Mit T öffnest du das Verteidigungsfenster und rufst Wellen früher.",
+    "Im Inventar (I) rüstest du unter „Waffen“ erbeutete Stäbe und Hämmer aus.",
+];
 
 pub struct Playground {
     /// Direkt in eine Runde starten (Kommandozeile), statt ins Hauptmenü.
     start: Option<Mode>,
     settings: Settings,
     session: Option<Session>,
+    /// Ladebildschirm: welche Runde startet und wie viele Bilder er schon zu sehen war
+    laden: Option<(Mode, u32)>,
+    /// Tipp auf dem Ladebildschirm
+    lade_tipp: usize,
+    /// Serverbrowser: laufende Suche nach offenen Spielen
+    suche: Option<crate::status::Suche>,
     /// Kulisse hinter dem Hauptmenü.
     menu_world: Option<World>,
     /// Kamerafahrten, Titel und Effekte des Hauptmenüs.
@@ -157,6 +179,9 @@ impl Playground {
             menu_world: None,
             title: None,
             screen: Screen::MainMenu,
+            laden: None,
+            lade_tipp: 0,
+            suche: None,
             settings_return: Screen::MainMenu,
             error: None,
             connect_started: 0.0,
@@ -1300,6 +1325,7 @@ impl Playground {
             }
             if epic_button(ui, "Beitreten", width).clicked() {
                 self.screen = Screen::Join;
+                self.suche = Some(crate::status::Suche::starten(&self.settings.zuletzt));
             }
             if epic_button(ui, "Einstellungen", width).clicked() {
                 self.settings_return = Screen::MainMenu;
@@ -1322,46 +1348,180 @@ impl Playground {
             self.open_gallery(ctx);
         }
         if let Some(mode) = action {
-            self.start_session(ctx, mode);
+            self.laden_starten(mode);
         }
     }
 
-    fn join_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
-        let mut connect = false;
-        ui::dim_background(egui_ctx, 90);
-        ui::center_panel(egui_ctx, "beitreten", 420.0, |ui| {
-            ui::heading(ui, "Beitreten");
-            ui.label(RichText::new("Adresse des Hosts oder Servers").color(ui::MUTED));
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut self.join_address)
-                    .hint_text("z. B. 100.64.1.2 oder spiel.example.com")
-                    .desired_width(f32::INFINITY),
-            );
-            if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                connect = true;
+    /// Zeigt den Ladebildschirm; die Runde startet, sobald er zu sehen ist.
+    fn laden_starten(&mut self, mode: Mode) {
+        self.lade_tipp = (self.start_zeit_tipp() as usize) % LADE_TIPPS.len();
+        self.laden = Some((mode, 0));
+        self.screen = Screen::Laden;
+    }
+
+    fn start_zeit_tipp(&self) -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    }
+
+    /// Ladebildschirm (beim Starten und beim Verbinden): Titel, Fortschritt, ein Tipp.
+    fn lade_bildschirm(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        let verbinden = self.screen == Screen::Connecting;
+        let adresse = match self.session.as_ref().map(Session::mode) {
+            Some(Mode::Join { address }) => address.clone(),
+            _ => String::new(),
+        };
+        let mut abbrechen = false;
+        let jetzt = ctx.time.elapsed;
+        egui::Area::new(egui::Id::new("ladebildschirm")).fixed_pos(egui::pos2(0.0, 0.0)).order(egui::Order::Foreground).show(egui_ctx, |ui| {
+            let rect = egui_ctx.content_rect();
+            ui.allocate_exact_size(rect.size(), egui::Sense::hover());
+            let painter = ui.painter();
+            // Hintergrund: dunkles Leder mit warmem Schein in der Mitte
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(14, 11, 9));
+            for i in 0..12 {
+                let r = rect.width().max(rect.height()) * (0.12 + i as f32 * 0.07);
+                painter.circle_filled(rect.center() - egui::vec2(0.0, 40.0), r, Color32::from_rgba_unmultiplied(120, 80, 30, 6));
             }
-            ui.label(
-                RichText::new(format!("Ohne Angabe wird Port {DEFAULT_PORT} benutzt. Du spielst als „{}“.", self.settings.name))
-                    .size(14.0)
-                    .color(ui::MUTED),
-            );
+            let mitte = rect.center();
+            let titel = mitte - egui::vec2(0.0, 150.0);
+            crate::inventar::spaced_text(painter, titel + egui::vec2(3.0, 4.0), "ENGINE JN", 72.0, Color32::from_black_alpha(220));
+            crate::inventar::spaced_text(painter, titel, "ENGINE JN", 72.0, crate::inventar::GOLD_LIGHT);
+            crate::inventar::divider(painter, mitte.x - 220.0, mitte.x + 220.0, titel.y + 52.0);
+            crate::inventar::spaced_text(painter, titel + egui::vec2(0.0, 76.0), "FANTASY-INSEL  ·  MULTIPLAYER", 15.0, crate::inventar::PARCHMENT);
+            // Fortschritt: ein wandernder Lichtstreif auf einem goldgerahmten Balken
+            let balken = egui::Rect::from_center_size(mitte + egui::vec2(0.0, 40.0), egui::vec2(460.0, 14.0));
+            painter.rect_filled(balken.expand(3.0), 6.0, Color32::from_rgb(8, 6, 5));
+            painter.rect_stroke(balken.expand(3.0), 6.0, egui::Stroke::new(1.2, crate::inventar::GOLD_DARK), egui::StrokeKind::Inside);
+            let phase = (jetzt * 0.45).fract();
+            let breite = balken.width() * 0.3;
+            let links = balken.left() - breite + (balken.width() + breite) * phase;
+            let streif = egui::Rect::from_min_max(egui::pos2(links.max(balken.left()), balken.top()), egui::pos2((links + breite).min(balken.right()), balken.bottom()));
+            if streif.width() > 0.0 {
+                painter.rect_filled(streif, 4.0, crate::inventar::GOLD);
+            }
+            let status = if verbinden { format!("Verbinde mit {adresse} …") } else { "Die Insel erwacht – Wälder wachsen, Lager werden aufgeschlagen …".to_string() };
+            painter.text(balken.center() + egui::vec2(0.0, -30.0), Align2::CENTER_CENTER, status, egui::FontId::proportional(19.0), Color32::WHITE);
+            let tipp = format!("Tipp: {}", LADE_TIPPS[self.lade_tipp % LADE_TIPPS.len()]);
+            painter.text(mitte + egui::vec2(0.0, 110.0), Align2::CENTER_CENTER, tipp, egui::FontId::proportional(16.0), crate::inventar::MUTED);
+            if verbinden {
+                let knopf = egui::Rect::from_center_size(mitte + egui::vec2(0.0, 170.0), egui::vec2(220.0, 44.0));
+                let mut kind = ui.new_child(egui::UiBuilder::new().max_rect(knopf));
+                if crate::hauptmenue::epic_button(&mut kind, "Abbrechen", 220.0).clicked() {
+                    abbrechen = true;
+                }
+            }
+        });
+        if abbrechen {
+            self.show_menu(ctx, None);
+        }
+    }
+
+    /// Serverbrowser: offizielle Server, Spiele im Heimnetz und die zuletzt benutzten – mit
+    /// Spielerzahl und Ping. Unten kann man weiterhin eine Adresse eintippen.
+    fn server_browser(&mut self, _ctx: &mut Context, egui_ctx: &egui::Context) {
+        let mut beitreten: Option<String> = None;
+        let Some(suche) = &mut self.suche else {
+            self.suche = Some(crate::status::Suche::starten(&self.settings.zuletzt));
+            return;
+        };
+        suche.abholen();
+        if suche.alter() > std::time::Duration::from_secs(6) {
+            suche.aktualisieren();
+        }
+        let mut aktualisieren = false;
+        let mut zurueck = false;
+        ui::dim_background(egui_ctx, 110);
+        ui::center_panel(egui_ctx, "serverbrowser", 640.0, |ui| {
+            ui::heading(ui, "Spiel beitreten");
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("Du spielst als „{}“ ({}).", self.settings.name, self.settings.character.label())).size(14.0).color(ui::MUTED));
+                if suche.sucht() {
+                    ui.add(egui::Spinner::new().size(16.0).color(ui::ACCENT));
+                    ui.label(RichText::new("Suche …").size(14.0).color(ui::MUTED));
+                }
+            });
+            ui.add_space(6.0);
+            let mut eintraege: Vec<&crate::status::Eintrag> = suche.eintraege.values().collect();
+            eintraege.sort_by(|a, b| (a.herkunft, a.status.is_none(), &a.name).cmp(&(b.herkunft, b.status.is_none(), &b.name)));
+            egui::ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
+                if eintraege.is_empty() {
+                    ui.label(RichText::new("Noch keine Spiele gefunden. Wer im selben Netz „Spiel hosten“ wählt, erscheint hier von selbst.").size(15.0).color(ui::MUTED));
+                }
+                let mut gruppe = None;
+                for e in eintraege {
+                    if gruppe != Some(e.herkunft) {
+                        gruppe = Some(e.herkunft);
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(e.herkunft.label()).size(15.0).strong().color(ui::ACCENT));
+                    }
+                    egui::Frame::new().fill(Color32::from_black_alpha(90)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&e.name).size(18.0).strong());
+                                let zeile = match &e.status {
+                                    Some(s) if !crate::status::Suche::passt(s) => "andere Spielversion – bitte aktualisieren".to_string(),
+                                    Some(s) => {
+                                        let welle = if s.welle > 0 { format!(" · Welle {}", s.welle) } else { String::new() };
+                                        format!("{} · {}/{} Spieler{welle}", e.adresse, s.spieler, s.max)
+                                    }
+                                    None => format!("{} · keine Antwort", e.adresse),
+                                };
+                                ui.label(RichText::new(zeile).size(13.0).color(ui::MUTED));
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let passt = e.status.as_ref().is_none_or(crate::status::Suche::passt);
+                                if ui.add_enabled(passt, egui::Button::new(RichText::new("Beitreten").size(16.0)).min_size(egui::vec2(120.0, 36.0))).clicked() {
+                                    beitreten = Some(e.adresse.clone());
+                                }
+                                if let Some(ping) = e.ping_ms {
+                                    let farbe = if ping < 80 { Color32::from_rgb(120, 220, 120) } else if ping < 160 { Color32::from_rgb(235, 200, 90) } else { Color32::from_rgb(235, 100, 90) };
+                                    ui.label(RichText::new(format!("{ping} ms")).size(14.0).color(farbe));
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+            ui.add_space(10.0);
+            ui.separator();
+            ui.label(RichText::new("Direkt verbinden").size(15.0).strong().color(ui::ACCENT));
+            ui.horizontal(|ui| {
+                let feld = ui.add(egui::TextEdit::singleline(&mut self.join_address).hint_text("IP oder Name, z. B. 100.64.1.2").desired_width(360.0));
+                let enter = feld.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (ui.add_sized([140.0, 30.0], egui::Button::new("Verbinden")).clicked() || enter) && !self.join_address.trim().is_empty() {
+                    beitreten = Some(self.join_address.trim().to_string());
+                }
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.add_sized([180.0, 42.0], egui::Button::new("Verbinden")).clicked() {
-                    connect = true;
+                if ui.add_sized([180.0, 40.0], egui::Button::new("Aktualisieren")).clicked() {
+                    aktualisieren = true;
                 }
-                if ui.add_sized([180.0, 42.0], egui::Button::new("Zurück")).clicked() {
-                    self.screen = Screen::MainMenu;
+                if ui.add_sized([180.0, 40.0], egui::Button::new("Zurück")).clicked() {
+                    zurueck = true;
                 }
             });
         });
-
-        let address = self.join_address.trim().to_string();
-        if connect && !address.is_empty() {
-            self.settings.last_address = address.clone();
+        if aktualisieren {
+            if let Some(suche) = &mut self.suche {
+                suche.aktualisieren();
+            }
+        }
+        if zurueck {
+            self.suche = None;
+            self.screen = Screen::MainMenu;
+        }
+        if let Some(adresse) = beitreten {
+            let adresse = if adresse.contains(':') { adresse } else { format!("{adresse}:{DEFAULT_PORT}") };
+            self.settings.last_address = adresse.clone();
+            self.settings.zuletzt.retain(|a| *a != adresse);
+            self.settings.zuletzt.insert(0, adresse.clone());
+            self.settings.zuletzt.truncate(6);
             self.settings.save();
-            let address = if address.contains(':') { address } else { format!("{address}:{DEFAULT_PORT}") };
-            self.start_session(ctx, Mode::Join { address });
+            self.suche = None;
+            self.laden_starten(Mode::Join { address: adresse });
         }
     }
 
@@ -1444,28 +1604,6 @@ impl Playground {
         self.apply_settings(ctx);
         if close {
             self.close_settings(ctx);
-        }
-    }
-
-    fn connecting_screen(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
-        let mut cancel = false;
-        let address = match self.session.as_ref().map(Session::mode) {
-            Some(Mode::Join { address }) => address.clone(),
-            _ => String::new(),
-        };
-        ui::dim_background(egui_ctx, 120);
-        ui::center_panel(egui_ctx, "verbinden", 380.0, |ui| {
-            ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(26.0).color(ui::ACCENT));
-                ui.label(RichText::new(format!("Verbinde mit {address} …")).size(20.0));
-            });
-            ui.add_space(8.0);
-            if ui::big_button(ui, "Abbrechen").clicked() {
-                cancel = true;
-            }
-        });
-        if cancel {
-            self.show_menu(ctx, None);
         }
     }
 
@@ -1854,6 +1992,7 @@ impl Game for Playground {
         }
         self.demo_brunnen = args.iter().any(|a| a == "--demo-brunnen");
         self.demo_beute = args.iter().any(|a| a == "--demo-beute");
+
         if let Some(i) = args.iter().position(|a| a == "--demo-angriff") {
             self.demo_angriff = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
         }
@@ -1902,6 +2041,13 @@ impl Game for Playground {
         match self.start.take() {
             Some(mode) => self.start_session(ctx, mode),
             None => self.show_menu(ctx, None),
+        }
+        // Nur für Screenshots: Serverbrowser bzw. Ladebildschirm gleich zeigen
+        if args.iter().any(|a| a == "--demo-browser") {
+            self.screen = Screen::Join;
+        }
+        if args.iter().any(|a| a == "--demo-laden") {
+            self.screen = Screen::Laden;
         }
         // Nur für automatische Screenshots: direkt einen bestimmten Bildschirm zeigen.
         let args: Vec<String> = std::env::args().collect();
@@ -1993,6 +2139,16 @@ impl Game for Playground {
             return;
         }
 
+        if self.screen == Screen::Laden {
+            if let Some((mode, bilder)) = &mut self.laden {
+                *bilder += 1;
+                if *bilder >= 3 {
+                    let mode = mode.clone();
+                    self.laden = None;
+                    self.start_session(ctx, mode);
+                }
+            }
+        }
         if self.screen == Screen::Connecting {
             match &self.session {
                 Some(session) if !session.is_connecting() => {
@@ -2402,9 +2558,10 @@ impl Game for Playground {
                     gallery.ui(ctx, egui_ctx);
                 }
             }
-            Screen::Join => self.join_menu(ctx, egui_ctx),
+            Screen::Join => self.server_browser(ctx, egui_ctx),
+            Screen::Laden => self.lade_bildschirm(ctx, egui_ctx),
             Screen::Settings => self.settings_menu(ctx, egui_ctx),
-            Screen::Connecting => self.connecting_screen(ctx, egui_ctx),
+            Screen::Connecting => self.lade_bildschirm(ctx, egui_ctx),
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
             Screen::Playing if self.build_menu_open => self.build_menu(ctx, egui_ctx),

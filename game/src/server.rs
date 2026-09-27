@@ -95,6 +95,8 @@ pub struct Authority {
     /// Beute am Boden: nächste ID und wann sie verschwindet (Takt)
     beute_naechste: u32,
     beute_bis: HashMap<u32, u64>,
+    /// Serverbrowser: beantwortet Statusanfragen (Name, Spielport, höchste Spielerzahl)
+    status: Option<(crate::status::StatusAntwort, String, u16, u16)>,
 }
 
 impl Authority {
@@ -119,7 +121,13 @@ impl Authority {
             rng: Rng::new(0xB0_07E),
             beute_naechste: 1,
             beute_bis: HashMap::new(),
+            status: None,
         }
+    }
+
+    /// Ab jetzt im Serverbrowser sichtbar (Statusanfragen auf `port + 1`).
+    pub fn status_starten(&mut self, name: String, port: u16, max: u16) {
+        self.status = crate::status::StatusAntwort::neu(port).map(|a| (a, name, port, max));
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -163,6 +171,16 @@ impl Authority {
             self.play_input(ctx, world, HOST_PLAYER, &input);
         }
 
+        if let Some((antwort, name, port, max)) = &self.status {
+            antwort.beantworten(|| crate::status::Status {
+                name: name.clone(),
+                spieler: world.players.len() as u16,
+                max: *max,
+                protokoll: PROTOCOL_ID,
+                port: *port,
+                welle: world.heer.welle,
+            });
+        }
         world.day.advance(Physics::FIXED_DT);
         world.advance_buildings(Physics::FIXED_DT);
         self.produce(world);

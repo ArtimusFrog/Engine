@@ -27,6 +27,8 @@ pub struct Settings {
     pub render_scale: u8,
     /// Zuletzt benutzte Server-Adresse.
     pub last_address: String,
+    /// Die letzten Server, mit denen man verbunden war (für den Serverbrowser, neueste zuerst)
+    pub zuletzt: Vec<String>,
     /// Lautstärken 0..1.
     pub volume_master: f32,
     pub volume_effects: f32,
@@ -49,6 +51,7 @@ impl Default for Settings {
             vsync: true,
             render_scale: 0,
             last_address: "127.0.0.1".into(),
+            zuletzt: Vec::new(),
             volume_master: 0.8,
             volume_effects: 0.8,
             volume_ambient: 0.7,
