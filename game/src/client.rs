@@ -216,9 +216,9 @@ impl Replica {
                     world.inventories.insert(local, inventory);
                 }
             }
-            ServerMessage::SpellCast { by, origin, target, hit, art } => {
+            ServerMessage::SpellCast { by, origin, target, hit, art, stufe, kette } => {
                 // Die eigene Animation lief schon beim Klicken.
-                world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id, art);
+                world.cast_spell(ctx, by, origin, target, hit, Some(by) != self.local_id, art, stufe, &kette);
             }
             ServerMessage::SpielerGetroffen { player, schaden } => world.spieler_getroffen(player, schaden),
             ServerMessage::SpielerGefallen { player, von } => world.spieler_gefallen(player, &von),
@@ -258,6 +258,7 @@ impl Replica {
                 if let Some(avatar) = world.players.get_mut(&state.id) {
                     avatar.leben = state.leben as f32;
                     avatar.waffe = state.waffe;
+                    avatar.ladung = state.ladung;
                 }
             }
         }
@@ -364,6 +365,7 @@ impl Replica {
             avatar.tool = target.tool;
             avatar.leben = target.leben as f32;
             avatar.waffe = target.waffe;
+            avatar.ladung = target.ladung;
         }
 
         // Objekte, die nur im älteren Snapshot vorkommen, sind inzwischen zur Ruhe gekommen.

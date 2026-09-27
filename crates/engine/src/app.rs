@@ -377,6 +377,10 @@ struct AutoScreenshot {
     after_frames: u64,
     /// `--ohne-ui`: nur die 3D-Welt, ohne Menüs und Anzeigen.
     with_ui: bool,
+    /// `--serie <anzahl> <abstand>`: so viele Bilder im Abstand von so vielen Frames
+    /// (`name-0.png`, `name-1.png` …) – zum Prüfen von Bewegungen und Effekten.
+    serie: Option<(u32, u64)>,
+    taken: u32,
 }
 
 impl AutoScreenshot {
@@ -385,7 +389,8 @@ impl AutoScreenshot {
         let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1));
         let path = value("--screenshot")?;
         let after_frames = value("--frames").and_then(|n| n.parse().ok()).unwrap_or(30);
-        Some(AutoScreenshot { path: path.into(), after_frames, with_ui: !args.iter().any(|a| a == "--ohne-ui") })
+        let serie = args.iter().position(|a| a == "--serie").and_then(|i| Some((args.get(i + 1)?.parse().ok()?, args.get(i + 2)?.parse().ok()?)));
+        Some(AutoScreenshot { path: path.into(), after_frames, with_ui: !args.iter().any(|a| a == "--ohne-ui"), serie, taken: 0 })
     }
 }
 
@@ -509,12 +514,24 @@ impl App {
                 Err(e) => log::error!("Screenshot fehlgeschlagen: {e}"),
             }
         }
-        if let Some(shot) = &self.auto_screenshot {
+        if let Some(shot) = &mut self.auto_screenshot {
             if self.ctx.time.frame + 1 >= shot.after_frames {
-                match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &shot.path) {
+                let path = match shot.serie {
+                    Some(_) => {
+                        let stem = shot.path.file_stem().and_then(|s| s.to_str()).unwrap_or("bild").to_string();
+                        shot.path.with_file_name(format!("{stem}-{}.png", shot.taken))
+                    }
+                    None => shot.path.clone(),
+                };
+                shot.taken += 1;
+                let weiter = matches!(shot.serie, Some((anzahl, _)) if shot.taken < anzahl);
+                if let Some((_, abstand)) = shot.serie {
+                    shot.after_frames += abstand;
+                }
+                match renderer.screenshot(&self.ctx, shot.with_ui.then_some(&ui_frame), &path) {
                     Ok(()) => println!(
                         "Screenshot gespeichert: {} ({:.0} fps, {} Objekte, {} Draw-Calls; ms: Takt {:.1}, Update {:.1}, UI {:.1}, Zeichnen {:.1}, Warten {:.1}, GPU {:.1} (Schatten {:.1}); Auflösung {:.0} %)",
-                        shot.path.display(),
+                        path.display(),
                         self.ctx.stats.fps,
                         self.ctx.stats.render.instances,
                         self.ctx.stats.render.draw_calls,
@@ -529,7 +546,9 @@ impl App {
                     ),
                     Err(e) => eprintln!("Screenshot fehlgeschlagen: {e}"),
                 }
-                event_loop.exit();
+                if !weiter {
+                    event_loop.exit();
+                }
             }
         }
 

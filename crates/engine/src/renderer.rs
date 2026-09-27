@@ -117,6 +117,8 @@ pub(crate) struct Renderer {
     /// Verformte Figuren: Bild und Schatten, dazu die Knochenmatrizen aller Figuren des Bildes
     skinned_pipeline: wgpu::RenderPipeline,
     skinned_shadow_pipeline: wgpu::RenderPipeline,
+    /// Additives Leuchten (`Material::Glow`, leuchtende Partikel): nach allem anderen, ohne Tiefe
+    glow_pipeline: wgpu::RenderPipeline,
     palette_layout: wgpu::BindGroupLayout,
     palette_buffer: wgpu::Buffer,
     palette_bind_group: wgpu::BindGroup,
@@ -378,6 +380,39 @@ impl Renderer {
         };
         let pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Main);
         let double_sided_pipeline = main_pipeline(None, DrawStage::Main);
+        // Leuchten: beidseitig, verdeckt nichts (keine Tiefe schreiben), wird verdeckt, addiert Licht
+        let additive = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
+        let glow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("leuchten"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &vertex_buffers,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_glow"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState { color: additive, alpha: additive }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let cutout_pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Prepass);
         let double_sided_cutout_pipeline = main_pipeline(None, DrawStage::Prepass);
         let cutout_shade_pipeline = main_pipeline(Some(wgpu::Face::Back), DrawStage::Shade);
@@ -603,6 +638,7 @@ impl Renderer {
             double_sided_cutout_shade_pipeline,
             skinned_pipeline,
             skinned_shadow_pipeline,
+            glow_pipeline,
             palette_layout,
             palette_buffer,
             palette_bind_group,
@@ -911,10 +947,12 @@ impl Renderer {
         let mut shadow_list: Vec<(MeshId, Instance)> = Vec::with_capacity(parts.iter().map(|p| p.shadow.len()).sum());
         let mut skinned_main: Vec<(MeshId, Instance)> = Vec::new();
         let mut skinned_shadow: Vec<(MeshId, Instance)> = Vec::new();
+        let mut glow_list: Vec<(MeshId, Instance)> = Vec::new();
         let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
         for mut part in parts {
             main_list.append(&mut part.main);
             shadow_list.append(&mut part.shadow);
+            glow_list.append(&mut part.glow);
             // Die Knochen jedes Abschnitts beginnen hinter denen der vorigen
             let base = palette.len() as f32;
             for (_, instance) in part.skinned_main.iter_mut().chain(part.skinned_shadow.iter_mut()) {
@@ -959,13 +997,24 @@ impl Renderer {
         // Partikel als zwei eigene Stapel: kleine Würfel und runde Puffs
         for (round, mesh) in [(false, ctx.assets.cube()), (true, ctx.assets.sphere())] {
             let first = instances.len() as u32;
-            instances.extend(ctx.particles.instances().filter(|p| p.3 == round).map(|(model, color, glow, _)| {
+            instances.extend(ctx.particles.instances().filter(|p| p.3 == round && !p.4).map(|(model, color, glow, _, _)| {
                 let material = if glow > 0.0 { crate::scene::Material::Emissive { glow } } else { crate::scene::Material::Standard };
                 instance(model, color, material.shader_params())
             }));
             if instances.len() as u32 > first {
                 batches.push((mesh.0 as usize, first..instances.len() as u32));
                 shadow_batches.push((mesh.0 as usize, first..instances.len() as u32));
+            }
+        }
+        // Leuchtendes zuletzt: Objekte mit `Material::Glow` und leuchtende Partikel
+        let mut glow_batches = batch(&mut glow_list, &mut instances);
+        for (round, mesh) in [(false, ctx.assets.cube()), (true, ctx.assets.sphere())] {
+            let first = instances.len() as u32;
+            instances.extend(ctx.particles.instances().filter(|p| p.3 == round && p.4).map(|(model, color, glow, _, _)| {
+                instance(model, color, crate::scene::Material::Glow { strength: glow, soft: if round { 1.0 } else { 0.3 } }.shader_params())
+            }));
+            if instances.len() as u32 > first {
+                glow_batches.push((mesh.0 as usize, first..instances.len() as u32));
             }
         }
         if instances.len() > self.instance_capacity {
@@ -1036,6 +1085,8 @@ impl Renderer {
             pass.set_bind_group(1, &self.white_texture, &[]);
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
+            // Leuchten nach dem Himmel, sonst überdeckt er es dort, wo nichts dahinter ist
+            self.draw_batches(&mut pass, &glow_batches, DrawStage::Glow);
         }
         // Verkleinert gezeichnete Welt aufs Fenster hochskalieren
         if let Some((_, bind_group)) = &self.scene_target {
@@ -1061,7 +1112,7 @@ impl Renderer {
         }
         self.stats = RenderStats {
             instances: drawn,
-            draw_calls: batches.len() + shadow_batches.len() + skinned_batches.len() + skinned_shadow_batches.len(),
+            draw_calls: batches.len() + shadow_batches.len() + skinned_batches.len() + skinned_shadow_batches.len() + glow_batches.len(),
         };
 
         // Benutzeroberfläche über die 3D-Szene legen.
@@ -1136,7 +1187,7 @@ impl Renderer {
             }
             // Im Hauptdurchgang kommen feste Flächen und Laub getrennt (siehe `DrawStage`)
             let wanted = match stage {
-                DrawStage::Shadow => true,
+                DrawStage::Shadow | DrawStage::Glow => true,
                 DrawStage::Main => !mesh.alpha_cutout,
                 DrawStage::Prepass | DrawStage::Shade => mesh.alpha_cutout,
             };
@@ -1144,6 +1195,7 @@ impl Renderer {
                 continue;
             }
             let (pipeline, textured) = match (stage, mesh.alpha_cutout, mesh.double_sided) {
+                (DrawStage::Glow, _, _) => (&self.glow_pipeline, true),
                 (DrawStage::Shadow, true, _) => (&self.shadow_cutout_pipeline, true),
                 (DrawStage::Shadow, false, _) => (&self.shadow_pipeline, false),
                 (DrawStage::Prepass, _, true) => (&self.double_sided_cutout_pipeline, true),
@@ -1383,6 +1435,8 @@ enum DrawStage {
     Prepass,
     /// Hauptbild: Laub beleuchten, wo die Tiefe genau passt
     Shade,
+    /// Hauptbild zuletzt: additives Leuchten
+    Glow,
 }
 
 /// Was ein Abschnitt der Szene zum Bild beiträgt (siehe `CullView::cull`).
@@ -1394,6 +1448,8 @@ struct Culled {
     skinned_main: Vec<(MeshId, Instance)>,
     skinned_shadow: Vec<(MeshId, Instance)>,
     palette: Vec<[[f32; 4]; 4]>,
+    /// Additiv Leuchtendes (`Material::Glow`): kein Schatten, eigener Durchgang
+    glow: Vec<(MeshId, Instance)>,
 }
 
 /// Alles, was die Sichtprüfung eines Bildes braucht (wird von mehreren Kernen gleichzeitig gelesen).
@@ -1435,6 +1491,13 @@ impl CullView<'_> {
             let world_radius = radius * scale + 1.0;
             let Some(mesh) = ctx.assets.mesh_at_distance(entity.mesh, world_center.distance(ctx.camera.position)) else { continue };
             let seen = sphere_visible(self.camera_planes, world_center, world_radius);
+            if entity.material.is_glow() {
+                if seen {
+                    let model = model.unwrap_or_else(|| entity.transform.matrix());
+                    out.glow.push((mesh, instance(model, entity.color, entity.material.shader_params())));
+                }
+                continue;
+            }
             let casts_shadow = entity.casts_shadow && sphere_visible(self.shadow_planes, world_center, world_radius);
             if !seen && !casts_shadow {
                 continue;

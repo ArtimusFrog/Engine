@@ -13,7 +13,7 @@ use crate::protocol::*;
 use crate::heer::{Blocker, Quelle, Ziel};
 use crate::save::{player_key, WorldSave};
 use crate::td::{Ereignis, TdBefehl, TdStand};
-use crate::faehigkeiten::{Faehigkeit, Form};
+use crate::faehigkeiten::Faehigkeit;
 use crate::wildnis::Treffer;
 use crate::world::{World, HARVEST_COOLDOWN_TICKS, HEILEN_ANTEIL, HEILEN_NACH, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
 
@@ -47,7 +47,22 @@ enum Getroffen {
     Wild(u16),
 }
 
-/// Eine Fähigkeit wirkt in Takt `due`: Geschoss am Ziel, Hammer niedergesaust, Nova ausgelöst.
+/// Wo eine Fähigkeit trifft.
+#[derive(Clone, Copy, Debug)]
+enum Bereich {
+    /// Genau dieses Ziel (Geschoss, Wurfhammer)
+    Ziel(Getroffen),
+    /// Alles im Umkreis von `punkt`
+    Kreis(f32),
+    /// Alles im Ring um `punkt` (innen, außen) – Eiswelle, äußerer Ring des Erdbebens
+    Ring(f32, f32),
+    /// Alles vor der Figur (Weite, cos des halben Winkels)
+    Kegel(f32, f32),
+    /// Alles auf dem Strahl von `from` in `richtung` (Länge, halbe Breite) – Arkanlanze
+    Linie(f32, f32),
+}
+
+/// Eine Fähigkeit wirkt in Takt `due`: Geschoss am Ziel, Hammer niedergesaust, Eiswelle angekommen.
 struct PendingHit {
     due: u64,
     art: Faehigkeit,
@@ -57,15 +72,33 @@ struct PendingHit {
     richtung: Vec3,
     /// Einschlag (Geschoss) bzw. Mitte der Wirkung (um sich)
     punkt: Vec3,
-    ziel: Option<Getroffen>,
-    /// Waffe: Faktor auf den Schaden und auf die Nachwirkung
-    faktor: (f32, f32),
+    bereich: Bereich,
+    /// Schaden und Nachwirkungen (mit der Waffe verrechnet)
+    schaden: f32,
+    wirkung: crate::faehigkeiten::Wirkung,
+    /// Druckwelle um `punkt` für alle, die sonst nicht getroffen wurden (Radius, Anteil am Schaden)
+    neben: Option<(f32, f32)>,
+    /// Ein Treffer lädt eine arkane Ladung
+    laedt: bool,
+    /// Hinterlässt einen Flammenteppich
+    flammen: bool,
+    /// Waffe: Faktor auf die Nachwirkung (für den Flammenteppich)
+    faktor: f32,
+}
+
+/// Flammenteppich eines Feuerballs.
+struct Flammen {
+    mitte: Vec3,
+    bis: u64,
+    by: PlayerId,
+    faktor: f32,
 }
 
 pub struct Authority {
     net: Option<NetServer>,
     clients: HashMap<ClientId, RemoteClient>,
     pending_hits: Vec<PendingHit>,
+    flammen: Vec<Flammen>,
     send_full_snapshot: bool,
     /// Wohin der Spielstand geschrieben wird (`None` = gar nicht, z. B. in Tests).
     save_path: Option<PathBuf>,
@@ -105,6 +138,7 @@ impl Authority {
             net,
             clients: HashMap::new(),
             pending_hits: Vec::new(),
+            flammen: Vec::new(),
             send_full_snapshot: true,
             save_path,
             inventories: BTreeMap::new(),
@@ -217,6 +251,7 @@ impl Authority {
             }
         }
         self.land_hits(ctx, world);
+        self.flammen_takt(ctx, world);
         if ctx.time.tick % SAVE_INTERVAL == SAVE_INTERVAL - 1 {
             self.save(world);
         }
@@ -296,61 +331,167 @@ impl Authority {
 
     /// Die Fähigkeit in der Hand Richtung `target`. Der Server rechnet selbst nach, was getroffen
     /// wird; der Client liefert nur die Richtung. Abklingzeit, Reichweite und Wirkung stehen in
-    /// `faehigkeiten.rs`.
+    /// `faehigkeiten.rs`, Kombo und arkane Ladungen zählt der Server je Spieler.
     fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
+        use crate::faehigkeiten::*;
         let waffe = world.inventories.get(&player).map_or(0, |i| i.waffe);
+        let tick = ctx.time.tick;
         let Some(avatar) = world.players.get_mut(&player) else { return };
         let Tool::Faehigkeit(platz) = avatar.tool else { return };
         let art = Faehigkeit::von(avatar.class, platz);
-        let (f_schaden, f_wirkung, f_abklingen) = crate::waffen::faktoren(waffe, avatar.class, art);
-        let faktor = (f_schaden, f_wirkung);
-        let abklingen = (art.abklingen() as f32 * f_abklingen).round() as u64;
         let fach = (platz as usize).min(2);
-        let bereit = avatar.abklingen[fach] == 0 || ctx.time.tick >= avatar.abklingen[fach] + abklingen;
-        if !bereit || avatar.leben <= 0.0 || !target.is_finite() {
+        if tick < avatar.abklingen[fach] || avatar.leben <= 0.0 || !target.is_finite() {
             return;
         }
-        avatar.abklingen[fach] = ctx.time.tick;
+        // Stufe: Kombo des Hammerschlags, Arkanlanze mit voller Ladung
+        let stufe = match art {
+            Faehigkeit::Hammerschlag => kombo_stufe(avatar.kombo, tick),
+            Faehigkeit::Arkangeschoss if avatar.ladung >= LADUNG_MAX => 1,
+            _ => 0,
+        };
+        if art == Faehigkeit::Hammerschlag {
+            avatar.kombo = Some((tick, stufe));
+        }
+        if art == Faehigkeit::Arkangeschoss && stufe == 1 {
+            avatar.ladung = 0;
+        }
+        let (f_schaden, f_wirkung, f_abklingen) = crate::waffen::faktoren(waffe, avatar.class, art);
+        avatar.abklingen[fach] = tick + (art.abklingen(stufe) as f32 * f_abklingen).round() as u64;
         let center = ctx.physics.character_position(avatar.character);
         let facing = avatar.facing;
-        let ausholen = (art.ausholen() / Physics::FIXED_DT).round() as u64;
-        match art.form() {
-            Form::Geschoss { tempo, .. } => {
+        let character = avatar.character;
+        let takte = |sekunden: f32| (sekunden / Physics::FIXED_DT).round() as u64;
+        let ausholen = tick + takte(art.ausholen(stufe));
+        let schaden = art.schaden(stufe) * f_schaden;
+        let wirkung = |w: Wirkung| Wirkung { bremse: (w.bremse * f_wirkung).min(0.85), stun: w.stun * f_wirkung, brand: w.brand * f_wirkung, dauer: w.dauer, frost: w.frost * f_wirkung };
+        let schlag = |due: u64, from: Vec3, richtung: Vec3, punkt: Vec3, bereich: Bereich, schaden: f32, w: Wirkung| PendingHit {
+            due,
+            art,
+            by: player,
+            from,
+            richtung,
+            punkt,
+            bereich,
+            schaden,
+            wirkung: w,
+            neben: None,
+            laedt: false,
+            flammen: false,
+            faktor: f_wirkung,
+        };
+        let mut hits = Vec::new();
+        let mut kette = Vec::new();
+        let flach = |v: Vec3| {
+            let v = v.with_y(0.0);
+            if v.length_squared() > 0.01 { v.normalize() } else { vec3(facing.sin(), 0.0, -facing.cos()) }
+        };
+        let fuesse = center - Vec3::Y * 0.9;
+        let (origin, point, hit) = match (art, stufe) {
+            (Faehigkeit::Arkangeschoss, 1) => {
+                // Arkanlanze: ein Strahl bis zum Boden (oder 45 m), durchbohrt alles darauf
                 let Some(origin) = world.cast_origin(ctx, player, target) else { return };
-                let direction = (target - origin).normalize_or(Vec3::NEG_Z);
+                let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
+                let laenge = ctx.physics.raycast(origin, richtung, LANZE_WEITE, Some(character)).map_or(LANZE_WEITE, |(_, d)| d);
+                let mut h = schlag(ausholen + 2, origin, richtung, origin, Bereich::Linie(laenge, LANZE_BREITE), schaden, wirkung(art.wirkung(stufe)));
+                h.laedt = false;
+                hits.push(h);
+                (origin, origin + richtung * laenge, true)
+            }
+            (Faehigkeit::Arkangeschoss | Faehigkeit::Feuerball | Faehigkeit::Wurfhammer, _) => {
+                let Form::Geschoss { tempo, flaeche } = art.form() else { return };
+                let Some(origin) = world.cast_origin(ctx, player, target) else { return };
+                let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
                 let range = origin.distance(target).min(art.reichweite()) + 0.5;
-                let (mut point, animal) = world.spell_target(ctx, origin, direction, range, Some(player));
+                let (mut point, animal) = world.spell_target(ctx, origin, richtung, range, Some(player));
                 let mut ziel = animal.map(Getroffen::Tier);
                 // Einheiten der Festung und der Lager haben keine Kollision: eigene Strahltests
-                if let Some((enemy, distance)) = world.heer.ray_hit(origin, direction, origin.distance(point)) {
-                    point = origin + direction * distance;
+                if let Some((enemy, distance)) = world.heer.ray_hit(origin, richtung, origin.distance(point)) {
+                    point = origin + richtung * distance;
                     ziel = Some(Getroffen::Feind(enemy));
                 }
-                if let Some((wild, distance)) = world.wildnis.ray_hit(origin, direction, origin.distance(point)) {
-                    point = origin + direction * distance;
+                if let Some((wild, distance)) = world.wildnis.ray_hit(origin, richtung, origin.distance(point)) {
+                    point = origin + richtung * distance;
                     ziel = Some(Getroffen::Wild(wild));
                 }
-                world.cast_spell(ctx, player, origin, point, ziel.is_some(), true, art);
-                self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: ziel.is_some(), art });
-                let flight = origin.distance(point) / tempo;
-                let due = ctx.time.tick + ausholen + (flight / Physics::FIXED_DT).round() as u64;
-                self.pending_hits.push(PendingHit { due, art, by: player, from: origin, richtung: direction, punkt: point, ziel, faktor });
+                let due = ausholen + takte(origin.distance(point) / tempo);
+                if flaeche > 0.0 {
+                    let mut h = schlag(due, origin, richtung, point, Bereich::Kreis(flaeche), schaden, wirkung(art.wirkung(stufe)));
+                    h.flammen = art == Faehigkeit::Feuerball;
+                    hits.push(h);
+                } else if let Some(ziel) = ziel {
+                    let mut h = schlag(due, origin, richtung, point, Bereich::Ziel(ziel), schaden, wirkung(art.wirkung(stufe)));
+                    h.laedt = art == Faehigkeit::Arkangeschoss;
+                    hits.push(h);
+                    if art == Faehigkeit::Wurfhammer {
+                        // Der Hammer prallt zum nächsten Gegner ab (nicht zweimal derselbe)
+                        let (mut feinde, mut wilde) = (Vec::new(), Vec::new());
+                        match ziel {
+                            Getroffen::Feind(id) => feinde.push(id),
+                            Getroffen::Wild(id) => wilde.push(id),
+                            Getroffen::Tier(_) => {}
+                        }
+                        let (mut von, mut zeit) = (point, due);
+                        for i in 1..=ABPRALLE {
+                            let feind = world.heer.nearest_except(von, ABPRALL_WEITE, &feinde, crate::heer::Filter::ALLE).map(|(id, p)| (Getroffen::Feind(id), p));
+                            let wild = world.wildnis.naechster(von, ABPRALL_WEITE, &wilde).map(|(id, p)| (Getroffen::Wild(id), p));
+                            let Some((naechstes, ort)) = [feind, wild].into_iter().flatten().min_by(|a, b| a.1.distance(von).total_cmp(&b.1.distance(von))) else { break };
+                            match naechstes {
+                                Getroffen::Feind(id) => feinde.push(id),
+                                Getroffen::Wild(id) => wilde.push(id),
+                                Getroffen::Tier(_) => {}
+                            }
+                            zeit += takte(von.distance(ort) / tempo);
+                            let w = Wirkung { stun: ABPRALL_STUN[i] * f_wirkung, ..Default::default() };
+                            hits.push(schlag(zeit, von, (ort - von).normalize_or(richtung), ort, Bereich::Ziel(naechstes), schaden * ABPRALL_SCHADEN[i], w));
+                            kette.push(ort);
+                            von = ort;
+                        }
+                    }
+                }
+                (origin, point, ziel.is_some())
             }
-            Form::Nahkampf { weite, .. } => {
-                let zu = (target - center).with_y(0.0);
-                let richtung = if zu.length_squared() > 0.01 { zu.normalize() } else { vec3(facing.sin(), 0.0, -facing.cos()) };
-                let mitte = center + richtung * weite * 0.6;
-                world.cast_spell(ctx, player, center, mitte, false, true, art);
-                self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: mitte, hit: false, art });
-                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung, punkt: mitte, ziel: None, faktor });
+            (Faehigkeit::Hammerschlag, _) => {
+                let richtung = flach(target - center);
+                let (weite, winkel) = match stufe {
+                    2 => (3.8, 42.0f32),
+                    1 => (3.4, 75.0),
+                    _ => (3.4, 65.0),
+                };
+                let einschlag = fuesse + richtung * 2.2;
+                let mut h = schlag(ausholen, center, richtung, einschlag, Bereich::Kegel(weite, winkel.to_radians().cos()), schaden, wirkung(art.wirkung(stufe)));
+                if stufe == 2 {
+                    h.neben = Some(SCHMETTERN_WELLE);
+                }
+                hits.push(h);
+                (center, einschlag, false)
             }
-            Form::UmSich { .. } => {
-                let fuesse = center - Vec3::Y * 0.9;
-                world.cast_spell(ctx, player, center, fuesse, false, true, art);
-                self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: fuesse, hit: false, art });
-                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung: Vec3::NEG_Z, punkt: fuesse, ziel: None, faktor });
+            (Faehigkeit::Frostnova, _) => {
+                // Die Eiswelle läuft nach außen: wer weiter weg steht, wird später getroffen
+                let Form::UmSich { radius } = art.form() else { return };
+                let ringe = 3;
+                for r in 0..ringe {
+                    let (innen, aussen) = (radius * r as f32 / ringe as f32, radius * (r + 1) as f32 / ringe as f32);
+                    let due = ausholen + takte((innen + aussen) * 0.5 / EISWELLE_TEMPO);
+                    let bereich = if r == 0 { Bereich::Kreis(aussen) } else { Bereich::Ring(innen, aussen) };
+                    hits.push(schlag(due, center, Vec3::NEG_Z, fuesse, bereich, schaden, wirkung(art.wirkung(stufe))));
+                }
+                (center, fuesse, false)
             }
-        }
+            (Faehigkeit::Erdbeben, _) => {
+                let Form::UmSich { radius } = art.form() else { return };
+                hits.push(schlag(ausholen, center, Vec3::NEG_Z, fuesse, Bereich::Kreis(BEBEN_INNEN), schaden, wirkung(art.wirkung(stufe))));
+                let aussen = Wirkung { stun: 1.0, ..Default::default() };
+                hits.push(schlag(ausholen, center, Vec3::NEG_Z, fuesse, Bereich::Ring(BEBEN_INNEN, radius), schaden * BEBEN_AUSSEN_ANTEIL, wirkung(aussen)));
+                for (nach, r, s) in NACHBEBEN {
+                    let w = Wirkung { bremse: 0.4, ..Default::default() };
+                    hits.push(schlag(ausholen + takte(nach), center, Vec3::NEG_Z, fuesse, Bereich::Kreis(r), s * f_schaden, wirkung(w)));
+                }
+                (center, fuesse, false)
+            }
+        };
+        world.cast_spell(ctx, player, origin, point, hit, true, art, stufe, &kette);
+        self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit, art, stufe, kette });
+        self.pending_hits.extend(hits);
     }
 
     /// Fähigkeiten, die jetzt wirken: Schaden an Tieren, Truppen der Festung und Lagerbewohnern,
@@ -361,52 +502,83 @@ impl Authority {
         self.pending_hits = waiting;
         for hit in landed {
             let art = hit.art;
-            let (bremse, stun, brand, dauer) = art.wirkung();
-            let (bremse, stun, brand) = ((bremse * hit.faktor.1).min(0.85), stun * hit.faktor.1, brand * hit.faktor.1);
-            let schaden = art.schaden() * hit.faktor.0;
+            let boden = hit.art == Faehigkeit::Erdbeben;
+            let filter = if boden { crate::heer::Filter::BODEN } else { crate::heer::Filter::ALLE };
             // Was getroffen wird
-            let mut tiere: Vec<u16> = Vec::new();
-            let mut feinde: Vec<u16> = Vec::new();
-            let mut wilde: Vec<u16> = Vec::new();
             let lebende_tiere = || world.animals.iter().enumerate().filter(|(_, a)| a.is_alive());
-            match art.form() {
-                Form::Geschoss { flaeche, .. } if flaeche > 0.0 => {
-                    tiere = lebende_tiere().filter(|(_, a)| a.hit_sphere().0.distance(hit.punkt) <= flaeche + a.hit_sphere().1).map(|(i, _)| i as u16).collect();
-                    feinde = world.heer.within(hit.punkt, flaeche, crate::heer::Filter::ALLE);
-                    wilde = world.wildnis.within(hit.punkt, flaeche);
+            let im_kreis = |mitte: Vec3, innen: f32, aussen: f32, p: Vec3, r: f32| {
+                let d = p.distance(mitte);
+                d <= aussen + r && d > innen + r * 0.5
+            };
+            let (tiere, feinde, wilde): (Vec<u16>, Vec<u16>, Vec<u16>) = match hit.bereich {
+                Bereich::Ziel(Getroffen::Tier(id)) => (vec![id], vec![], vec![]),
+                Bereich::Ziel(Getroffen::Feind(id)) => (vec![], vec![id], vec![]),
+                Bereich::Ziel(Getroffen::Wild(id)) => (vec![], vec![], vec![id]),
+                Bereich::Kreis(radius) => (
+                    lebende_tiere().filter(|(_, a)| a.hit_sphere().0.distance(hit.punkt) <= radius + a.hit_sphere().1).map(|(i, _)| i as u16).collect(),
+                    world.heer.within(hit.punkt, radius, filter),
+                    world.wildnis.within(hit.punkt, radius),
+                ),
+                Bereich::Ring(innen, aussen) => {
+                    let innen_feinde = world.heer.within(hit.punkt, innen, filter);
+                    let innen_wilde = world.wildnis.within(hit.punkt, innen);
+                    (
+                        lebende_tiere().filter(|(_, a)| im_kreis(hit.punkt, innen, aussen, a.hit_sphere().0, a.hit_sphere().1)).map(|(i, _)| i as u16).collect(),
+                        world.heer.within(hit.punkt, aussen, filter).into_iter().filter(|id| !innen_feinde.contains(id)).collect(),
+                        world.wildnis.within(hit.punkt, aussen).into_iter().filter(|id| !innen_wilde.contains(id)).collect(),
+                    )
                 }
-                Form::Geschoss { .. } => match hit.ziel {
-                    Some(Getroffen::Tier(id)) => tiere.push(id),
-                    Some(Getroffen::Feind(id)) => feinde.push(id),
-                    Some(Getroffen::Wild(id)) => wilde.push(id),
-                    None => {}
-                },
-                Form::Nahkampf { weite, winkel } => {
-                    let cos = winkel.to_radians().cos();
-                    tiere = lebende_tiere()
+                Bereich::Kegel(weite, cos) => (
+                    lebende_tiere()
                         .filter(|(_, a)| {
                             let d = (a.hit_sphere().0 - hit.from).with_y(0.0);
                             d.length() <= weite + a.hit_sphere().1 && d.normalize_or_zero().dot(hit.richtung) >= cos
                         })
                         .map(|(i, _)| i as u16)
-                        .collect();
-                    feinde = world.heer.im_kegel(hit.from, hit.richtung, weite, cos, crate::heer::Filter::NAHKAMPF).into_iter().map(|(id, _)| id).collect();
-                    wilde = world.wildnis.im_kegel(hit.from, hit.richtung, weite, cos);
-                }
-                Form::UmSich { radius } => {
-                    tiere = lebende_tiere().filter(|(_, a)| a.hit_sphere().0.distance(hit.punkt) <= radius + a.hit_sphere().1).map(|(i, _)| i as u16).collect();
-                    let filter = if art == Faehigkeit::Erdbeben { crate::heer::Filter::BODEN } else { crate::heer::Filter::ALLE };
-                    feinde = world.heer.within(hit.punkt, radius, filter);
-                    wilde = world.wildnis.within(hit.punkt, radius);
-                }
-            }
+                        .collect(),
+                    world.heer.im_kegel(hit.from, hit.richtung, weite, cos, crate::heer::Filter::NAHKAMPF).into_iter().map(|(id, _)| id).collect(),
+                    world.wildnis.im_kegel(hit.from, hit.richtung, weite, cos),
+                ),
+                Bereich::Linie(laenge, breite) => (
+                    lebende_tiere()
+                        .filter(|(_, a)| {
+                            let to = a.hit_sphere().0 - hit.from;
+                            let along = to.dot(hit.richtung);
+                            along > 0.0 && along <= laenge && (to - hit.richtung * along).length() <= breite + a.hit_sphere().1
+                        })
+                        .map(|(i, _)| i as u16)
+                        .collect(),
+                    world.heer.auf_linie(hit.from, hit.richtung, laenge, breite, crate::heer::Filter::ALLE).into_iter().map(|(id, _)| id).collect(),
+                    world.wildnis.auf_linie(hit.from, hit.richtung, laenge, breite),
+                ),
+            };
+            // Schmetterschlag: Druckwelle um den Einschlag trifft auch, wer nicht im Kegel stand
+            let (neben_feinde, neben_wilde): (Vec<u16>, Vec<u16>) = match hit.neben {
+                Some((radius, _)) => (
+                    world.heer.within(hit.punkt, radius, crate::heer::Filter::BODEN).into_iter().filter(|id| !feinde.contains(id)).collect(),
+                    world.wildnis.within(hit.punkt, radius).into_iter().filter(|id| !wilde.contains(id)).collect(),
+                ),
+                None => (Vec::new(), Vec::new()),
+            };
+            let getroffen = !(tiere.is_empty() && feinde.is_empty() && wilde.is_empty());
             let name = world.players.get(&hit.by).map(|a| player_key(&a.name)).unwrap_or_default();
-            for id in feinde {
-                let treffer = crate::heer::Hit { schaden, art: art.art(), bremse, brand, dauer, stun, ..Default::default() };
+            let w = hit.wirkung;
+            let anteil = hit.neben.map_or(0.0, |(_, a)| a);
+            for (id, schaden, voll) in feinde.into_iter().map(|id| (id, hit.schaden, true)).chain(neben_feinde.into_iter().map(|id| (id, hit.schaden * anteil, false))) {
+                let treffer = if voll {
+                    crate::heer::Hit { schaden, art: art.art(), bremse: w.bremse, brand: w.brand, dauer: w.dauer, stun: w.stun, frost: w.frost, ..Default::default() }
+                } else {
+                    crate::heer::Hit { schaden, art: art.art(), ..Default::default() }
+                };
                 world.heer.damage(id, treffer, Quelle { name: &name, turm: None });
             }
-            for id in wilde {
-                world.wildnis.damage(id, Treffer { schaden, art: art.art(), bremse, stun, brand, dauer }, &name, Some(hit.by));
+            for (id, schaden, voll) in wilde.into_iter().map(|id| (id, hit.schaden, true)).chain(neben_wilde.into_iter().map(|id| (id, hit.schaden * anteil, false))) {
+                let treffer = if voll {
+                    Treffer { schaden, art: art.art(), bremse: w.bremse, stun: w.stun, brand: w.brand, dauer: w.dauer, frost: w.frost }
+                } else {
+                    Treffer { schaden, art: art.art(), ..Default::default() }
+                };
+                world.wildnis.damage(id, treffer, &name, Some(hit.by));
             }
             for id in tiere {
                 let Some(animal) = world.animals.get_mut(id as usize) else { continue };
@@ -423,6 +595,38 @@ impl Authority {
                         self.beute_ablegen(world, ort, crate::beute::Fund::Gegenstand(item, amount));
                     }
                 }
+            }
+            // Arkangeschoss: ein Treffer lädt eine arkane Ladung
+            if hit.laedt && getroffen {
+                if let Some(avatar) = world.players.get_mut(&hit.by) {
+                    avatar.ladung = (avatar.ladung + 1).min(crate::faehigkeiten::LADUNG_MAX);
+                    avatar.ladung_tick = tick;
+                }
+            }
+            if hit.flammen {
+                let (_, dauer, _) = crate::faehigkeiten::FLAMMEN;
+                self.flammen.push(Flammen { mitte: hit.punkt, bis: tick + (dauer / Physics::FIXED_DT) as u64, by: hit.by, faktor: hit.faktor });
+            }
+        }
+    }
+
+    /// Flammenteppiche der Feuerbälle: alle halbe Sekunde brennt, wer darin steht, weiter.
+    fn flammen_takt(&mut self, ctx: &Context, world: &mut World) {
+        let tick = ctx.time.tick;
+        self.flammen.retain(|f| f.bis > tick);
+        if tick % 30 != 0 {
+            return;
+        }
+        let (radius, _, brand) = crate::faehigkeiten::FLAMMEN;
+        for f in &self.flammen {
+            let name = world.players.get(&f.by).map(|a| player_key(&a.name)).unwrap_or_default();
+            for id in world.heer.within(f.mitte, radius, crate::heer::Filter::BODEN) {
+                let hit = crate::heer::Hit { schaden: 0.0, art: crate::tuerme::DamageKind::Fire, brand: brand * f.faktor, dauer: 1.5, ..Default::default() };
+                world.heer.damage(id, hit, Quelle { name: &name, turm: None });
+            }
+            for id in world.wildnis.within(f.mitte, radius) {
+                let treffer = Treffer { schaden: 0.0, art: crate::tuerme::DamageKind::Fire, brand: brand * f.faktor, dauer: 1.5, ..Default::default() };
+                world.wildnis.damage(id, treffer, &name, Some(f.by));
             }
         }
     }
@@ -457,6 +661,10 @@ impl Authority {
     /// Wer eine Weile nicht getroffen wurde, heilt sich langsam.
     fn heilen(&mut self, ctx: &Context, world: &mut World) {
         for avatar in world.players.values_mut() {
+            // Arkane Ladungen verfallen ohne neuen Treffer
+            if avatar.ladung > 0 && ctx.time.tick > avatar.ladung_tick + crate::faehigkeiten::LADUNG_HAELT {
+                avatar.ladung = 0;
+            }
             if avatar.leben < avatar.max_leben() && ctx.time.tick > avatar.getroffen + HEILEN_NACH {
                 avatar.leben = (avatar.leben + avatar.max_leben() * HEILEN_ANTEIL * Physics::FIXED_DT).min(avatar.max_leben());
             }
@@ -1298,6 +1506,7 @@ impl Authority {
                     tool: avatar.tool,
                     leben: avatar.leben.max(0.0).ceil() as u16,
                     waffe: avatar.waffe,
+                    ladung: avatar.ladung,
                 }
             })
             .collect();

@@ -16,7 +16,7 @@ import math
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from figuren import (HAENGT, HOCH, Figur, _axt, _gehen, _mischen, _schleife, _spitzhacke, farbe, weich)
+from figuren import (HAENGT, HOCH, Figur, _axt, _clip, _gehen, _mischen, _mit, _schleife, _spitzhacke, farbe, weich)
 from werkstatt import animation
 
 X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
@@ -470,7 +470,7 @@ def _zwerg_animationen(armatur):
     from figuren import _magier_animationen
     _magier_animationen(armatur)
     # Die folgenden ersetzen die des Magiers (sonst gäbe es „Idle“ und „Idle.001“)
-    for alt in ("Idle", "Laufen", "Rennen", "Zaubern"):
+    for alt in ("Idle", "Laufen", "Rennen", "Zaubern", "Arkan", "Feuerball", "Frostnova"):
         aktion = bpy.data.actions.get(alt)
         if aktion:
             bpy.data.actions.remove(aktion)
@@ -483,7 +483,7 @@ def _zwerg_animationen(armatur):
             ("Oberarm.L", "rot", (3 * math.sin(phi * 2), 0, 8)), ("Unterarm.L", "rot", (-14 - 3 * math.sin(phi * 2), 0, 0)),
             ("Oberarm.R", "rot", (-6, 0, -6)), ("Unterarm.R", "rot", (-20, 0, 0)),
             ("Oberschenkel.L", "rot", (0, 0, 6)), ("Oberschenkel.R", "rot", (0, 0, -6)),
-            ("Becken", "pos", (0, 0, -0.004 * (1 - math.cos(phi * 2)))),
+            ("Becken", "pos", (0, -0.004 * (1 - math.cos(phi * 2)), 0)),
         ]
     animation(armatur, "Idle", 180, _schleife(180, 6, idle))
     animation(armatur, "Laufen", 30, _schleife(30, 2, lambda phi: _gehen(phi, 30, 48, 26, 0.025, 5, 18)))
@@ -501,5 +501,99 @@ def _zwerg_animationen(armatur):
                   (bild, "Kopf", "rot", (-brust_x * 0.4, 0, 0)),
                   (bild, "Oberschenkel.L", "rot", (-knie * 0.8, 0, 8)), (bild, "Unterschenkel.L", "rot", (knie, 0, 0)),
                   (bild, "Oberschenkel.R", "rot", (-knie * 0.5, 0, -8)), (bild, "Unterschenkel.R", "rot", (knie * 0.8, 0, 0)),
-                  (bild, "Becken", "pos", (0, 0, senken))]
+                  (bild, "Becken", "pos", (0, senken, 0))]
     animation(armatur, "Zaubern", 30, beben)
+    _zwerg_faehigkeiten(armatur)
+
+
+def _zwerg_faehigkeiten(armatur):
+    """Hammerschlag (drei Schläge), Wurf und Fangen, Beben – siehe game/src/faehigkeiten.rs."""
+    # Kampfstand: breitbeinig, der Hammer hängt in der Rechten
+    ruhe = {"Oberarm.R": (-6, 0, -6), "Unterarm.R": (-20, 0, 0), "Oberarm.L": (0, 0, 8), "Unterarm.L": (-14, 0, 0),
+            "Oberschenkel.L": (0, 0, 6), "Oberschenkel.R": (0, 0, -6), "Brust": (-3, 0, 0)}
+
+    # Schlag 1: weit nach rechts ausholen, waagerecht von rechts nach links durchziehen (Bild 7)
+    aus1 = {"Oberarm.R": (-92, 0, -10), "Unterarm.R": (-35, 0, 0), "Oberarm.L": (-78, 0, -20), "Unterarm.L": (-50, 0, 0),
+            "Brust": (-4, 62, 0), "Bauch": (-2, 28, 0), "Becken": (0, 14, 0), "Kopf": (0, -40, 0),
+            "Oberschenkel.L": (-10, 0, 8), "Unterschenkel.L": (14, 0, 0), "Oberschenkel.R": (4, 0, -8), "Unterschenkel.R": (16, 0, 0),
+            "Becken.pos": (0, 0, -0.03)}
+    treffer1 = {"Oberarm.R": (-90, 0, -4), "Unterarm.R": (-6, 0, 0), "Oberarm.L": (-85, 0, -18), "Unterarm.L": (-18, 0, 0),
+                "Brust": (8, -12, 0), "Bauch": (4, -6, 0), "Becken": (0, -6, 0), "Kopf": (-4, 8, 0),
+                "Oberschenkel.L": (-22, 0, 8), "Unterschenkel.L": (26, 0, 0), "Oberschenkel.R": (12, 0, -8), "Unterschenkel.R": (16, 0, 0),
+                "Becken.pos": (0, 0, -0.05)}
+    nach1 = _mit(treffer1, Oberarm_R=(-80, 0, -4), Unterarm_R=(-12, 0, 0), Oberarm_L=(-78, 0, -18), Unterarm_L=(-22, 0, 0),
+                 Brust=(10, -50, 0), Bauch=(5, -22, 0), Becken=(0, -12, 0), Kopf=(-4, 30, 0))
+    _clip(armatur, "Schlag1", 20, [(0, ruhe), (4, aus1), (7, treffer1), (10, nach1), (20, ruhe)])
+
+    # Schlag 2: Rückhand – nach links ausholen, von links nach rechts zurückschlagen (Bild 7)
+    aus2 = {"Oberarm.R": (-88, 0, -8), "Unterarm.R": (-45, 0, 0), "Oberarm.L": (-72, 0, -22), "Unterarm.L": (-55, 0, 0),
+            "Brust": (-2, -58, 0), "Bauch": (-1, -26, 0), "Becken": (0, -12, 0), "Kopf": (0, 36, 0),
+            "Oberschenkel.L": (4, 0, 8), "Unterschenkel.L": (16, 0, 0), "Oberschenkel.R": (-12, 0, -8), "Unterschenkel.R": (16, 0, 0),
+            "Becken.pos": (0, 0, -0.03)}
+    treffer2 = {"Oberarm.R": (-92, 0, -6), "Unterarm.R": (-6, 0, 0), "Oberarm.L": (-84, 0, -20), "Unterarm.L": (-18, 0, 0),
+                "Brust": (8, 14, 0), "Bauch": (4, 6, 0), "Becken": (0, 6, 0), "Kopf": (-4, -10, 0),
+                "Oberschenkel.L": (8, 0, 8), "Unterschenkel.L": (16, 0, 0), "Oberschenkel.R": (-22, 0, -8), "Unterschenkel.R": (26, 0, 0),
+                "Becken.pos": (0, 0, -0.05)}
+    nach2 = _mit(treffer2, Oberarm_R=(-82, 0, -6), Unterarm_R=(-14, 0, 0), Oberarm_L=(-76, 0, -20), Unterarm_L=(-24, 0, 0),
+                 Brust=(10, 48, 0), Bauch=(5, 22, 0), Becken=(0, 12, 0), Kopf=(-4, -30, 0))
+    _clip(armatur, "Schlag2", 20, [(0, ruhe), (4, aus2), (7, treffer2), (10, nach2), (20, ruhe)])
+
+    # Schlag 3 (Schmetterschlag): Hammer mit beiden Händen hoch über den Kopf, zurücklehnen,
+    # dann mit Ausfallschritt vor sich in den Boden schmettern (Bild 13), nachfedern
+    hoch = {"Oberarm.R": (-176, 0, -6), "Unterarm.R": (-28, 0, 0), "Oberarm.L": (-165, 0, -12), "Unterarm.L": (-45, 0, 0),
+            "Brust": (-16, 0, 0), "Bauch": (-6, 0, 0), "Kopf": (-10, 0, 0),
+            "Oberschenkel.L": (-8, 0, 6), "Unterschenkel.L": (10, 0, 0), "Oberschenkel.R": (4, 0, -6), "Unterschenkel.R": (8, 0, 0),
+            "Becken.pos": (0, 0, 0.03)}
+    fallen = _mit(hoch, Oberarm_R=(-150, 0, -6), Unterarm_R=(-15, 0, 0), Oberarm_L=(-140, 0, -12), Unterarm_L=(-30, 0, 0),
+                  Brust=(0, 0, 0), Bauch=(0, 0, 0), Kopf=(-4, 0, 0))
+    fallen["Becken.pos"] = (0, 0, 0.0)
+    # Der Rumpf ist weit vorgebeugt: die Arme müssen das ausgleichen, damit der Hammer vor dem Zwerg einschlägt
+    schmettern = {"Oberarm.R": (-96, 0, -4), "Unterarm.R": (-4, 0, 0), "Oberarm.L": (-102, 0, -12), "Unterarm.L": (-10, 0, 0),
+                  "Brust": (36, 0, 0), "Bauch": (16, 0, 0), "Kopf": (-24, 0, 0),
+                  "Oberschenkel.L": (-40, 0, 8), "Unterschenkel.L": (48, 0, 0), "Oberschenkel.R": (18, 0, -8), "Unterschenkel.R": (30, 0, 0),
+                  "Fuss.L": (-8, 0, 0), "Becken.pos": (0, 0, -0.11)}
+    _clip(armatur, "Schlag3", 30, [(0, ruhe), (7, hoch), (10, fallen), (13, schmettern),
+                                   (18, _mit(schmettern, Brust=(33, 0, 0), Oberarm_R=(-93, 0, -4))), (30, ruhe)])
+
+    # Wurf: den Hammer hinter den Kopf, die Linke zeigt aufs Ziel, mit Drehung und
+    # Ausfallschritt schleudern (Bild 9), der Arm schwingt quer vor dem Körper aus
+    zielen = {"Oberarm.R": (-150, 0, -20), "Unterarm.R": (-105, 0, 0), "Oberarm.L": (-85, 0, 10), "Unterarm.L": (-8, 0, 0),
+              "Brust": (-10, 40, 0), "Bauch": (-4, 18, 0), "Becken": (0, 10, 0), "Kopf": (4, -32, 0),
+              "Oberschenkel.L": (-18, 0, 8), "Unterschenkel.L": (8, 0, 0), "Oberschenkel.R": (10, 0, -8), "Unterschenkel.R": (22, 0, 0),
+              "Becken.pos": (0, 0, -0.02)}
+    los = {"Oberarm.R": (-105, 0, -8), "Unterarm.R": (-8, 0, 0), "Oberarm.L": (-25, 0, 14), "Unterarm.L": (-50, 0, 0),
+           "Brust": (18, -30, 0), "Bauch": (8, -14, 0), "Becken": (0, -8, 0), "Kopf": (-12, 22, 0),
+           "Oberschenkel.L": (-32, 0, 8), "Unterschenkel.L": (36, 0, 0), "Oberschenkel.R": (18, 0, -8), "Unterschenkel.R": (12, 0, 0),
+           "Becken.pos": (0, 0, -0.06)}
+    aus = _mit(los, Oberarm_R=(-55, 0, -4), Unterarm_R=(-12, 0, 0), Oberarm_L=(-15, 0, 14), Unterarm_L=(-40, 0, 0),
+               Brust=(24, -34, 0), Bauch=(10, -16, 0), Becken=(0, -10, 0), Kopf=(-14, 24, 0))
+    _clip(armatur, "Wurf", 24, [(0, ruhe), (5, zielen), (9, los), (13, aus), (24, ruhe)])
+
+    # Fangen: die Rechte greift nach dem zurückkehrenden Hammer, federt die Wucht ab
+    greifen = _mit(ruhe, Oberarm_R=(-115, 0, -10), Unterarm_R=(-45, 0, 0), Brust=(-4, -6, 0), Kopf=(-6, 0, 0))
+    abfedern = _mit(ruhe, Oberarm_R=(-60, 0, -8), Unterarm_R=(-55, 0, 0), Brust=(8, 4, 0),
+                    Oberschenkel_L=(-8, 0, 6), Unterschenkel_L=(14, 0, 0), Oberschenkel_R=(-8, 0, -6), Unterschenkel_R=(14, 0, 0))
+    abfedern["Becken.pos"] = (0, 0, -0.04)
+    _clip(armatur, "Fangen", 14, [(0, ruhe), (3, greifen), (6, abfedern), (14, ruhe)])
+
+    # Beben: tief in die Knie, abspringen mit dem Hammer über dem Kopf, im Fallen ausholen und
+    # mit beiden Händen in den Boden schmettern (Bild 17), in der Hocke nachfedern, aufrichten
+    hocke = {"Oberarm.R": (-55, 0, -8), "Unterarm.R": (-50, 0, 0), "Oberarm.L": (-45, 0, -10), "Unterarm.L": (-60, 0, 0),
+             "Brust": (24, 0, 0), "Bauch": (10, 0, 0), "Kopf": (-16, 0, 0),
+             "Oberschenkel.L": (-50, 0, 8), "Unterschenkel.L": (70, 0, 0), "Oberschenkel.R": (-50, 0, -8), "Unterschenkel.R": (70, 0, 0),
+             "Fuss.L": (-20, 0, 0), "Fuss.R": (-20, 0, 0), "Becken.pos": (0, 0, -0.16)}
+    sprung = {"Oberarm.R": (-178, 0, -6), "Unterarm.R": (-25, 0, 0), "Oberarm.L": (-168, 0, -12), "Unterarm.L": (-45, 0, 0),
+              "Brust": (-16, 0, 0), "Bauch": (-6, 0, 0), "Kopf": (-8, 0, 0),
+              "Oberschenkel.L": (-45, 0, 8), "Unterschenkel.L": (65, 0, 0), "Oberschenkel.R": (-30, 0, -8), "Unterschenkel.R": (55, 0, 0),
+              "Fuss.L": (10, 0, 0), "Fuss.R": (10, 0, 0), "Becken.pos": (0, 0, 0.3)}
+    fall = {"Oberarm.R": (-140, 0, -6), "Unterarm.R": (-12, 0, 0), "Oberarm.L": (-132, 0, -12), "Unterarm.L": (-25, 0, 0),
+            "Brust": (4, 0, 0), "Bauch": (2, 0, 0), "Kopf": (-6, 0, 0),
+            "Oberschenkel.L": (-30, 0, 8), "Unterschenkel.L": (35, 0, 0), "Oberschenkel.R": (-20, 0, -8), "Unterschenkel.R": (30, 0, 0),
+            "Becken.pos": (0, 0, 0.16)}
+    aufschlag = {"Oberarm.R": (-100, 0, -4), "Unterarm.R": (-4, 0, 0), "Oberarm.L": (-106, 0, -12), "Unterarm.L": (-8, 0, 0),
+                 "Brust": (40, 0, 0), "Bauch": (18, 0, 0), "Kopf": (-26, 0, 0),
+                 "Oberschenkel.L": (-58, 0, 10), "Unterschenkel.L": (72, 0, 0), "Oberschenkel.R": (-42, 0, -10), "Unterschenkel.R": (68, 0, 0),
+                 "Fuss.L": (-14, 0, 0), "Fuss.R": (-26, 0, 0), "Becken.pos": (0, 0, -0.18)}
+    halten = _mit(aufschlag, Brust=(36, 0, 0))
+    halten["Becken.pos"] = (0, 0, -0.17)
+    _clip(armatur, "Beben", 36, [(0, ruhe), (5, hocke), (10, sprung), (14, fall), (17, aufschlag), (23, halten), (36, ruhe)])

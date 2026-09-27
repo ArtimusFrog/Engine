@@ -153,6 +153,8 @@ fn half(image: &Image) -> Image {
 }
 
 pub struct InventoryUi {
+    /// Welcher Platz der Auswahlleiste seit wann gewählt ist (für den Hinweis zur Fähigkeit)
+    auswahl: (usize, f64),
     icons: Option<Icons>,
     tab: Tab,
     /// Waffe, die im Fenster angeklickt wurde (das Spiel holt sie ab und rüstet sie aus)
@@ -161,7 +163,7 @@ pub struct InventoryUi {
 
 impl Default for InventoryUi {
     fn default() -> Self {
-        InventoryUi { icons: None, tab: Tab::All, ausruesten: None }
+        InventoryUi { icons: None, tab: Tab::All, ausruesten: None, auswahl: (usize::MAX, 0.0) }
     }
 }
 
@@ -313,9 +315,15 @@ impl InventoryUi {
     }
 
     /// Auswahlleiste unten in der Mitte: Werkzeuge und die drei Fähigkeiten der Figur, der gewählte
-    /// Platz leuchtet. `abklingen`: Restzeit der Fähigkeiten in Sekunden (0 = bereit).
-    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize, class: crate::protocol::CharacterClass, abklingen: [f32; 3]) {
+    /// Platz leuchtet. `abklingen`: Restzeit der Fähigkeiten in Sekunden (0 = bereit);
+    /// `punkte`: je Fähigkeit (gefüllt, von) – arkane Ladungen bzw. Stand der Kombo.
+    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize, class: crate::protocol::CharacterClass, abklingen: [f32; 3], punkte: [Option<(u8, u8)>; 3]) {
         self.icons(ctx);
+        let jetzt = ctx.input(|i| i.time);
+        if self.auswahl.0 != selected {
+            self.auswahl = (selected, jetzt);
+        }
+        let seit_auswahl = (jetzt - self.auswahl.1) as f32;
         let icons = self.icons.as_ref().expect("Symbole geladen");
         const SLOTS: usize = 8;
         let slot = 50.0;
@@ -357,13 +365,30 @@ impl InventoryUi {
                     if let Tool::Faehigkeit(platz) = tool {
                         let rest = abklingen[(platz as usize).min(2)];
                         if rest > 0.0 {
-                            let gesamt = tool.faehigkeit(class).map_or(1.0, |f| f.abklingen() as f32 / 60.0);
+                            let gesamt = tool.faehigkeit(class).map_or(1.0, |f| f.abklingen(0) as f32 / 60.0);
                             let mut schleier = slot_rect.shrink(3.0);
                             schleier.set_height(schleier.height() * (rest / gesamt).clamp(0.0, 1.0));
                             painter.rect_filled(schleier, 3.0, Color32::from_black_alpha(165));
                             let text = if rest >= 1.0 { format!("{rest:.0}") } else { format!("{rest:.1}") };
                             painter.text(slot_rect.center() + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &text, FontId::proportional(17.0), Color32::BLACK);
                             painter.text(slot_rect.center(), Align2::CENTER_CENTER, &text, FontId::proportional(17.0), Color32::WHITE);
+                        }
+                    }
+                }
+                // Punkte unter der Fähigkeit: arkane Ladungen (voll: leuchten) bzw. Kombo
+                if let Some(Tool::Faehigkeit(platz)) = tool {
+                    if let Some((voll, von)) = punkte[(platz as usize).min(2)] {
+                        let farbe = if class == crate::protocol::CharacterClass::Zwerg { Color32::from_rgb(255, 205, 110) } else { Color32::from_rgb(175, 140, 255) };
+                        // Voll geladen bzw. als Nächstes kommt der Schmetterschlag
+                        let fertig = voll + (class == crate::protocol::CharacterClass::Zwerg) as u8 >= von;
+                        for k in 0..von {
+                            let p = egui::pos2(slot_rect.center().x + (k as f32 - (von - 1) as f32 * 0.5) * 11.0, slot_rect.bottom() + 5.0);
+                            let an = k < voll;
+                            if an && fertig {
+                                painter.circle_filled(p, 6.0, farbe.gamma_multiply(0.35));
+                            }
+                            painter.circle_filled(p, 3.4, if an { farbe } else { Color32::from_black_alpha(160) });
+                            painter.circle_stroke(p, 3.4, Stroke::new(1.0, if an { Color32::WHITE.gamma_multiply(0.8) } else { GOLD_DARK }));
                         }
                     }
                 }
@@ -383,6 +408,15 @@ impl InventoryUi {
                     let zeile = egui::pos2(rect.center().x, rect.top() - 24.0);
                     painter.text(zeile + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, f.werte_zeile(), FontId::proportional(12.5), Color32::BLACK);
                     painter.text(zeile, Align2::CENTER_BOTTOM, f.werte_zeile(), FontId::proportional(12.5), PARCHMENT);
+                    // Nach dem Wählen ein paar Sekunden: was die Fähigkeit besonders macht
+                    let sichtbar = (1.0 - (seit_auswahl - 5.0) / 1.0).clamp(0.0, 1.0);
+                    if sichtbar > 0.0 {
+                        let hinweis = egui::pos2(rect.center().x, rect.top() - 42.0);
+                        let galley = painter.layout(f.beschreibung().to_string(), FontId::proportional(13.0), PARCHMENT.gamma_multiply(sichtbar), 520.0);
+                        let pos = hinweis - egui::vec2(galley.size().x * 0.5, galley.size().y);
+                        painter.rect_filled(Rect::from_min_size(pos, galley.size()).expand(5.0), 5.0, Color32::from_black_alpha((150.0 * sichtbar) as u8));
+                        painter.galley(pos, galley, PARCHMENT);
+                    }
                 }
             }
         });

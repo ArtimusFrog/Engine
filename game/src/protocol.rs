@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001A;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001B;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -144,6 +144,8 @@ pub struct PlayerState {
     pub leben: u16,
     /// Waffe in der Hand (0 = Startwaffe, sonst ID aus `waffen.rs`)
     pub waffe: u8,
+    /// Arkane Ladungen (Magier)
+    pub ladung: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -198,7 +200,9 @@ pub enum ServerMessage {
     Inventory(Inventory),
     /// Ein Spieler setzt eine Fähigkeit ein: Geschosse fliegen von `origin` nach `target`;
     /// bei Nahkampf und Wirkungen um sich ist `target` die Mitte. `hit`: trifft sie etwas?
-    SpellCast { by: PlayerId, origin: Vec3, target: Vec3, hit: bool, art: crate::faehigkeiten::Faehigkeit },
+    /// `stufe`: Kombo des Hammerschlags (0–2) bzw. 1 = Arkanlanze; `kette`: wo der Wurfhammer
+    /// nach dem ersten Treffer noch aufschlägt.
+    SpellCast { by: PlayerId, origin: Vec3, target: Vec3, hit: bool, art: crate::faehigkeiten::Faehigkeit, stufe: u8, kette: Vec<Vec3> },
     /// Ein Spieler wurde getroffen (roter Rand, Klang)
     SpielerGetroffen { player: PlayerId, schaden: u16 },
     /// Ein Spieler ist gefallen und steht an seinem Startpunkt wieder auf

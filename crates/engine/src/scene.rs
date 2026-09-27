@@ -50,6 +50,11 @@ pub enum Material {
     Leaves { sway: f32 },
     /// Leuchtet von selbst (Kristalle, magische Pilze). `glow` = Helligkeit (≈ 0.5–3).
     Emissive { glow: f32 },
+    /// Leuchtet additiv und durchscheinend (Zauber, Druckwellen, Strahlen, Blitze): Farbe mal
+    /// `strength` wird aufs Bild addiert; wirft keinen Schatten und verdeckt nichts. Dunkle
+    /// Farbe = unsichtbar – so blendet man es weich aus. `soft` (0–1): Kanten, die vom
+    /// Betrachter wegzeigen, weich ausblenden (Kugeln wirken dann wie leuchtende Wolken).
+    Glow { strength: f32, soft: f32 },
     /// Boden der Landschaft: der Shader fügt feine Details hinzu (Grasbüschel, Farbflecken,
     /// Gesteinsschichten an Hängen), damit er aus der Nähe nicht glatt wirkt.
     Ground,
@@ -65,7 +70,13 @@ impl Material {
             Material::Leaves { sway } => [2.0, sway, 1.0, 0.0],
             Material::Emissive { glow } => [3.0, glow, 0.0, 0.0],
             Material::Ground => [4.0, 0.0, 0.0, 0.0],
+            Material::Glow { strength, soft } => [5.0, strength, soft, 0.0],
         }
+    }
+
+    /// Additiv leuchtend (eigener Zeichendurchgang)?
+    pub fn is_glow(self) -> bool {
+        matches!(self, Material::Glow { .. })
     }
 }
 

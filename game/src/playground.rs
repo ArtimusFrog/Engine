@@ -81,6 +81,10 @@ pub struct Playground {
     last_cast: f32,
     /// Wann jede der drei Fähigkeiten wieder bereit ist (Spielzeit in Sekunden)
     bereit_ab: [f32; 3],
+    /// Hammerschlag: Takt und Stufe des letzten Schlags (die eigene Figur zeigt die Kombo sofort)
+    kombo: Option<(u64, u8)>,
+    /// Kamerawackeln, das im letzten Bild auf Gier und Neigung lag (wird wieder abgezogen)
+    wackel_versatz: (f32, f32),
     /// Wann die eigene Figur zuletzt getroffen wurde und wann sie gefallen ist (durch wen)
     getroffen_um: f32,
     gefallen: Option<(f32, String)>,
@@ -196,6 +200,8 @@ impl Playground {
             last_harvest: 0.0,
             last_cast: -10.0,
             bereit_ab: [0.0; 3],
+            kombo: None,
+            wackel_versatz: (0.0, 0.0),
             getroffen_um: -10.0,
             gefallen: None,
             inventory_open: false,
@@ -372,13 +378,53 @@ impl Playground {
         let Some((target, _)) = self.spell_aim(ctx) else { return };
         let waffe = self.session.as_ref().map_or(0, |s| s.local_inventory().waffe);
         let (_, _, f_abklingen) = crate::waffen::faktoren(waffe, self.klasse(), art);
-        let abklingen = (art.abklingen() as f32 * f_abklingen).round();
+        // Stufe wie beim Server: Kombo des Hammerschlags, Arkanlanze mit voller Ladung
+        let stufe = self.naechste_stufe(ctx, art);
+        if art == crate::faehigkeiten::Faehigkeit::Hammerschlag {
+            self.kombo = Some((Self::takt(ctx), stufe));
+        }
+        let abklingen = (art.abklingen(stufe) as f32 * f_abklingen).round();
         self.bereit_ab[fach] = ctx.time.elapsed + abklingen * Physics::FIXED_DT + 0.05;
         self.last_cast = ctx.time.elapsed;
         self.cast_requested = Some(target);
         if let Some(session) = &mut self.session {
-            session.preview_cast(art);
+            session.preview_cast(art, stufe);
         }
+    }
+
+    /// Spielzeit in Takten (für die Kombo, wie beim Server).
+    fn takt(ctx: &Context) -> u64 {
+        (ctx.time.elapsed / Physics::FIXED_DT) as u64
+    }
+
+    /// Arkane Ladungen der eigenen Figur.
+    fn ladung(&self) -> u8 {
+        self.session.as_ref().and_then(|s| s.local_player().and_then(|id| s.world().players.get(&id))).map_or(0, |a| a.ladung)
+    }
+
+    /// Welche Stufe die Fähigkeit jetzt hätte (Kombo, Arkanlanze).
+    fn naechste_stufe(&self, ctx: &Context, art: crate::faehigkeiten::Faehigkeit) -> u8 {
+        use crate::faehigkeiten::{kombo_stufe, Faehigkeit, LADUNG_MAX};
+        match art {
+            Faehigkeit::Hammerschlag => kombo_stufe(self.kombo, Self::takt(ctx)),
+            Faehigkeit::Arkangeschoss if self.ladung() >= LADUNG_MAX => 1,
+            _ => 0,
+        }
+    }
+
+    /// Punkte unter den Fähigkeiten: arkane Ladungen bzw. wie weit die Kombo ist.
+    fn faehigkeits_punkte(&self, ctx: &Context) -> [Option<(u8, u8)>; 3] {
+        use crate::faehigkeiten::{Faehigkeit, LADUNG_MAX};
+        let mut punkte = [None; 3];
+        match Faehigkeit::von(self.klasse(), 0) {
+            Faehigkeit::Arkangeschoss => punkte[0] = Some((self.ladung(), LADUNG_MAX)),
+            Faehigkeit::Hammerschlag => {
+                let weiter = self.naechste_stufe(ctx, Faehigkeit::Hammerschlag);
+                punkte[0] = Some((weiter, 3));
+            }
+            _ => {}
+        }
+        punkte
     }
 
     /// Die Beute, die E hier aufheben würde.
@@ -1056,7 +1102,19 @@ impl Playground {
         let Some(entity) = ctx.scene.try_get(avatar.entity) else { return };
         let target = entity.transform.position + Vec3::Y * 0.6;
         let character = avatar.character;
+        let wackeln = session.world().wackeln();
+        // Das Wackeln des letzten Bildes wieder abziehen (Gier und Neigung sammeln sich sonst an)
+        ctx.camera.yaw -= self.wackel_versatz.0;
+        ctx.camera.pitch -= self.wackel_versatz.1;
         self.orbit.update(ctx, target, Some(character));
+        // Kamerawackeln nach Einschlägen in der Nähe (stark gedämpft, weich rauschend)
+        let w = wackeln * wackeln;
+        let t = ctx.time.elapsed;
+        let rauschen = |f: f32, p: f32| (t * f + p).sin() * 0.6 + (t * f * 2.3 + p * 1.7).sin() * 0.4;
+        ctx.camera.position += vec3(rauschen(31.0, 0.0), rauschen(27.0, 1.3), rauschen(29.0, 2.1)) * 0.2 * w;
+        self.wackel_versatz = (rauschen(23.0, 4.0) * 0.012 * w, rauschen(25.0, 5.0) * 0.012 * w);
+        ctx.camera.yaw += self.wackel_versatz.0;
+        ctx.camera.pitch += self.wackel_versatz.1;
     }
 
     /// Welcher Rohstoff liegt unter dem Fadenkreuz und ist nah genug?
@@ -1832,7 +1890,8 @@ impl Playground {
         }
         let jetzt = ctx.time.elapsed;
         let abklingen = self.bereit_ab.map(|t| (t - jetzt).max(0.0));
-        self.inventory_ui.hotbar(egui_ctx, self.hotbar_slot, self.klasse(), abklingen);
+        let punkte = self.faehigkeits_punkte(ctx);
+        self.inventory_ui.hotbar(egui_ctx, self.hotbar_slot, self.klasse(), abklingen, punkte);
         self.lebens_hud(ctx, egui_ctx);
 
         // Status oben rechts
@@ -2394,12 +2453,18 @@ impl Game for Playground {
         }
         if let (Some(platz), Some(Some(ziel))) = (self.demo_angriff, self.demo_crystal) {
             self.hotbar_slot = Tool::Faehigkeit(platz).slot();
-            if ctx.time.elapsed - self.last_cast > 1.6 {
+            // Der Standardangriff im Takt der Kombo, die anderen gemächlich
+            let takt = if platz == 0 { 0.62 } else { 1.6 };
+            if ctx.time.elapsed - self.last_cast > takt {
                 let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
+                let stufe = self.naechste_stufe(ctx, art);
+                if art == crate::faehigkeiten::Faehigkeit::Hammerschlag {
+                    self.kombo = Some((Self::takt(ctx), stufe));
+                }
                 self.last_cast = ctx.time.elapsed;
                 self.cast_requested = Some(ziel);
                 if let Some(session) = &mut self.session {
-                    session.preview_cast(art);
+                    session.preview_cast(art, stufe);
                 }
             }
         }
@@ -2466,6 +2531,16 @@ impl Game for Playground {
                 ctx.camera.yaw = to.x.atan2(-to.z) + self.demo_yaw_offset;
                 ctx.camera.pitch = if self.demo_yaw_offset > 0.0 { -0.32 } else { -0.12 };
                 self.orbit.distance = 5.5;
+                // Nur für Screenshots: `--demo-kamera gier,neigung,abstand` (Grad, Grad, Meter)
+                if let Some(werte) = std::env::args().skip_while(|a| a != "--demo-kamera").nth(1) {
+                    let v: Vec<f32> = werte.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+                    if v.len() == 3 {
+                        ctx.camera.yaw = to.x.atan2(-to.z) + v[0].to_radians();
+                        ctx.camera.pitch = v[1].to_radians();
+                        self.orbit.distance = v[2];
+                        self.orbit.avoid_walls = false;
+                    }
+                }
             }
         }
         if let (Some(kind), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
@@ -2502,7 +2577,7 @@ impl Game for Playground {
                     if ctx.time.elapsed - self.last_cast > 1.0 {
                         self.last_cast = ctx.time.elapsed;
                         self.cast_requested = Some(target);
-                        session.preview_cast(crate::faehigkeiten::Faehigkeit::von(crate::protocol::CharacterClass::Mage, 0));
+                        session.preview_cast(crate::faehigkeiten::Faehigkeit::von(crate::protocol::CharacterClass::Mage, 0), 0);
                         log::debug!("Demo-Zauber: Bild {}, {:.2} s", ctx.time.frame, ctx.time.elapsed);
                     }
                 }

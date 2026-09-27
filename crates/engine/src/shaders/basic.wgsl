@@ -703,6 +703,18 @@ fn fs_opaque(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) 
     return shade(in, front, texel, pattern_w);
 }
 
+// Additives Leuchten (Material::Glow, leuchtende Partikel): Farbe mal Stärke wird aufs Bild
+// addiert. `material.z` blendet Kanten aus, die vom Betrachter wegzeigen; Nebel dämpft.
+@fragment
+fn fs_glow(in: VertexOut) -> @location(0) vec4<f32> {
+    let view = normalize(g.camera_pos.xyz - in.world_pos);
+    let facing = abs(dot(normalize(in.normal), view));
+    let soft = mix(1.0, pow(facing, 2.6), in.material.z);
+    let dist = length(g.camera_pos.xyz - in.world_pos);
+    let fog = exp(-dist * g.fog.a * 1.5);
+    return vec4<f32>(max(in.color * in.material.y * soft * fog, vec3<f32>(0.0)), 1.0);
+}
+
 fn shade(in: VertexOut, front: bool, texel: vec4<f32>, pattern_w: f32) -> vec4<f32> {
     let kind = in.material.x;
     var albedo = in.color * texel.rgb;

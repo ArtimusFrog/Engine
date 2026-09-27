@@ -22,6 +22,8 @@ pub struct Particle {
     pub grow: f32,
     /// Rund (Rauch, Dampf) statt eckig (Splitter, Funken).
     pub round: bool,
+    /// Leuchtet additiv und durchscheinend (Feuer, Magie), siehe `Particles::burst_glow`.
+    pub additive: bool,
 }
 
 /// Beschreibung für einen Schwall Partikel.
@@ -80,6 +82,16 @@ impl Particles {
     const MAX: usize = 4000;
 
     pub fn burst(&mut self, burst: Burst) {
+        self.spawn(burst, false);
+    }
+
+    /// Wie `burst`, aber die Partikel leuchten additiv und durchscheinend (`glow` = Stärke):
+    /// Flammen, Funken und Magie, die sich überlagern und weich ausblenden.
+    pub fn burst_glow(&mut self, burst: Burst) {
+        self.spawn(burst, true);
+    }
+
+    fn spawn(&mut self, burst: Burst, additive: bool) {
         for _ in 0..burst.count {
             if self.list.len() >= Self::MAX {
                 self.list.swap_remove(0);
@@ -103,6 +115,7 @@ impl Particles {
                 glow: burst.glow,
                 grow: burst.grow,
                 round: burst.round,
+                additive,
             });
         }
     }
@@ -126,12 +139,14 @@ impl Particles {
         self.list.is_empty()
     }
 
-    /// (Modellmatrix, Farbe, Leuchtkraft, rund?) jedes Partikels.
-    pub(crate) fn instances(&self) -> impl Iterator<Item = (Mat4, Vec4, f32, bool)> + '_ {
+    /// (Modellmatrix, Farbe, Leuchtkraft, rund?, additiv?) jedes Partikels.
+    pub(crate) fn instances(&self) -> impl Iterator<Item = (Mat4, Vec4, f32, bool, bool)> + '_ {
         self.list.iter().map(|p| {
             let t = p.life / p.max_life;
             let scale = if p.grow > 0.0 { p.size * (1.0 + (1.0 - t) * p.grow) * (t * 6.0).min(1.0) } else { p.size * t.sqrt() };
-            (Mat4::from_scale_rotation_translation(Vec3::splat(scale), p.rotation, p.position), p.color, p.glow, p.round)
+            // Additive werden zum Ende hin dunkler statt nur kleiner: weiches Verglühen
+            let color = if p.additive { p.color * t.min(1.0).sqrt() } else { p.color };
+            (Mat4::from_scale_rotation_translation(Vec3::splat(scale), p.rotation, p.position), color, p.glow, p.round, p.additive)
         })
     }
 }

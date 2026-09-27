@@ -833,7 +833,7 @@ def _gehen(phi, schwung, knie, arm, huepfen, vorbeugen, ellbogen):
         ("Oberarm.L", "rot", (-arm * s, 0, 0)), ("Unterarm.L", "rot", (-ellbogen - 10 * max(0.0, s), 0, 0)),
         # Rechts hält den Stab: schwingt weniger, Ellbogen etwas gebeugt
         ("Oberarm.R", "rot", (arm * 0.45 * s, 0, 0)), ("Unterarm.R", "rot", (-ellbogen * 0.8, 0, 0)),
-        ("Becken", "pos", (0, 0, -huepfen * abs(c))), ("Becken", "rot", (0, 6 * s, 0)),
+        ("Becken", "pos", (0, -huepfen * abs(c), 0)), ("Becken", "rot", (0, 6 * s, 0)),
         ("Bauch", "rot", (vorbeugen * 0.5, 0, 0)), ("Brust", "rot", (vorbeugen * 0.5, -8 * s, 0)),
         ("Kopf", "rot", (-vorbeugen * 0.6, 2 * s, 0)), ("Hut", "rot", (4 * math.sin(2 * phi) + vorbeugen * 0.5, 0, 3 * s)),
     ]
@@ -945,7 +945,7 @@ def _magier_animationen(armatur):
             ("Hut", "rot", (3 * math.sin(phi * 2 + 1.5), 0, 2 * math.sin(phi + 0.8))),
             ("Oberarm.L", "rot", (3 * math.sin(phi * 2), 0, 0)), ("Unterarm.L", "rot", (-12 - 3 * math.sin(phi * 2), 0, 0)),
             ("Oberarm.R", "rot", (0, 0, 0)), ("Unterarm.R", "rot", (-6, 0, 0)),
-            ("Becken", "pos", (0, 0, -0.004 * (1 - math.cos(phi * 2)))),
+            ("Becken", "pos", (0, -0.004 * (1 - math.cos(phi * 2)), 0)),
         ]
     animation(armatur, "Idle", 180, _schleife(180, 6, idle))
     animation(armatur, "Laufen", 30, _schleife(30, 2, lambda phi: _gehen(phi, 28, 45, 22, 0.03, 4, 14)))
@@ -1012,7 +1012,7 @@ def _magier_animationen(armatur):
                     (bild, "Kopf", "rot", (-brust_x * 0.4, 0, 0)), (bild, "Hut", "rot", (-brust_x * 0.5, 0, 0)),
                     (bild, "Oberschenkel.L", "rot", (-knie * 0.7, 0, 0)), (bild, "Unterschenkel.L", "rot", (knie, 0, 0)),
                     (bild, "Oberschenkel.R", "rot", (-knie * 0.4, 0, 0)), (bild, "Unterschenkel.R", "rot", (knie * 0.7, 0, 0)),
-                    (bild, "Becken", "pos", (0, 0, senken))]
+                    (bild, "Becken", "pos", (0, senken, 0))]
     animation(armatur, "Abbauen", 30, abbauen)
 
     # Hacken (Axt am Baum): Arme nach vorne, Oberkörper weit nach rechts ausholen, dann waagerecht
@@ -1030,3 +1030,83 @@ def _magier_animationen(armatur):
                    (bild, "Oberschenkel.L", "rot", (-knie * 0.5, 0, 0)), (bild, "Unterschenkel.L", "rot", (knie, 0, 0)),
                    (bild, "Oberschenkel.R", "rot", (-knie * 0.3, 0, 0)), (bild, "Unterschenkel.R", "rot", (knie * 0.7, 0, 0))]
     animation(armatur, "Hacken", 24, hacken)
+
+    # ---- Fähigkeiten: eigene Clips mit Ausholen, Wirkung und Nachschwung. Im Spiel laufen sie
+    # als zweite Ebene: im Stand mit dem ganzen Körper, beim Laufen nur auf dem Oberkörper.
+    # Das Bild, in dem die Fähigkeit wirkt, steht in game/src/faehigkeiten.rs (`animation`).
+    _magier_faehigkeiten(armatur)
+
+
+def _clip(armatur, name, laenge, posen):
+    """Clip aus Posen: Liste (Bild, {Knochen: (x, y, z)}) – Drehungen in Grad, "Becken.pos" ist
+    die Verschiebung des Beckens in Metern (z = nach oben). Jeder Knochen, der irgendwo vorkommt,
+    bekommt in jedem Bild einen Schlüssel (fehlt er, gilt die Grundstellung), damit nichts
+    ungewollt von einer Pose in die übernächste schwingt."""
+    knochen = sorted({k for _, pose in posen for k in pose})
+    schluessel = []
+    for bild, pose in posen:
+        for k in knochen:
+            if k == "Becken.pos":
+                # Im Raum des Beckenknochens zeigt Y nach oben (entlang des Knochens)
+                x, y, z = pose.get(k, (0, 0, 0))
+                schluessel.append((bild, "Becken", "pos", (x, z, -y)))
+            else:
+                schluessel.append((bild, k, "rot", pose.get(k, (0, 0, 0))))
+    animation(armatur, name, laenge, schluessel)
+
+
+def _mit(basis, **aenderungen):
+    """Kopie einer Pose mit Änderungen (Knochennamen mit Punkt: "Oberarm_R" → "Oberarm.R")."""
+    pose = dict(basis)
+    for k, v in aenderungen.items():
+        pose[k.replace("_", ".")] = v
+    return pose
+
+
+def _magier_faehigkeiten(armatur):
+    ruhe = {"Oberarm.R": (0, 0, 0), "Unterarm.R": (-6, 0, 0), "Oberarm.L": (0, 0, 0), "Unterarm.L": (-12, 0, 0)}
+
+    # Arkan: den Stab zurückziehen, blitzschnell nach vorne stoßen (Bild 5), die linke Hand
+    # reißt nach hinten, Ausfallschritt, kurz halten, zurück.
+    ausholen = {"Oberarm.R": (-55, 0, -10), "Unterarm.R": (-75, 0, 0), "Oberarm.L": (-45, 0, 8), "Unterarm.L": (-25, 0, 0),
+                "Brust": (-4, 20, 0), "Bauch": (0, 8, 0), "Kopf": (0, -14, 0), "Hut": (3, 0, 0),
+                "Oberschenkel.L": (-6, 0, 0), "Unterschenkel.L": (8, 0, 0)}
+    stoss = {"Oberarm.R": (-98, 0, -4), "Unterarm.R": (-4, 0, 0), "Oberarm.L": (-15, 0, 20), "Unterarm.L": (-70, 0, 0),
+             "Brust": (10, -14, 0), "Bauch": (4, -6, 0), "Kopf": (-6, 10, 0), "Hut": (-7, 0, 0),
+             "Oberschenkel.L": (-22, 0, 0), "Unterschenkel.L": (22, 0, 0), "Oberschenkel.R": (12, 0, 0), "Unterschenkel.R": (12, 0, 0),
+             "Becken.pos": (0, 0, -0.03)}
+    _clip(armatur, "Arkan", 16, [(0, ruhe), (3, ausholen), (5, stoss),
+                                 (8, _mit(stoss, Oberarm_R=(-93, 0, -4), Brust=(12, -16, 0))), (16, ruhe)])
+
+    # Feuerball: beide Hände formen die Glut vor der Brust, weit nach rechts hinten ausholen,
+    # mit Körperdrehung und Ausfallschritt nach vorne schleudern (Bild 11), nachschwingen.
+    sammeln = {"Oberarm.R": (-50, 0, 18), "Unterarm.R": (-100, 0, 0), "Oberarm.L": (-50, 0, -18), "Unterarm.L": (-100, 0, 0),
+               "Brust": (6, 0, 0), "Bauch": (3, 0, 0), "Kopf": (8, 0, 0),
+               "Oberschenkel.L": (-10, 0, 0), "Unterschenkel.L": (16, 0, 0), "Oberschenkel.R": (-6, 0, 0), "Unterschenkel.R": (12, 0, 0),
+               "Becken.pos": (0, 0, -0.03)}
+    zurueck = {"Oberarm.R": (-35, 0, -10), "Unterarm.R": (-95, 0, 0), "Oberarm.L": (-80, 0, -5), "Unterarm.L": (-40, 0, 0),
+               "Brust": (-6, 42, 0), "Bauch": (-2, 20, 0), "Becken": (0, 10, 0), "Kopf": (4, -30, 0), "Hut": (4, 0, 0),
+               "Oberschenkel.L": (-20, 0, 0), "Unterschenkel.L": (10, 0, 0), "Oberschenkel.R": (8, 0, 0), "Unterschenkel.R": (24, 0, 0),
+               "Becken.pos": (0, 0, -0.02)}
+    wurf = {"Oberarm.R": (-102, 0, 6), "Unterarm.R": (-8, 0, 0), "Oberarm.L": (-96, 0, -8), "Unterarm.L": (-6, 0, 0),
+            "Brust": (16, -28, 0), "Bauch": (8, -14, 0), "Becken": (0, -8, 0), "Kopf": (-10, 22, 0), "Hut": (-10, 0, 0),
+            "Oberschenkel.L": (-34, 0, 0), "Unterschenkel.L": (36, 0, 0), "Oberschenkel.R": (20, 0, 0), "Unterschenkel.R": (10, 0, 0),
+            "Becken.pos": (0, 0, -0.06)}
+    nach = _mit(wurf, Oberarm_R=(-80, 0, 6), Unterarm_R=(-15, 0, 0), Oberarm_L=(-70, 0, -8), Unterarm_L=(-20, 0, 0),
+                Brust=(18, -32, 0), Bauch=(8, -16, 0), Becken=(0, -10, 0), Kopf=(-10, 24, 0))
+    _clip(armatur, "Feuerball", 26, [(0, ruhe), (5, sammeln), (9, zurueck), (11, wurf), (15, nach), (26, ruhe)])
+
+    # Frostnova: den Stab mit beiden Händen hoch über den Kopf, auf die Zehen, dann tief in die
+    # Knie und das Stabende auf den Boden stoßen (Bild 14), die linke Hand schleudert zur Seite.
+    hoch = {"Oberarm.R": (-165, 0, -8), "Unterarm.R": (-25, 0, 0), "Oberarm.L": (-150, 0, 10), "Unterarm.L": (-45, 0, 0),
+            "Brust": (-12, 0, 0), "Bauch": (-4, 0, 0), "Kopf": (-12, 0, 0), "Hut": (8, 0, 0), "Becken.pos": (0, 0, 0.03)}
+    runter = {"Oberarm.R": (-130, 0, -8), "Unterarm.R": (-12, 0, 0), "Oberarm.L": (-115, 0, 15), "Unterarm.L": (-25, 0, 0),
+              "Brust": (6, 0, 0), "Bauch": (3, 0, 0), "Kopf": (-2, 0, 0),
+              "Oberschenkel.L": (-15, 0, 4), "Unterschenkel.L": (20, 0, 0), "Oberschenkel.R": (-12, 0, -4), "Unterschenkel.R": (18, 0, 0),
+              "Becken.pos": (0, 0, -0.02)}
+    aufschlag = {"Oberarm.R": (-78, 0, -6), "Unterarm.R": (-4, 0, 0), "Oberarm.L": (-45, 0, 70), "Unterarm.L": (-10, 0, 0),
+                 "Brust": (26, 0, 0), "Bauch": (12, 0, 0), "Kopf": (-18, 0, 0), "Hut": (-8, 0, 0),
+                 "Oberschenkel.L": (-48, 0, 10), "Unterschenkel.L": (62, 0, 0), "Oberschenkel.R": (-30, 0, -10), "Unterschenkel.R": (52, 0, 0),
+                 "Fuss.L": (-14, 0, 0), "Fuss.R": (-18, 0, 0), "Becken.pos": (0, 0, -0.14)}
+    _clip(armatur, "Frostnova", 30, [(0, ruhe), (6, hoch), (11, runter), (14, aufschlag),
+                                     (19, _mit(aufschlag, Brust=(22, 0, 0), Oberarm_L=(-30, 0, 75))), (30, ruhe)])

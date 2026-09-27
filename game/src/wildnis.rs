@@ -132,6 +132,8 @@ struct Wilder {
     cooldown: f32,
     ziel: Option<PlayerId>,
     stun: f32,
+    /// Eingefroren (Restzeit): wie betäubt, der nächste Treffer zerschmettert das Eis
+    frost: f32,
     /// Verlangsamung (Anteil, Restzeit), Brand (Schaden/s, Restzeit)
     slow: (f32, f32),
     burn: (f32, f32),
@@ -170,6 +172,8 @@ pub struct Treffer {
     pub stun: f32,
     pub brand: f32,
     pub dauer: f32,
+    /// Einfrieren (s)
+    pub frost: f32,
 }
 
 /// Ein Besiegter (für Beute und Meldungen).
@@ -296,6 +300,7 @@ impl Wildnis {
                 cooldown: self.rng.range(0.5, 1.5),
                 ziel: None,
                 stun: 0.0,
+                frost: 0.0,
                 slow: (0.0, 0.0),
                 burn: (0.0, 0.0),
                 letzter: String::new(),
@@ -368,6 +373,7 @@ impl Wildnis {
             w.cooldown -= dt;
             w.attacking -= dt;
             w.laeuft = false;
+            w.frost = (w.frost - dt).max(0.0);
             if w.stun > 0.0 {
                 w.stun -= dt;
                 continue;
@@ -478,7 +484,13 @@ impl Wildnis {
     /// Liefert die Art, wenn er dabei fällt.
     pub fn damage(&mut self, id: u16, treffer: Treffer, von: &str, spieler: Option<PlayerId>) -> Option<EnemyKind> {
         let w = self.wilde.iter_mut().find(|w| w.id == id && w.lebt())?;
-        let schaden = treffer.schaden * w.kind.factor(treffer.art, 0.0);
+        let mut schaden = treffer.schaden * w.kind.factor(treffer.art, 0.0);
+        // Eingefroren: der nächste Treffer zerschmettert das Eis
+        if w.frost > 0.0 && treffer.schaden > 0.0 {
+            schaden *= crate::faehigkeiten::ZERSCHMETTERN;
+            w.frost = 0.0;
+            w.stun = 0.0;
+        }
         w.health -= schaden;
         w.letzter = von.to_string();
         if treffer.bremse > 0.0 {
@@ -486,6 +498,12 @@ impl Wildnis {
         }
         if treffer.stun > 0.0 {
             w.stun = w.stun.max(treffer.stun);
+        }
+        if treffer.frost > 0.0 {
+            let frost = treffer.frost * if w.anfuehrer { 0.6 } else { 1.0 };
+            w.frost = w.frost.max(frost);
+            w.stun = w.stun.max(frost);
+            w.slow.1 = w.slow.1.max(4.0 + frost);
         }
         if treffer.brand > 0.0 && w.kind.factor(DamageKind::Fire, 0.0) > 0.0 {
             w.burn = (treffer.brand, treffer.dauer);
@@ -513,6 +531,32 @@ impl Wildnis {
     /// Lebende Bewohner im Umkreis (Mitte der Trefferkugel).
     pub fn within(&self, at: Vec3, radius: f32) -> Vec<u16> {
         self.wilde.iter().filter(|w| w.lebt() && w.center().distance(at) <= radius + w.radius()).map(|w| w.id).collect()
+    }
+
+    /// Lebende Bewohner auf einer Linie (Arkanlanze): von `from` in `richtung`, bis `laenge`,
+    /// höchstens `breite` neben dem Strahl.
+    pub fn auf_linie(&self, from: Vec3, richtung: Vec3, laenge: f32, breite: f32) -> Vec<u16> {
+        let richtung = richtung.normalize_or(Vec3::NEG_Z);
+        self.wilde
+            .iter()
+            .filter(|w| w.lebt())
+            .filter(|w| {
+                let to = w.center() - from;
+                let along = to.dot(richtung);
+                along > 0.0 && along <= laenge && (to - richtung * along).length() <= breite + w.radius()
+            })
+            .map(|w| w.id)
+            .collect()
+    }
+
+    /// Nächster lebender Bewohner um `at` (bis `radius`), ohne die in `ausser` – für den
+    /// abprallenden Wurfhammer.
+    pub fn naechster(&self, at: Vec3, radius: f32, ausser: &[u16]) -> Option<(u16, Vec3)> {
+        self.wilde
+            .iter()
+            .filter(|w| w.lebt() && !ausser.contains(&w.id) && w.center().distance(at) <= radius)
+            .min_by(|a, b| a.center().distance(at).total_cmp(&b.center().distance(at)))
+            .map(|w| (w.id, w.center()))
     }
 
     /// Lebende Bewohner vor `from` in Blickrichtung (bis `weite`, halber Winkel als Kosinus).
@@ -566,6 +610,9 @@ impl Wildnis {
                 }
                 if w.slow.1 > 0.0 {
                     flags |= zustand::VERLANGSAMT;
+                }
+                if w.frost > 0.0 {
+                    flags |= zustand::GEFROREN;
                 }
                 EnemyState {
                     id: w.id,

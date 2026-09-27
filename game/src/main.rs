@@ -40,6 +40,7 @@ mod waffen;
 mod wetter;
 mod wildnis;
 mod world;
+mod zauberbild;
 
 use engine::prelude::*;
 

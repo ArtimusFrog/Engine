@@ -60,6 +60,64 @@ fn model(class: CharacterClass) -> Option<Arc<Model>> {
     geladen
 }
 
+/// Lage eines Knotens in Ruhehaltung (im Raum des Modells).
+fn ruhe_matrix(model: &Model, knoten: usize) -> Mat4 {
+    let mut m = Mat4::IDENTITY;
+    let mut node = Some(knoten);
+    while let Some(n) = node {
+        let r = &model.nodes[n].rest;
+        m = Mat4::from_scale_rotation_translation(r.scale, r.rotation, r.translation) * m;
+        node = model.nodes[n].parent;
+    }
+    m
+}
+
+/// Spitze einer Waffe im Raum der rechten Hand: beim Stab das obere Ende, beim Hammer (der mit
+/// dem Kopf nach unten hängt) der Kopf.
+fn waffen_spitze_lokal(model: &Model, knoten: &str, oben: bool) -> Option<Vec3> {
+    let mesh = model.extract_part(knoten, None)?;
+    let hand = ruhe_matrix(model, model.node("Hand.R")?);
+    let hoehe = |v: &engine::mesh::Vertex| hand.transform_point3(Vec3::from(v.position)).y;
+    let beste = if oben {
+        mesh.vertices.iter().max_by(|a, b| hoehe(a).total_cmp(&hoehe(b)))?
+    } else {
+        mesh.vertices.iter().min_by(|a, b| hoehe(a).total_cmp(&hoehe(b)))?
+    };
+    // Beim Hammer die Mitte des Kopfes: alles in der Nähe des tiefsten Punkts mitteln
+    let ziel = Vec3::from(beste.position);
+    let nah: Vec<Vec3> = mesh.vertices.iter().map(|v| Vec3::from(v.position)).filter(|p| p.distance(ziel) < if oben { 0.05 } else { 0.14 }).collect();
+    Some(nah.iter().sum::<Vec3>() / nah.len().max(1) as f32)
+}
+
+/// Die Waffe als eigenes Mesh (für den geworfenen Hammer): Mitte im Ursprung, Stiel entlang Y.
+pub fn waffen_flugmesh(ctx: &mut Context, class: CharacterClass, knoten: &str) -> Option<MeshId> {
+    let model = model(class)?;
+    let name = format!("flug_{}_{knoten}", datei(class));
+    Some(ctx.assets.named_mesh(&name, || {
+        let mut mesh = model.extract_part(knoten, None).unwrap_or_default();
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for v in &mesh.vertices {
+            lo = lo.min(v.position.into());
+            hi = hi.max(v.position.into());
+        }
+        let mitte = (lo + hi) * 0.5;
+        let ausdehnung = hi - lo;
+        let lang = if ausdehnung.x >= ausdehnung.y && ausdehnung.x >= ausdehnung.z {
+            Vec3::X
+        } else if ausdehnung.z >= ausdehnung.y {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let drehung = Quat::from_rotation_arc(lang, Vec3::Y);
+        for v in &mut mesh.vertices {
+            v.position = (drehung * (Vec3::from(v.position) - mitte)).into();
+            v.normal = (drehung * Vec3::from(v.normal)).into();
+        }
+        mesh
+    }))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Chop,
@@ -84,6 +142,15 @@ pub struct Puppet {
     schritt: (f32, f32),
     /// Anbauteil der ausgerüsteten Waffe (None = Startwaffe „Stab“ bzw. „Hammer“)
     waffe: Option<&'static str>,
+    class: CharacterClass,
+    /// Spitze der Waffe im Raum der rechten Hand (Stab oben, Hammerkopf)
+    spitze: Option<Vec3>,
+    /// Die Waffe fliegt gerade (Wurfhammer): die Hand ist leer
+    hand_leer: bool,
+    /// Treffer-Stopp: so lange steht die Animation fast still (Sekunden)
+    stopp: f32,
+    /// Anteil der Fähigkeits-Animation an den Beinen (1 im Stand, 0 beim Laufen)
+    beine: f32,
 }
 
 impl Puppet {
@@ -112,8 +179,28 @@ impl Puppet {
             figure.joints = animator.palette();
         }
         let figure = ctx.scene.spawn(figure);
-        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None, schritt: schritt(class), waffe: None };
+        let mut animator = animator;
+        if let Some(animator) = &mut animator {
+            // Fähigkeiten beim Laufen nur auf dem Oberkörper (Bauch aufwärts)
+            animator.set_upper_body("Bauch");
+        }
+        let mut puppet = Puppet {
+            animator,
+            figure,
+            last_position: None,
+            speed: 0.0,
+            acting: false,
+            tool: None,
+            schritt: schritt(class),
+            waffe: None,
+            class,
+            spitze: None,
+            hand_leer: false,
+            stopp: 0.0,
+            beine: 1.0,
+        };
         puppet.set_tool(Tool::default());
+        puppet.spitze_berechnen();
         puppet
     }
 
@@ -133,12 +220,61 @@ impl Puppet {
         }
         self.waffe = waffe;
         self.zeigen();
+        self.spitze_berechnen();
+    }
+
+    /// Knoten der Waffe in der Hand (Startwaffe „Stab“ bzw. „Hammer“).
+    pub fn waffen_knoten(&self) -> &'static str {
+        self.waffe.unwrap_or(if self.class == CharacterClass::Zwerg { "Hammer" } else { "Stab" })
+    }
+
+    fn spitze_berechnen(&mut self) {
+        let oben = self.class != CharacterClass::Zwerg;
+        let knoten = self.waffen_knoten();
+        self.spitze = self.animator.as_ref().and_then(|a| waffen_spitze_lokal(a.model(), knoten, oben));
+    }
+
+    /// Die Waffe fliegt (Wurfhammer): Hand leer bzw. wieder gefangen.
+    pub fn set_hand_leer(&mut self, leer: bool) {
+        if self.hand_leer != leer {
+            self.hand_leer = leer;
+            self.zeigen();
+        }
+    }
+
+    /// Treffer-Stopp: die Animation steht kurz fast still (schwere Schläge wirken wuchtiger).
+    pub fn stopp(&mut self, dauer: f32) {
+        self.stopp = self.stopp.max(dauer);
+    }
+
+    /// Lage eines Knochens in der Welt (z. B. `Hand.L`).
+    pub fn knochen_welt(&self, ctx: &Context, name: &str) -> Option<Vec3> {
+        let animator = self.animator.as_ref()?;
+        let m = ctx.scene.world_matrix(self.figure) * animator.node_matrix(name)?;
+        Some(m.w_axis.truncate())
+    }
+
+    /// Spitze der Waffe in der Welt (Stab oben, Hammerkopf).
+    pub fn waffen_spitze(&self, ctx: &Context) -> Option<Vec3> {
+        let animator = self.animator.as_ref()?;
+        let m = ctx.scene.world_matrix(self.figure) * animator.node_matrix("Hand.R")?;
+        Some(m.transform_point3(self.spitze?))
+    }
+
+    /// Spielt eine Fähigkeit als zweite Ebene: im Stand mit dem ganzen Körper, beim Laufen nur
+    /// auf dem Oberkörper (die Beine laufen weiter).
+    pub fn act_faehigkeit(&mut self, clip: &str, speed: f32) {
+        let Some(animator) = &mut self.animator else { return };
+        if !animator.play_overlay(clip, speed, 0.06, 0.22) {
+            let ersatz = if self.class == CharacterClass::Zwerg { "Hieb" } else { "Zaubern" };
+            animator.play_overlay(ersatz, speed * 1.3, 0.06, 0.22);
+        }
     }
 
     fn zeigen(&mut self) {
         let Some(tool) = self.tool else { return };
         let Some(animator) = &mut self.animator else { return };
-        let kampf = matches!(tool, Tool::Faehigkeit(_));
+        let kampf = matches!(tool, Tool::Faehigkeit(_)) && !self.hand_leer;
         for start in ["Stab", "Hammer"] {
             animator.set_visible(start, kampf && self.waffe.is_none());
         }
@@ -191,6 +327,10 @@ impl Puppet {
         if self.acting && animator.finished() {
             self.acting = false;
         }
+        // Fähigkeiten: im Stand ganzer Körper, beim Laufen und Springen nur der Oberkörper
+        let ziel = if self.speed < 0.8 && !airborne { 1.0 } else { 0.0 };
+        self.beine += (ziel - self.beine) * (dt * 8.0).min(1.0);
+        animator.set_overlay_legs(self.beine);
         if !self.acting {
             if airborne {
                 animator.play("Springen", true, 0.15);
@@ -206,7 +346,14 @@ impl Puppet {
                 animator.set_speed(1.0);
             }
         }
-        animator.update(dt);
+        // Treffer-Stopp: kurz fast stehen bleiben
+        let anim_dt = if self.stopp > 0.0 {
+            self.stopp -= dt;
+            dt * 0.05
+        } else {
+            dt
+        };
+        animator.update(anim_dt);
         if let Some(figure) = ctx.scene.try_get_mut(self.figure) {
             figure.joints = animator.palette();
         }

@@ -507,10 +507,31 @@ struct Playback {
     looping: bool,
 }
 
+/// Zweite Ebene über der Grundanimation: z. B. ein Zauber auf dem Oberkörper, während die Beine
+/// weiterlaufen. Sie blendet sich weich ein und am Ende wieder aus.
+#[derive(Clone, Copy, Debug)]
+struct Overlay {
+    playback: Playback,
+    fade_in: f32,
+    fade_out: f32,
+    /// Seit dem Start vergangen (Sekunden, unabhängig vom Tempo)
+    elapsed: f32,
+    /// Die vorige Ebene, falls sie beim Start noch lief (wird in `fade_in` ausgeblendet)
+    previous: Option<(Playback, f32)>,
+}
+
 /// Spielt Animationen auf einem Modell ab.
 pub struct Animator {
     model: Arc<Model>,
     current: Option<Playback>,
+    overlay: Option<Overlay>,
+    overlay_pose: Vec<Trs>,
+    /// Je Knoten: gehört zum Oberkörper (bekommt die zweite Ebene immer voll)
+    upper: Vec<bool>,
+    /// Anteil der zweiten Ebene an allen übrigen Knoten (Becken, Beine): 1 im Stand, 0 beim Laufen
+    overlay_legs: f32,
+    /// Je Clip: welche Knoten er bewegt
+    animated: Vec<Vec<bool>>,
     /// Vorherige Animation während des Überblendens: (Wiedergabe, vergangen, Dauer).
     fading: Option<(Playback, f32, f32)>,
     hidden: Vec<bool>,
@@ -522,7 +543,23 @@ pub struct Animator {
 impl Animator {
     pub fn new(model: Arc<Model>) -> Self {
         let pose = model.rest_pose();
+        let animated = model
+            .clips
+            .iter()
+            .map(|clip| {
+                let mut nodes = vec![false; model.nodes.len()];
+                for channel in &clip.channels {
+                    nodes[channel.node] = true;
+                }
+                nodes
+            })
+            .collect();
         let mut animator = Animator {
+            overlay: None,
+            overlay_pose: pose.clone(),
+            upper: vec![false; model.nodes.len()],
+            overlay_legs: 1.0,
+            animated,
             hidden: vec![false; model.nodes.len()],
             fade_pose: pose.clone(),
             pose,
@@ -572,6 +609,55 @@ impl Animator {
         self.current.is_none_or(|c| !c.looping && c.time >= self.model.clips[c.clip].duration)
     }
 
+    /// Legt den Oberkörper fest: dieser Knoten und alles, was daran hängt (für `play_overlay`).
+    pub fn set_upper_body(&mut self, root: &str) {
+        let Some(root) = self.model.node(root) else { return };
+        for i in 0..self.model.nodes.len() {
+            let mut node = Some(i);
+            while let Some(n) = node {
+                if n == root {
+                    self.upper[i] = true;
+                    break;
+                }
+                node = self.model.nodes[n].parent;
+            }
+        }
+    }
+
+    /// Spielt eine Animation einmal als zweite Ebene über der Grundanimation ab: auf dem
+    /// Oberkörper voll, auf den übrigen Knoten zum Anteil aus `set_overlay_legs`. Liefert
+    /// `false`, wenn es sie nicht gibt.
+    pub fn play_overlay(&mut self, name: &str, speed: f32, fade_in: f32, fade_out: f32) -> bool {
+        let Some(clip) = self.model.clip(name) else { return false };
+        let previous = self.overlay.take().map(|o| (o.playback, self.overlay_weight_of(&o)));
+        self.overlay = Some(Overlay { playback: Playback { clip, time: 0.0, speed, looping: false }, fade_in: fade_in.max(1e-3), fade_out: fade_out.max(1e-3), elapsed: 0.0, previous });
+        true
+    }
+
+    /// Anteil der zweiten Ebene an Becken und Beinen (1 = ganzer Körper, 0 = nur Oberkörper).
+    pub fn set_overlay_legs(&mut self, weight: f32) {
+        self.overlay_legs = weight.clamp(0.0, 1.0);
+    }
+
+    /// Läuft gerade eine zweite Ebene? Liefert ihren Namen und die Zeit (Sekunden im Clip).
+    pub fn overlay(&self) -> Option<(&str, f32)> {
+        self.overlay.map(|o| (self.model.clips[o.playback.clip].name.as_str(), o.playback.time))
+    }
+
+    /// Tempo der zweiten Ebene (0 hält sie an – für einen Treffer-Stopp).
+    pub fn set_overlay_speed(&mut self, speed: f32) {
+        if let Some(overlay) = &mut self.overlay {
+            overlay.playback.speed = speed;
+        }
+    }
+
+    fn overlay_weight_of(&self, overlay: &Overlay) -> f32 {
+        let duration = self.model.clips[overlay.playback.clip].duration;
+        let fade_in = (overlay.elapsed / overlay.fade_in).min(1.0);
+        let fade_out = ((duration - overlay.playback.time) / overlay.fade_out).clamp(0.0, 1.0);
+        fade_in * fade_out
+    }
+
     /// Blendet einen Knoten mit allem, was daran hängt, aus oder ein.
     pub fn set_visible(&mut self, node_name: &str, visible: bool) {
         if let Some(node) = self.model.node(node_name) {
@@ -600,6 +686,19 @@ impl Animator {
                 self.fading = None;
             }
         }
+        if let Some(overlay) = &mut self.overlay {
+            advance(&mut overlay.playback);
+            overlay.elapsed += dt;
+            if let Some((previous, _)) = &mut overlay.previous {
+                advance(previous);
+            }
+            if overlay.elapsed >= overlay.fade_in {
+                overlay.previous = None;
+            }
+            if overlay.playback.time >= model.clips[overlay.playback.clip].duration {
+                self.overlay = None;
+            }
+        }
         self.evaluate();
     }
 
@@ -617,6 +716,30 @@ impl Animator {
             let t = (elapsed / duration).clamp(0.0, 1.0);
             for (target, from) in self.pose.iter_mut().zip(&self.fade_pose) {
                 *target = from.blend(target, t);
+            }
+        }
+        if let Some(overlay) = self.overlay {
+            // Die vorige Ebene (neu gestartet, während sie noch lief) blendet in die neue über
+            let neu = (overlay.elapsed / overlay.fade_in).min(1.0);
+            let layers = overlay.previous.map(|(p, w)| (p, w * (1.0 - neu))).into_iter().chain(std::iter::once((overlay.playback, self.overlay_weight_of(&overlay))));
+            for (playback, weight) in layers {
+                if weight <= 0.0 {
+                    continue;
+                }
+                for (slot, node) in self.overlay_pose.iter_mut().zip(&model.nodes) {
+                    *slot = node.rest;
+                }
+                model.sample(playback.clip, playback.time, &mut self.overlay_pose);
+                let animated = &self.animated[playback.clip];
+                for i in 0..self.pose.len() {
+                    if !animated[i] {
+                        continue;
+                    }
+                    let w = weight * if self.upper[i] { 1.0 } else { self.overlay_legs };
+                    if w > 0.0 {
+                        self.pose[i] = self.pose[i].blend(&self.overlay_pose[i], w);
+                    }
+                }
             }
         }
         model.global_matrices(&self.pose, &mut self.globals);
@@ -730,6 +853,35 @@ mod tests {
             animator.update(0.05);
         }
         assert!(animator.finished());
+    }
+
+    #[test]
+    fn zweite_ebene_nur_auf_dem_oberkoerper() {
+        let model = Arc::new(Model::from_glb(KNIGHT).unwrap());
+        let mut animator = Animator::new(model.clone());
+        animator.set_upper_body("chest");
+        assert!(animator.upper.iter().any(|&u| u), "kein Oberkörper gefunden");
+        let bein = (0..model.nodes.len()).find(|&i| !animator.upper[i] && model.nodes[i].name.contains("leg")).expect("kein Bein");
+        let arm = (0..model.nodes.len()).find(|&i| animator.upper[i] && model.nodes[i].name.contains("upperarm")).expect("kein Arm");
+        let mut nur_laufen = Animator::new(model.clone());
+        for a in [&mut animator, &mut nur_laufen] {
+            a.play("Running_A", true, 0.0);
+            a.update(0.3);
+        }
+        animator.set_overlay_legs(0.0);
+        assert!(animator.play_overlay("1H_Melee_Attack_Chop", 1.0, 0.05, 0.1));
+        for _ in 0..4 {
+            animator.update(0.05);
+            nur_laufen.update(0.05);
+        }
+        // Die Beine laufen weiter, der Arm folgt dem Hieb
+        assert!(animator.overlay().is_some());
+        assert!(animator.globals[bein].abs_diff_eq(nur_laufen.globals[bein], 1e-4), "Die Beine laufen nicht weiter");
+        assert!(!animator.globals[arm].abs_diff_eq(nur_laufen.globals[arm], 1e-3), "Der Arm schlägt nicht");
+        for _ in 0..100 {
+            animator.update(0.05);
+        }
+        assert!(animator.overlay().is_none(), "Die zweite Ebene endet nicht");
     }
 
     #[test]

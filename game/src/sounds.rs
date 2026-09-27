@@ -41,6 +41,27 @@ pub struct Sounds {
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
+    /// Klänge der Fähigkeiten (in der Reihenfolge von `zauber_klang`)
+    zauber: Vec<SoundId>,
+}
+
+/// Index eines Fähigkeits-Klangs in `Sounds::zauber`.
+fn zauber_klang(klang: crate::zauberbild::Klang) -> usize {
+    use crate::zauberbild::Klang::*;
+    match klang {
+        Arkan => 0,
+        Lanze => 1,
+        ArkanTreffer => 2,
+        Feuerwurf => 3,
+        Explosion => 4,
+        Frost => 5,
+        Eisbruch => 6,
+        Schwung => 7,
+        Hammer => 8,
+        Wurf => 9,
+        Fangen => 10,
+        Beben => 11,
+    }
 }
 
 /// Startet das Laden der Menümusik in einem eigenen Thread (sie ist ein ganzes Musikstück).
@@ -111,6 +132,20 @@ impl Sounds {
             music: a.start_loop(music, Bus::Music),
             rng: Rng::new(99),
             last_items: None,
+            zauber: vec![
+                sound(a, "arkan", arkan),
+                sound(a, "arkanlanze", lanze),
+                sound(a, "arkan_treffer", arkan_treffer),
+                sound(a, "feuerwurf", feuerwurf),
+                sound(a, "explosion", explosion),
+                sound(a, "frostnova", frost),
+                sound(a, "eisbruch", eisbruch),
+                sound(a, "schwung", schwung),
+                sound(a, "hammer", hammer),
+                sound(a, "wurf", wurf),
+                sound(a, "fangen", fangen),
+                sound(a, "beben", beben),
+            ],
         }
     }
 
@@ -180,6 +215,15 @@ impl Sounds {
                 SoundEvent::Cast { player } => {
                     let at = world.player_position(ctx, player);
                     ctx.audio.play(self.cast, Play { at, volume: 0.6, pitch, range: 35.0, ..Default::default() });
+                }
+                SoundEvent::Zauber { klang, at, laut } => {
+                    // Schwere Klänge tragen weiter
+                    let range = match klang {
+                        crate::zauberbild::Klang::Explosion | crate::zauberbild::Klang::Beben | crate::zauberbild::Klang::Lanze => 90.0,
+                        _ => 45.0,
+                    };
+                    let id = self.zauber[zauber_klang(klang)];
+                    ctx.audio.play(id, Play { at: Some(at), volume: laut.clamp(0.0, 1.0), pitch, range, ..Default::default() });
                 }
                 SoundEvent::Impact { at, animal, killed } => {
                     // In ein Tier: kräftig; erlegt: tiefer; sonst leises Verpuffen.
@@ -633,3 +677,174 @@ mod tests {
     }
 }
 
+
+// ---------- Klänge der Fähigkeiten (zauberbild.rs) ----------
+
+/// Arkangeschoss: heller, abfallender Zisch mit Klick.
+fn arkan() -> SoundBuffer {
+    let mut noise = Noise::new(61);
+    let mut lp = LowPass::default();
+    render(0.4, |t| {
+        let fall = 1500.0 * (-t * 7.0).exp() + 380.0;
+        let ton = (sine(t, fall) * 0.55 + sine(t, fall * 1.51) * 0.25) * envelope(t, 0.004, 0.09);
+        let zisch = (noise.next() - lp.next(noise.next(), 0.3)) * envelope(t, 0.002, 0.06) * 0.5;
+        ton + zisch
+    })
+}
+
+/// Arkanlanze: tiefes Brummen, das aufreißt, mit knisterndem Strahl darüber.
+fn lanze() -> SoundBuffer {
+    let mut noise = Noise::new(62);
+    let mut lp = LowPass::default();
+    render(0.9, |t| {
+        let huelle = envelope(t, 0.01, 0.35);
+        let brummen = (sine(t, 82.0) * 0.6 + sine(t, 164.0 + t * 90.0) * 0.4 + sine(t, 247.0) * 0.2) * huelle;
+        let n = noise.next();
+        let knistern = (n - lp.next(n, 0.2)) * huelle * (0.6 + 0.4 * sine(t, 37.0)) * 0.7;
+        let hoch = sine(t, 1760.0 - t * 900.0) * envelope(t, 0.003, 0.12) * 0.35;
+        brummen + knistern + hoch
+    })
+}
+
+/// Arkangeschoss trifft: Plopp mit funkelnden Glöckchen.
+fn arkan_treffer() -> SoundBuffer {
+    let mut noise = Noise::new(63);
+    let mut lp = LowPass::default();
+    render(0.55, |t| {
+        let plopp = lp.next(noise.next(), 0.35) * envelope(t, 0.001, 0.04) * 1.2;
+        let glocke = (sine(t, 1318.5) * 0.4 + sine(t, 1975.5) * 0.3 + sine(t, 2637.0) * 0.2) * envelope(t, 0.004, 0.18) * 0.6;
+        let druck = sine(t, 180.0 - t * 120.0) * envelope(t, 0.002, 0.06) * 0.7;
+        plopp + glocke + druck
+    })
+}
+
+/// Feuerball fliegt los: fauchendes Aufbrausen.
+fn feuerwurf() -> SoundBuffer {
+    let mut noise = Noise::new(64);
+    let mut lp = LowPass::default();
+    let mut knack = Noise::new(65);
+    render(0.8, |t| {
+        let auf = (t / 0.12).min(1.0) * (-(t - 0.12).max(0.0) / 0.3).exp();
+        let fauchen = lp.next(noise.next(), 0.05 + auf * 0.25) * auf * 2.2;
+        let k = if knack.next() > 0.985 { knack.next() * 0.5 * auf } else { 0.0 };
+        fauchen + k
+    })
+}
+
+/// Explosion des Feuerballs: Knall, tiefer Wumms, grollendes Nachrollen.
+fn explosion() -> SoundBuffer {
+    let mut noise = Noise::new(66);
+    let mut lp = LowPass::default();
+    let mut tief = LowPass::default();
+    render(2.0, |t| {
+        let n = noise.next();
+        let knall = n * envelope(t, 0.001, 0.03) * 0.9;
+        let wumms = sine(t, 62.0 * (-t * 3.0).exp() + 30.0) * envelope(t, 0.003, 0.35) * 1.2;
+        let grollen = tief.next(lp.next(n, 0.12), 0.1) * envelope(t, 0.02, 0.7) * 4.0;
+        let prasseln = if t > 0.1 { (n - lp.next(n, 0.4)) * envelope(t - 0.1, 0.05, 0.4) * 0.25 } else { 0.0 };
+        knall + wumms + grollen + prasseln
+    })
+}
+
+/// Frostnova: kristallines Klirren über einem kalten Luftstoß.
+fn frost() -> SoundBuffer {
+    let mut noise = Noise::new(67);
+    let mut lp = LowPass::default();
+    let mut rng = Rng::new(68);
+    let toene: Vec<(f32, f32)> = (0..14).map(|_| (rng.range(0.0, 0.5), rng.range(2200.0, 5200.0))).collect();
+    render(1.4, |t| {
+        let n = noise.next();
+        let stoss = lp.next(n, 0.08 + (t * 2.0).min(0.3)) * envelope(t, 0.02, 0.35) * 1.4;
+        let mut klirren = 0.0;
+        for &(start, hz) in &toene {
+            let lokal = t - start;
+            if lokal > 0.0 {
+                klirren += sine(lokal, hz) * envelope(lokal, 0.001, 0.12) * 0.18;
+            }
+        }
+        let tief = sine(t, 110.0) * envelope(t, 0.005, 0.2) * 0.5;
+        stoss + klirren + tief
+    })
+}
+
+/// Eis zerspringt: heller Bruch mit klirrenden Splittern.
+fn eisbruch() -> SoundBuffer {
+    let mut noise = Noise::new(69);
+    let mut lp = LowPass::default();
+    let mut rng = Rng::new(70);
+    let toene: Vec<(f32, f32)> = (0..9).map(|_| (rng.range(0.0, 0.2), rng.range(2800.0, 6200.0))).collect();
+    render(0.6, |t| {
+        let n = noise.next();
+        let bruch = (n - lp.next(n, 0.5)) * envelope(t, 0.001, 0.05) * 1.1;
+        let mut splitter = 0.0;
+        for &(start, hz) in &toene {
+            let lokal = t - start;
+            if lokal > 0.0 {
+                splitter += sine(lokal, hz) * envelope(lokal, 0.001, 0.07) * 0.22;
+            }
+        }
+        bruch + splitter
+    })
+}
+
+/// Schwung einer schweren Waffe: Luft zischt vorbei.
+fn schwung() -> SoundBuffer {
+    let mut noise = Noise::new(71);
+    let mut lp = LowPass::default();
+    let mut lp2 = LowPass::default();
+    render(0.35, |t| {
+        let buckel = (t / 0.35 * std::f32::consts::PI).sin().powi(2);
+        let n = noise.next();
+        let band = lp.next(n, 0.12 + buckel * 0.2) - lp2.next(n, 0.02);
+        band * buckel * 2.5
+    })
+}
+
+/// Hammer trifft: dumpfer Schlag und metallisches Klingen.
+fn hammer() -> SoundBuffer {
+    let mut noise = Noise::new(72);
+    let mut lp = LowPass::default();
+    render(0.8, |t| {
+        let schlag = sine(t, 75.0 - t * 30.0) * envelope(t, 0.002, 0.12) * 1.3;
+        let klick = lp.next(noise.next(), 0.5) * envelope(t, 0.001, 0.02) * 0.8;
+        let klang = (sine(t, 440.0) * 0.35 + sine(t, 1123.0) * 0.25 + sine(t, 1789.0) * 0.18 + sine(t, 2533.0) * 0.1) * envelope(t, 0.002, 0.22) * 0.55;
+        schlag + klick + klang
+    })
+}
+
+/// Wurfhammer fliegt los: tiefer, surrender Luftstoß.
+fn wurf() -> SoundBuffer {
+    let mut noise = Noise::new(73);
+    let mut lp = LowPass::default();
+    render(0.55, |t| {
+        let auf = (t / 0.08).min(1.0) * (-(t - 0.08).max(0.0) / 0.2).exp();
+        let surren = lp.next(noise.next(), 0.15) * auf * (0.7 + 0.3 * sine(t, 28.0)) * 2.2;
+        surren + sine(t, 140.0) * auf * 0.3
+    })
+}
+
+/// Hammer zurück in der Hand: kurzes Klatschen mit Klingen.
+fn fangen() -> SoundBuffer {
+    let mut noise = Noise::new(74);
+    let mut lp = LowPass::default();
+    render(0.3, |t| {
+        let klatsch = lp.next(noise.next(), 0.3) * envelope(t, 0.001, 0.03) * 1.0;
+        let klang = (sine(t, 880.0) * 0.3 + sine(t, 1397.0) * 0.2) * envelope(t, 0.002, 0.08) * 0.5;
+        klatsch + klang + sine(t, 120.0) * envelope(t, 0.002, 0.05) * 0.6
+    })
+}
+
+/// Erdbeben: tiefer Wumms, rollendes Grollen, prasselnde Steine.
+fn beben() -> SoundBuffer {
+    let mut noise = Noise::new(75);
+    let mut lp = LowPass::default();
+    let mut tief = LowPass::default();
+    let mut steine = Noise::new(76);
+    render(2.2, |t| {
+        let n = noise.next();
+        let wumms = sine(t, 48.0 * (-t * 2.0).exp() + 26.0) * envelope(t, 0.004, 0.45) * 1.4;
+        let grollen = tief.next(lp.next(n, 0.06), 0.08) * envelope(t, 0.03, 0.9) * 5.0 * (0.7 + 0.3 * sine(t, 5.0));
+        let stein = if steine.next() > 0.97 { steine.next() * envelope(t, 0.05, 0.6) * 0.5 } else { 0.0 };
+        wumms + grollen + stein
+    })
+}

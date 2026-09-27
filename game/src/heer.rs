@@ -396,6 +396,8 @@ pub mod zustand {
     pub const UNVERWUNDBAR: u16 = 256;
     pub const WUT: u16 = 512;
     pub const GETEERT: u16 = 1024;
+    /// In Eis gefangen (Frostnova): der nächste Treffer zerschmettert es
+    pub const GEFROREN: u16 = 2048;
 }
 
 /// Was alle Rechner von einer Einheit wissen müssen.
@@ -442,6 +444,8 @@ pub struct Hit {
     pub dauer: f32,
     /// Betäubung (Sekunden)
     pub stun: f32,
+    /// Einfrieren (Sekunden): wie betäubt, der nächste Treffer zerschmettert das Eis
+    pub frost: f32,
     /// `wirkung::…`
     pub effekte: u8,
 }
@@ -654,6 +658,8 @@ struct Member {
     seuche: bool,
     geteert: f32,
     stun: f32,
+    /// Eingefroren (Restzeit)
+    frost: f32,
     aufgedeckt: f32,
     heilsperre: f32,
     schild_bruch: f32,
@@ -723,6 +729,7 @@ impl Member {
         setze(self.unverwundbar > 0.0, UNVERWUNDBAR);
         setze(self.wut, WUT);
         setze(self.geteert > 0.0, GETEERT);
+        setze(self.frost > 0.0, GEFROREN);
         f
     }
 }
@@ -1031,6 +1038,7 @@ impl Heer {
             seuche: false,
             geteert: 0.0,
             stun: 0.0,
+            frost: 0.0,
             aufgedeckt: 0.0,
             heilsperre: 0.0,
             schild_bruch: 0.0,
@@ -1107,6 +1115,7 @@ impl Heer {
                     &mut member.gift,
                     &mut member.geteert,
                     &mut member.stun,
+                    &mut member.frost,
                     &mut member.aufgedeckt,
                     &mut member.heilsperre,
                     &mut member.schild_bruch,
@@ -1725,6 +1734,12 @@ impl Heer {
         if member.wut {
             faktor *= 0.8;
         }
+        // Eingefroren: der nächste Treffer zerschmettert das Eis
+        if member.frost > 0.0 && hit.schaden > 0.0 {
+            faktor *= crate::faehigkeiten::ZERSCHMETTERN;
+            member.frost = 0.0;
+            member.stun = 0.0;
+        }
         if hit.art == DamageKind::Fire {
             if member.geteert > 0.0 {
                 faktor *= 1.5;
@@ -1744,6 +1759,12 @@ impl Heer {
         }
         if hit.stun > 0.0 && !member.wut {
             member.stun = member.stun.max(hit.stun * if member.boss { 0.4 } else { 1.0 });
+        }
+        if hit.frost > 0.0 && !member.wut {
+            let frost = hit.frost * if member.boss { 0.4 } else { 1.0 };
+            member.frost = member.frost.max(frost);
+            member.stun = member.stun.max(frost);
+            member.slow.1 = member.slow.1.max(2.5 + frost);
         }
         if hit.brand > 0.0 {
             let teer = if member.geteert > 0.0 { 2.0 } else { 1.0 };
@@ -1899,6 +1920,8 @@ struct Figur {
     offen: f32,
     sammeln: f32,
     funken: f32,
+    /// Eiskristalle um die Figur, solange sie gefroren ist (Frostnova)
+    eis: Vec<(EntityId, Vec3, Quat)>,
 }
 
 /// Eine Schadenszahl über einer Einheit.
@@ -1988,6 +2011,9 @@ impl HeerAnsicht {
         for id in gone {
             if let Some(figur) = self.figuren.remove(&id) {
                 ctx.scene.despawn(figur.entity);
+                for (e, _, _) in figur.eis {
+                    ctx.scene.despawn(e);
+                }
             }
         }
         let mut rng = self.rng.take().unwrap_or_else(|| Rng::new(0x5EE));
@@ -2020,6 +2046,7 @@ impl HeerAnsicht {
                         offen: 0.0,
                         sammeln: 0.0,
                         funken: 0.0,
+                        eis: Vec::new(),
                     },
                 );
             }
@@ -2053,6 +2080,70 @@ impl HeerAnsicht {
                 self.zahlen.push(Schadenszahl { ort: figur.shown + Vec3::Y * (up * 2.0 + 0.4), wert: figur.offen.round() as u32, alter: 0.0, gross: figur.offen > 60.0 });
                 figur.offen = 0.0;
                 figur.sammeln = 0.0;
+            }
+            // Gefroren: Eiskristalle wachsen um die Figur; taut sie auf oder wird das Eis
+            // zerschmettert, springen Splitter davon
+            let gefroren = state.flags & zustand::GEFROREN != 0 && state.action != EnemyAction::Dying;
+            if gefroren && figur.eis.is_empty() {
+                let mesh = crate::zauberbild::kristall(ctx);
+                let (hoch, breit) = (figur.trefferkugel.0 * figur.groesse, figur.trefferkugel.1 * figur.groesse);
+                let n = 7;
+                for k in 0..n {
+                    let w = std::f32::consts::TAU * (k as f32 + rng.range(-0.25, 0.25)) / n as f32;
+                    let aussen = vec3(w.cos(), 0.0, w.sin());
+                    let neigung = rng.range(0.15, 0.55);
+                    let achse = (Vec3::Y * neigung.cos() + aussen * neigung.sin()).normalize();
+                    let drehung = Quat::from_rotation_arc(Vec3::Y, achse) * Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU));
+                    let versatz = aussen * breit * rng.range(0.45, 0.95) - Vec3::Y * 0.1;
+                    let laenge = hoch * rng.range(1.1, 1.9);
+                    let dicke = breit * rng.range(0.5, 0.8);
+                    let mut e = Entity::new("Eis", mesh)
+                        .with_transform(Transform::from_position(figur.shown + versatz).with_rotation(drehung).with_scale(vec3(dicke, laenge, dicke)))
+                        .with_color(vec4(0.32, 0.6, 0.9, 1.0).lerp(vec4(0.55, 0.78, 0.95, 1.0), rng.range(0.0, 1.0)))
+                        .with_material(Material::Emissive { glow: 0.15 });
+                    e.casts_shadow = true;
+                    figur.eis.push((ctx.scene.spawn(e), versatz, drehung));
+                }
+            } else if !gefroren && !figur.eis.is_empty() {
+                let mitte = figur.shown + Vec3::Y * figur.trefferkugel.0 * figur.groesse;
+                for (e, _, _) in figur.eis.drain(..) {
+                    ctx.scene.despawn(e);
+                }
+                ctx.particles.burst(Burst {
+                    position: mitte,
+                    count: 34,
+                    color: vec3(0.72, 0.9, 1.0),
+                    color_variation: 0.15,
+                    speed: 6.0,
+                    direction: Vec3::Y * 0.5,
+                    size: 0.14,
+                    life: 0.9,
+                    gravity: 12.0,
+                    glow: 0.6,
+                    grow: 0.0,
+                    round: false,
+                });
+                ctx.particles.burst_glow(Burst {
+                    position: mitte,
+                    count: 16,
+                    color: vec3(0.7, 0.92, 1.0),
+                    color_variation: 0.2,
+                    speed: 3.0,
+                    direction: Vec3::ZERO,
+                    size: 0.1,
+                    life: 0.5,
+                    gravity: 2.0,
+                    glow: 3.0,
+                    grow: 0.0,
+                    round: true,
+                });
+                sounds.push(SoundEvent::Zauber { klang: crate::zauberbild::Klang::Eisbruch, at: mitte, laut: 0.8 });
+            }
+            for &(e, versatz, drehung) in &figur.eis {
+                if let Some(entity) = ctx.scene.try_get_mut(e) {
+                    entity.transform.position = figur.shown + versatz;
+                    entity.transform.rotation = drehung;
+                }
             }
             figur.health = state.health;
             figur.lp = state.lp;
@@ -2120,7 +2211,8 @@ impl HeerAnsicht {
                     funke(vec3(1.0, 0.9, 0.5), figur.shown + Vec3::Y * up, -0.5, 3.0);
                 }
             }
-            if near {
+            // Gefroren: die Pose erstarrt
+            if near && !gefroren {
                 figur.animator.update(dt);
             }
             let Some(entity) = ctx.scene.try_get_mut(figur.entity) else { continue };
@@ -2141,6 +2233,9 @@ impl HeerAnsicht {
             }
             if state.flags & VERLANGSAMT != 0 {
                 farbe *= vec4(0.7, 0.9, 1.35, 1.0);
+            }
+            if gefroren {
+                farbe = vec4(0.75, 1.15, 1.9, 1.0);
             }
             if state.flags & WUT != 0 {
                 farbe *= vec4(1.5, 0.6, 0.5, 1.0);

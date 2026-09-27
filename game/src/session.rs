@@ -103,9 +103,9 @@ impl Session {
     }
 
     /// Animation einer Fähigkeit der eigenen Figur sofort zeigen (nur Client, siehe `preview_harvest`).
-    pub fn preview_cast(&mut self, art: crate::faehigkeiten::Faehigkeit) {
+    pub fn preview_cast(&mut self, art: crate::faehigkeiten::Faehigkeit, stufe: u8) {
         if let Some(local) = self.replica.as_ref().and_then(Replica::local_id) {
-            self.world.play_faehigkeit(local, art);
+            self.world.play_faehigkeit(local, art, stufe);
         }
     }
 
