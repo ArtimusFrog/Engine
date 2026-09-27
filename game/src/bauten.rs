@@ -564,8 +564,9 @@ impl BauVisuals {
 
     /// Ein Turm hat geschossen: Kopf zum Ziel drehen (mit Rückstoß), Mündungsfeuer, Geschoss
     /// losschicken. Blitz und Sonnenstrahl sind sofort da, alles andere fliegt.
-    pub fn shot(&mut self, ctx: &mut Context, building: &Building, target: Vec3, sounds: &mut Vec<SoundEvent>) {
-        let Some(kind) = building.tower() else { return };
+    /// Liefert Art, Zweig, Stufe, Mündung und Ziel für die Optik (`zauberbild::turmschuss`).
+    pub fn shot(&mut self, ctx: &mut Context, building: &Building, target: Vec3, sounds: &mut Vec<SoundEvent>) -> Option<(TowerKind, u8, u8, Vec3, Vec3)> {
+        let kind = building.tower()?;
         let zweig = building.aktiver_zweig();
         let z = kopf_hoehe(building.level);
         let mut mund = building.position + Vec3::Y * (z + 1.0 * KOPF_GROESSE);
@@ -578,9 +579,19 @@ impl BauVisuals {
             mund += vec3(kopf.want.sin(), 0.0, kopf.want.cos()) * 0.8 * KOPF_GROESSE;
         }
         if mund.distance(ctx.camera.position) > 170.0 {
-            return;
+            return None;
         }
         let rng = self.rng.get_or_insert_with(|| Rng::new(0xBA0));
+        if !matches!(kind, TowerKind::Banner | TowerKind::Barracks | TowerKind::Treasury | TowerKind::Rune) {
+            // Beim Gewitter schlägt der Blitz aus den Wolken ein
+            let von = if kind == TowerKind::Lightning && zweig == 2 {
+                sounds.push(SoundEvent::Thunder { volume: 0.25 });
+                target + vec3(rng.range(-3.0, 3.0), 22.0, rng.range(-3.0, 3.0))
+            } else {
+                mund
+            };
+            return Some((kind, zweig, building.level, von, target));
+        }
         let weite = mund.distance(target);
         match kind {
             TowerKind::Lightning => {
@@ -592,14 +603,14 @@ impl BauVisuals {
                 if zweig == 2 {
                     sounds.push(SoundEvent::Thunder { volume: 0.25 });
                 }
-                return;
+                return None;
             }
             TowerKind::Sun => {
                 let dicke = if zweig == 2 { 0.16 } else { 0.1 };
                 strahl(ctx, rng, mund, target, vec3(1.0, 0.9, 0.5), 5.0, dicke, 0.0);
                 blitz_funken(ctx, mund, vec3(1.0, 0.95, 0.6), 5.0, 6);
                 einschlag(ctx, sounds, kind, zweig, target);
-                return;
+                return None;
             }
             TowerKind::Fire if zweig == 2 => {
                 // Drachenatem: breiter Flammenstoß
@@ -618,9 +629,9 @@ impl BauVisuals {
                     grow: 1.5,
                     round: true,
                 });
-                return;
+                return None;
             }
-            TowerKind::Banner | TowerKind::Barracks | TowerKind::Treasury | TowerKind::Rune => return,
+            TowerKind::Banner | TowerKind::Barracks | TowerKind::Treasury | TowerKind::Rune => return None,
             _ => {}
         }
         // Mündungsfeuer bzw. Abschuss
@@ -645,7 +656,7 @@ impl BauVisuals {
             TowerKind::Arcane => (vec3(0.32, 0.32, 0.32), vec4(0.75, 0.5, 1.0, 1.0), 5.0, 30.0, 0.02, 4.0),
             TowerKind::Poison => (vec3(0.38, 0.38, 0.38), vec4(0.45, 0.95, 0.35, 1.0), 1.5, 20.0, 0.3, 2.0),
             TowerKind::Storm => (Vec3::ZERO, vec4(1.0, 1.0, 1.0, 1.0), 0.0, 30.0, 0.0, 0.0),
-            _ => return,
+            _ => return None,
         };
         let entity = (groesse.length() > 0.0).then(|| {
             let mut e = Entity::new("Geschoss", ctx.assets.cube()).with_transform(Transform::from_position(mund).with_scale(groesse)).with_color(farbe);
@@ -656,6 +667,7 @@ impl BauVisuals {
             ctx.scene.spawn(e)
         });
         self.geschosse.push(Geschoss { entity, von: mund, nach: target, t: 0.0, dauer: (weite / tempo).max(0.08), hoehe: weite * bogen, art: kind, zweig, drall });
+        None
     }
 
     /// Geschosse fliegen lassen: Spur, Drehung, Einschlag.

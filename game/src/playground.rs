@@ -156,6 +156,8 @@ pub struct Playground {
     demo_beute: bool,
     /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
     demo_towers: bool,
+    /// Nur für Screenshots: `--demo-turmschuss` lässt alle Türme im Takt auf die Straße feuern (reine Optik)
+    demo_turmschuss: Option<(f32, Vec<(u32, Vec3)>)>,
     /// Nur zum Testen: Wellen gleich bei dieser Nummer beginnen lassen (`--demo-welle N`)
     demo_wave: Option<u32>,
     demo_yaw_offset: f32,
@@ -243,6 +245,7 @@ impl Playground {
             demo_brunnen: false,
             demo_beute: false,
             demo_towers: false,
+            demo_turmschuss: None,
             demo_wave: None,
             demo_yaw_offset: -0.75,
             autopilot,
@@ -2345,14 +2348,19 @@ impl Game for Playground {
                         ziel: Default::default(),
                     };
                     session.world_mut().place_building(ctx, building);
+                    if std::env::args().any(|a| a == "--demo-turmschuss") {
+                        let ziel = strasse[k];
+                        let schuesse = &mut self.demo_turmschuss.get_or_insert((0.0, Vec::new())).1;
+                        schuesse.push((500 + i as u32, vec3(ziel.x, session.world().terrain.height_at(ziel.x, ziel.y) + 0.9, ziel.y)));
+                    }
                 }
                 session.admin(crate::protocol::AdminCommand::Waves(true));
                 let world = session.world();
-                let (a, b) = (strasse[26], strasse[27]);
-                let stand = a + (b - a).normalize().perp() * 30.0;
+                // Auf der Straße stehen und sie entlang zu den Türmen schauen
+                let stand = strasse[22];
                 let character = world.players[&local].character;
                 ctx.physics.teleport_character(character, vec3(stand.x, world.terrain.height_at(stand.x, stand.y) + 1.0, stand.y));
-                let ziel = strasse[26];
+                let ziel = strasse[30];
                 self.demo_crystal = Some(Some(vec3(ziel.x, world.terrain.height_at(ziel.x, ziel.y) + 3.0, ziel.y)));
                 self.demo_yaw_offset = 0.0;
                 if let Some(i) = self.demo_turmfenster.take() {
@@ -2437,6 +2445,11 @@ impl Game for Playground {
                         ziel: Default::default(),
                     };
                     session.world_mut().place_building(ctx, building);
+                    if std::env::args().any(|a| a == "--demo-turmschuss") {
+                        let ziel = strasse[k];
+                        let schuesse = &mut self.demo_turmschuss.get_or_insert((0.0, Vec::new())).1;
+                        schuesse.push((500 + i as u32, vec3(ziel.x, session.world().terrain.height_at(ziel.x, ziel.y) + 0.9, ziel.y)));
+                    }
                 }
                 session.admin(crate::protocol::AdminCommand::Waves(true));
                 let world = session.world();
@@ -2463,6 +2476,16 @@ impl Game for Playground {
                     self.hotbar_slot = Tool::ANGRIFF.slot();
                     self.demo_crystal = Some(Some(vec3(mitte.x, lager.hoehe + 1.0, mitte.y)));
                     self.demo_yaw_offset = 0.0;
+                }
+            }
+        }
+        if let (Some((uhr, schuesse)), Some(session)) = (&mut self.demo_turmschuss, &mut self.session) {
+            *uhr -= ctx.time.delta;
+            if *uhr <= 0.0 {
+                *uhr = 1.1;
+                let world = session.world_mut();
+                for &(id, ziel) in schuesse.iter() {
+                    world.tower_shots.push(crate::tuerme::Schuss { turm: id, ziel });
                 }
             }
         }

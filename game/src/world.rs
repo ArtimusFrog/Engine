@@ -1291,7 +1291,9 @@ impl World {
         }
         for shot in std::mem::take(&mut self.tower_shots) {
             if let Some(building) = self.buildings.iter().find(|b| b.id == shot.turm) {
-                self.bau.shot(ctx, building, shot.ziel, &mut self.sound_events);
+                if let Some((art, zweig, stufe, von, nach)) = self.bau.shot(ctx, building, shot.ziel, &mut self.sound_events) {
+                    self.zauberbild.turmschuss(ctx, &self.terrain, art, zweig, stufe, von, nach, &mut self.sound_events);
+                }
             }
         }
         if !ctx.is_headless() {

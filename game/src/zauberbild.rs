@@ -396,6 +396,8 @@ enum PfeilArt {
     Explosiv,
     /// Giftdolch des Schurken (aus der linken Hand geworfen)
     Dolch,
+    /// Schwerer Bolzen der Ballista: schlägt mit einer Druckwelle ein
+    Bolzen,
 }
 
 /// Ein fliegender Pfeil (Pfeilschuss, Salve, Explosivpfeil).
@@ -412,6 +414,7 @@ struct Pfeil {
     holz: EntityId,
     schweif: EntityId,
     glut: Option<EntityId>,
+    groesse: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -466,6 +469,23 @@ struct Geschoss {
     kern: EntityId,
     huelle: EntityId,
     schweif: EntityId,
+    /// Größe (Helden 1), Höhe des Flugbogens (Anteil der Weite), von einem Turm geschossen
+    groesse: f32,
+    bogen: f32,
+    turm: bool,
+}
+
+/// Ein Felsbrocken des Katapults (bei Brandgeschossen glühend).
+struct Wurf {
+    entity: EntityId,
+    von: Vec3,
+    nach: Vec3,
+    alter: f32,
+    dauer: f32,
+    hoehe: f32,
+    feuer: bool,
+    groesse: f32,
+    drehung: Vec3,
 }
 
 /// Der geworfene Hammer: fliegt über alle Treffer und zurück in die Hand.
@@ -527,6 +547,7 @@ pub struct Zauberbild {
     geschosse: Vec<Geschoss>,
     haemmer: Vec<Hammerflug>,
     pfeile: Vec<Pfeil>,
+    wuerfe: Vec<Wurf>,
     faller: Vec<Faller>,
     termine: Vec<(f32, Spaeter)>,
     sammeln: Vec<Sammeln>,
@@ -555,6 +576,7 @@ impl Default for Zauberbild {
             geschosse: Vec::new(),
             haemmer: Vec::new(),
             pfeile: Vec::new(),
+            wuerfe: Vec::new(),
             faller: Vec::new(),
             termine: Vec::new(),
             sammeln: Vec::new(),
@@ -789,7 +811,8 @@ impl Zauberbild {
                 let kern = self.leuchten(ctx, f.kugel, origin, Quat::IDENTITY, Vec3::ZERO, kern_farbe, 2.0, 1.0);
                 let huelle = self.leuchten(ctx, f.kugel, origin, Quat::IDENTITY, Vec3::ZERO, huelle_farbe, 1.4, 1.0);
                 let schweif = self.leuchten(ctx, f.kugel, origin, Quat::IDENTITY, Vec3::ZERO, huelle_farbe, 1.1, 1.0);
-                self.geschosse.push(Geschoss { spieler, art, nach: target, hit, alter: 0.0, ausholen, tempo, von: None, pos: origin, kern, huelle, schweif });
+                let bogen = if feuer { 0.03 } else { 0.0 };
+                self.geschosse.push(Geschoss { spieler, art, nach: target, hit, alter: 0.0, ausholen, tempo, von: None, pos: origin, kern, huelle, schweif, groesse: 1.0, bogen, turm: false });
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
                 if feuer {
                     sounds.push(klang(Klang::Feuerwurf, origin, 0.8));
@@ -906,6 +929,7 @@ impl Zauberbild {
         self.update_geschosse(ctx, terrain, figuren, sounds);
         self.update_haemmer(ctx, terrain, figuren, sounds);
         self.update_pfeile(ctx, terrain, figuren, sounds);
+        self.update_wuerfe(ctx, terrain, sounds);
         self.update_faller(ctx, terrain, sounds);
         // Was jetzt dran ist
         let mut i = 0;
@@ -1106,7 +1130,7 @@ impl Zauberbild {
                 let farbe = g.art.farbe();
                 self.blitz(ctx, von, if feuer { 1.0 } else { 0.6 }, farbe, farbe * 0.3, 0.18, 1.8);
                 self.funken(ctx, von, 12, farbe, 3.5, 0.05, 0.3, 0.0, 3.0);
-                if !feuer {
+                if !feuer && !g.turm {
                     sounds.push(SoundEvent::Zauber { klang: Klang::Arkan, at: von, laut: 0.55 });
                 }
             }
@@ -1115,12 +1139,13 @@ impl Zauberbild {
             let fortschritt = (flug * g.tempo / laenge).min(1.0);
             let richtung = (g.nach - von).normalize_or(Vec3::NEG_Z);
             // Der Feuerball zieht einen leichten Bogen
-            let bogen = if feuer { (fortschritt * PI).sin() * laenge * 0.03 } else { 0.0 };
+            let bogen = (fortschritt * PI).sin() * laenge * g.bogen;
             let pos = von.lerp(g.nach, fortschritt) + Vec3::Y * bogen;
             let vorher = g.pos;
             g.pos = pos;
             let flackern = 1.0 + (g.alter * 43.0).sin() * 0.1 + (g.alter * 71.0).sin() * 0.06;
             let (kern, huelle, schweif) = if feuer { (0.38, 0.85, vec3(0.62, 0.62, 2.4)) } else { (0.2, 0.46, vec3(0.3, 0.3, 1.8)) };
+            let (kern, huelle, schweif) = (kern * g.groesse, huelle * g.groesse, schweif * g.groesse);
             let drehung = Quat::from_rotation_arc(Vec3::Z, richtung);
             for (e, s, versatz) in [(g.kern, Vec3::splat(kern), 0.0), (g.huelle, Vec3::splat(huelle * flackern), 0.0), (g.schweif, schweif, -schweif.z * 0.45)] {
                 if let Some(entity) = ctx.scene.try_get_mut(e) {
@@ -1144,9 +1169,10 @@ impl Zauberbild {
                         self.funken(ctx, p, 1, vec3(1.0, 0.75, 0.3), 2.0, 0.05, 0.6, 5.0, 3.0);
                     }
                 } else {
-                    self.glut(ctx, p, 1, vec3(0.5, 0.35, 1.0), 0.3, 0.13, 0.3, 0.0, 0.0, Vec3::ZERO);
+                    let schwer = if g.art == Faehigkeit::Wurfdolche { 3.0 } else { 0.0 };
+                    self.glut(ctx, p, 1, farbe, 0.3, 0.13 * g.groesse.max(0.6), 0.3, schwer, 0.0, Vec3::ZERO);
                     if self.rng.chance(0.4) {
-                        self.funken(ctx, p, 1, vec3(0.8, 0.75, 1.0), 1.2, 0.035, 0.35, 0.0, 4.0);
+                        self.funken(ctx, p, 1, farbe.lerp(Vec3::ONE, 0.5), 1.2, 0.035, 0.35, 0.0, 4.0);
                     }
                 }
             }
@@ -1155,10 +1181,11 @@ impl Zauberbild {
                 for e in [g.kern, g.huelle, g.schweif] {
                     ctx.scene.despawn(e);
                 }
-                if feuer {
-                    self.explosion(ctx, terrain, pos, 1.0, true, sounds);
-                } else {
-                    self.arkan_treffer(ctx, pos, richtung, g.hit, sounds);
+                match g.art {
+                    Faehigkeit::Feuerball => self.explosion(ctx, terrain, pos, g.groesse, !g.turm, sounds),
+                    Faehigkeit::Frostnova => self.eistreffer(ctx, terrain, pos, g.groesse, sounds),
+                    Faehigkeit::Wurfdolche => self.gifttreffer(ctx, terrain, pos, g.groesse, sounds),
+                    _ => self.arkan_treffer(ctx, pos, richtung, g.hit, sounds),
                 }
             }
         }
@@ -1214,9 +1241,9 @@ impl Zauberbild {
         self.glut(ctx, ort, 30, vec3(1.0, 0.8, 0.4), 3.0, 0.3, 0.35, 0.0, 1.0, Vec3::ZERO);
         self.funken(ctx, ort, 45, vec3(1.0, 0.72, 0.3), 11.0, 0.07, 0.9, 9.0, 4.0);
         Self::rauch(ctx, ort + Vec3::Y * 0.4, if teppich { 14 } else { 6 }, vec3(0.2, 0.19, 0.18), 1.6, 0.42 * groesse, 2.2, Vec3::Y * 0.8);
-        self.licht(ort + Vec3::Y * 0.8, vec3(9.0, 4.5, 1.5), 16.0, 0.7);
-        self.erschuettern(ort, 0.5, 28.0);
-        sounds.push(SoundEvent::Zauber { klang: Klang::Explosion, at: ort, laut: 1.0 });
+        self.licht(ort + Vec3::Y * 0.8, vec3(9.0, 4.5, 1.5) * groesse.min(1.0), 16.0 * groesse.min(1.0), 0.7);
+        self.erschuettern(ort, 0.5 * groesse.min(1.0).powi(2), 28.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Explosion, at: ort, laut: groesse.min(1.0) });
     }
 
     fn update_flammen(&mut self, ctx: &mut Context, terrain: &Terrain) {
@@ -1416,11 +1443,12 @@ impl Zauberbild {
             PfeilArt::Krit => (vec3(1.0, 0.8, 0.35), 1.4),
             PfeilArt::Explosiv => (vec3(1.0, 0.45, 0.12), 1.2),
             PfeilArt::Dolch => (vec3(0.45, 0.95, 0.35), 1.0),
+            PfeilArt::Bolzen => (vec3(1.0, 0.85, 0.6), 0.8),
             PfeilArt::Normal => (vec3(0.75, 0.8, 0.7), 0.45),
         };
         let schweif = self.leuchten(ctx, f.kugel, nach, Quat::IDENTITY, Vec3::ZERO, farbe, staerke, 1.0);
         let glut = (art == PfeilArt::Explosiv).then(|| self.leuchten(ctx, f.kugel, nach, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.4, 0.1), 2.2, 1.0));
-        self.pfeile.push(Pfeil { spieler, art, von: None, pos: nach, nach, hit, alter: 0.0, ausholen, tempo, holz, schweif, glut });
+        self.pfeile.push(Pfeil { spieler, art, von: None, pos: nach, nach, hit, alter: 0.0, ausholen, tempo, holz, schweif, glut, groesse: 1.0 });
     }
 
     fn update_pfeile(&mut self, ctx: &mut Context, terrain: &Terrain, figuren: &HashMap<PlayerId, Figur>, sounds: &mut Vec<SoundEvent>) {
@@ -1446,14 +1474,15 @@ impl Zauberbild {
             if let Some(e) = ctx.scene.try_get_mut(p.holz) {
                 e.transform.position = pos;
                 e.transform.rotation = drehung;
-                e.transform.scale = Vec3::ONE;
+                e.transform.scale = Vec3::splat(p.groesse);
             }
             let lang = match p.art {
                 PfeilArt::Normal => 1.4,
                 PfeilArt::Dolch => 1.1,
                 _ => 2.0,
             };
-            let dicke = if dolch { 0.05 } else { 0.07 };
+            let dicke = if dolch { 0.05 } else { 0.07 } * p.groesse;
+            let lang = lang * p.groesse.sqrt();
             if let Some(e) = ctx.scene.try_get_mut(p.schweif) {
                 e.transform.position = pos - richtung * lang * 0.5;
                 e.transform.rotation = drehung;
@@ -1483,6 +1512,9 @@ impl Zauberbild {
                     if self.rng.chance(0.3) {
                         self.funken(ctx, vorher, 1, vec3(0.85, 0.9, 0.8), 0.2, 0.025, 0.2, 0.0, 1.5);
                     }
+                }
+                PfeilArt::Bolzen => {
+                    self.funken(ctx, vorher, 1, vec3(1.0, 0.85, 0.6), 0.4, 0.04, 0.3, 0.0, 2.5);
                 }
                 PfeilArt::Dolch => {
                     // Gifttropfen hinter dem Dolch
@@ -1521,6 +1553,18 @@ impl Zauberbild {
                         Self::rauch(ctx, spitze, 4, vec3(0.35, 0.6, 0.3), 0.6, 0.25, 0.9, Vec3::Y * 0.3);
                         self.blitz(ctx, spitze, 0.5, vec3(0.5, 1.0, 0.4), vec3(0.1, 0.3, 0.05), 0.18, 1.2);
                         sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: 0.6 });
+                    } else if p.hit && p.art == PfeilArt::Bolzen {
+                        // Der Bolzen schlägt durch: Druckwelle, Splitter, Staub
+                        ctx.scene.despawn(p.holz);
+                        let b = boden(terrain, spitze, spitze.y);
+                        let unten = vec3(spitze.x, b.min(spitze.y), spitze.z);
+                        self.druckwelle(ctx, unten, 2.2 * p.groesse.sqrt(), 0.3, 0.7, vec3(1.0, 0.8, 0.55), 1.4, 0.0);
+                        self.blitz(ctx, spitze, 0.9, vec3(1.0, 0.9, 0.7), vec3(0.4, 0.25, 0.1), 0.2, 1.6);
+                        self.funken(ctx, spitze, 24, vec3(1.0, 0.8, 0.5), 6.0, 0.05, 0.45, 6.0, 3.0);
+                        Self::kruemel(ctx, unten, 14, 4.5);
+                        Self::rauch(ctx, unten + Vec3::Y * 0.2, 5, vec3(0.62, 0.56, 0.48), 1.4, 0.22, 1.0, Vec3::Y * 0.4);
+                        self.erschuettern(spitze, 0.12, 16.0);
+                        sounds.push(SoundEvent::Zauber { klang: Klang::Hammer, at: spitze, laut: 0.55 });
                     } else if p.hit {
                         // Im Gegner: Splitter und kurzer Blitz, der Pfeil verschwindet
                         ctx.scene.despawn(p.holz);
@@ -2391,5 +2435,345 @@ impl Zauberbild {
             }
             i += 1;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Türme: Schüsse und Einschläge im Stil der Heldenfähigkeiten
+// ---------------------------------------------------------------------------
+
+impl Zauberbild {
+    /// Ein Turm schießt (nur Optik; ob er trifft, entscheidet der Server). `stufe` 1–3 macht die
+    /// Effekte größer. Liefert `false` für Türme ohne Geschoss (Banner, Kaserne …).
+    #[allow(clippy::too_many_arguments)]
+    pub fn turmschuss(&mut self, ctx: &mut Context, terrain: &Terrain, art: crate::tuerme::TowerKind, zweig: u8, stufe: u8, von: Vec3, nach: Vec3, sounds: &mut Vec<SoundEvent>) -> bool {
+        use crate::tuerme::TowerKind as T;
+        let g = 0.75 + 0.2 * stufe.clamp(1, 3) as f32;
+        match art {
+            T::Arrow => {
+                self.muendung(ctx, von, vec3(1.0, 0.85, 0.6), 0.4);
+                let pfeil = if zweig == 2 { PfeilArt::Krit } else { PfeilArt::Normal };
+                self.turmpfeil(ctx, von, nach, pfeil, 1.2 + 0.1 * g, 62.0);
+                sounds.push(SoundEvent::Zauber { klang: Klang::Pfeilschuss, at: von, laut: 0.35 });
+            }
+            T::Scout => {
+                self.turmpfeil(ctx, von, nach, PfeilArt::Krit, 1.2, 70.0);
+                sounds.push(SoundEvent::Zauber { klang: Klang::Pfeilschuss, at: von, laut: 0.3 });
+            }
+            T::Ballista => {
+                self.muendung(ctx, von, vec3(1.0, 0.85, 0.6), 0.8);
+                self.turmpfeil(ctx, von, nach, PfeilArt::Bolzen, 2.4 * g.sqrt(), 50.0);
+                sounds.push(SoundEvent::Zauber { klang: Klang::Wurf, at: von, laut: 0.6 });
+            }
+            T::Catapult => self.katapult(ctx, von, nach, zweig == 1, g, sounds),
+            T::Fire if zweig == 2 => self.drachenatem(ctx, terrain, von, nach, g, sounds),
+            T::Fire => {
+                self.turmgeschoss(ctx, Faehigkeit::Feuerball, von, nach, 0.6 * g, 26.0, 0.1, (vec3(1.0, 0.85, 0.5), vec3(1.0, 0.42, 0.1)));
+                sounds.push(SoundEvent::Zauber { klang: Klang::Feuerwurf, at: von, laut: 0.55 });
+            }
+            T::Frost => {
+                self.turmgeschoss(ctx, Faehigkeit::Frostnova, von, nach, 0.55 * g, 38.0, 0.03, (vec3(0.9, 0.97, 1.0), vec3(0.45, 0.75, 1.0)));
+                sounds.push(SoundEvent::Zauber { klang: Klang::Frost, at: von, laut: 0.3 });
+            }
+            T::Arcane => {
+                self.turmgeschoss(ctx, Faehigkeit::Arkangeschoss, von, nach, 0.75 * g, 32.0, 0.02, (vec3(0.85, 0.8, 1.0), vec3(0.5, 0.32, 1.0)));
+                sounds.push(SoundEvent::Zauber { klang: Klang::Arkan, at: von, laut: 0.4 });
+            }
+            T::Poison => {
+                self.turmgeschoss(ctx, Faehigkeit::Wurfdolche, von, nach, 0.6 * g, 20.0, 0.22, (vec3(0.8, 1.0, 0.6), vec3(0.35, 0.9, 0.25)));
+                sounds.push(SoundEvent::Zauber { klang: Klang::Wurf, at: von, laut: 0.35 });
+            }
+            T::Lightning => self.blitzschlag(ctx, terrain, von, nach, g, sounds),
+            T::Sun => self.sonnenstrahl(ctx, terrain, von, nach, g, sounds),
+            T::Storm => self.sturmboe(ctx, von, nach, g, sounds),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Mündungsblitz am Turmkopf.
+    fn muendung(&mut self, ctx: &mut Context, ort: Vec3, farbe: Vec3, staerke: f32) {
+        self.blitz(ctx, ort, 0.5 + 0.5 * staerke, farbe, farbe * 0.3, 0.15, 1.5);
+        self.funken(ctx, ort, (6.0 + 10.0 * staerke) as u32, farbe, 3.0, 0.04, 0.25, 1.0, 3.0);
+        Self::rauch(ctx, ort, (2.0 + 4.0 * staerke) as u32, vec3(0.6, 0.57, 0.52), 1.2, 0.14 + 0.1 * staerke, 0.8, Vec3::Y * 0.3);
+    }
+
+    fn turmpfeil(&mut self, ctx: &mut Context, von: Vec3, nach: Vec3, art: PfeilArt, groesse: f32, tempo: f32) {
+        self.pfeil_los(ctx, 0, art, nach, true, 0.0, tempo);
+        if let Some(p) = self.pfeile.last_mut() {
+            p.von = Some(von);
+            p.pos = von;
+            p.groesse = groesse;
+        }
+    }
+
+    /// Leuchtendes Geschoss (Feuer-, Eis-, Arkan- und Giftturm) mit Kern, Hülle und Schweif.
+    #[allow(clippy::too_many_arguments)]
+    fn turmgeschoss(&mut self, ctx: &mut Context, art: Faehigkeit, von: Vec3, nach: Vec3, groesse: f32, tempo: f32, bogen: f32, (kern_farbe, huelle_farbe): (Vec3, Vec3)) {
+        let f = self.formen(ctx);
+        let kern = self.leuchten(ctx, f.kugel, von, Quat::IDENTITY, Vec3::ZERO, kern_farbe, 2.0, 1.0);
+        let huelle = self.leuchten(ctx, f.kugel, von, Quat::IDENTITY, Vec3::ZERO, huelle_farbe, 1.4, 1.0);
+        let schweif = self.leuchten(ctx, f.kugel, von, Quat::IDENTITY, Vec3::ZERO, huelle_farbe, 1.1, 1.0);
+        self.geschosse.push(Geschoss {
+            spieler: 0,
+            art,
+            nach,
+            hit: true,
+            alter: 0.0,
+            ausholen: 0.0,
+            tempo,
+            von: Some(von),
+            pos: von,
+            kern,
+            huelle,
+            schweif,
+            groesse,
+            bogen,
+            turm: true,
+        });
+    }
+
+    /// Eisgeschoss schlägt ein: Eisdornen im Kreis, Kältewelle, Splitter, Frostnebel.
+    fn eistreffer(&mut self, ctx: &mut Context, terrain: &Terrain, ort: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let eis = vec3(0.6, 0.88, 1.0);
+        let b = boden(terrain, ort, ort.y - 0.5).min(ort.y);
+        let unten = vec3(ort.x, b, ort.z);
+        self.blitz(ctx, ort, 1.6 * groesse, vec3(0.85, 0.95, 1.0), eis * 0.2, 0.25, 1.8);
+        self.druckwelle(ctx, unten, 3.2 * groesse, 0.3, 0.8, vec3(0.4, 0.7, 1.0), 1.3, 0.0);
+        let anzahl = 7;
+        let versatz = self.rng.range(0.0, TAU);
+        for k in 0..anzahl {
+            let w = versatz + TAU * k as f32 / anzahl as f32;
+            let aussen = vec3(w.cos(), 0.0, w.sin());
+            let p = unten + aussen * self.rng.range(0.4, 1.1) * groesse;
+            let p = vec3(p.x, boden(terrain, p, b) - 0.05, p.z);
+            let laenge = self.rng.range(0.5, 1.0) * groesse;
+            let neigung = self.rng.range(0.25, 0.6);
+            self.dorn(ctx, p, aussen, neigung, laenge, 0.2 * laenge.sqrt(), true, 0.03 * k as f32, 1.3);
+        }
+        self.fleck(ctx, terrain, unten, 1.4 * groesse, vec3(0.6, 0.74, 0.86), 4.0, Material::Standard, b);
+        self.funken(ctx, ort, 26, vec3(0.85, 0.95, 1.0), 6.0, 0.05, 0.5, 6.0, 3.0);
+        ctx.particles.burst_glow(Burst {
+            position: unten + Vec3::Y * 0.3,
+            count: 8,
+            color: vec3(0.45, 0.62, 0.8),
+            color_variation: 0.1,
+            speed: 1.8,
+            direction: Vec3::Y * 0.2,
+            size: 0.35 * groesse,
+            life: 1.0,
+            gravity: -0.2,
+            glow: 0.5,
+            grow: 1.5,
+            round: true,
+        });
+        self.licht(ort, vec3(2.0, 3.5, 5.5), 7.0 * groesse, 0.4);
+        self.erschuettern(ort, 0.08, 14.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Eisbruch, at: ort, laut: 0.55 });
+    }
+
+    /// Giftkugel platzt: grüne Spritzer, eine Giftlache, aufsteigender Giftdunst.
+    fn gifttreffer(&mut self, ctx: &mut Context, terrain: &Terrain, ort: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let gift = vec3(0.45, 0.95, 0.35);
+        let b = boden(terrain, ort, ort.y - 0.5).min(ort.y);
+        let unten = vec3(ort.x, b + 0.06, ort.z);
+        self.blitz(ctx, ort, 1.4 * groesse, vec3(0.7, 1.0, 0.5), vec3(0.1, 0.3, 0.05), 0.22, 1.5);
+        self.funken(ctx, ort, 30, gift, 5.0, 0.06, 0.6, 8.0, 2.5);
+        self.fleck(ctx, terrain, unten, 1.8 * groesse, vec3(0.18, 0.32, 0.1), 5.0, Material::Standard, b);
+        let lache = self.leuchten(ctx, f.scheibe, unten + Vec3::Y * 0.04, Quat::IDENTITY, vec3(1.6 * groesse, 1.0, 1.6 * groesse), gift * 0.6, 0.9, 0.0);
+        self.teil(lache, 0.0, 3.0, unten + Vec3::Y * 0.04, Quat::IDENTITY, gift * 0.6, Art::Gluehen);
+        for _ in 0..6 {
+            let w = self.rng.range(0.0, TAU);
+            let r = self.rng.range(0.0, 1.4) * groesse;
+            let p = unten + vec3(w.cos() * r, 0.2, w.sin() * r);
+            ctx.particles.burst_glow(Burst {
+                position: p,
+                count: 2,
+                color: vec3(0.3, 0.7, 0.2),
+                color_variation: 0.15,
+                speed: 0.6,
+                direction: Vec3::Y,
+                size: 0.3 * groesse,
+                life: 1.8,
+                gravity: -0.6,
+                glow: 0.6,
+                grow: 1.6,
+                round: true,
+            });
+        }
+        self.licht(ort, vec3(1.5, 3.0, 1.0), 6.0 * groesse, 0.5);
+        sounds.push(SoundEvent::Zauber { klang: Klang::ArkanTreffer, at: ort, laut: 0.4 });
+    }
+
+    /// Katapult: ein Felsbrocken (bei Brandgeschossen glühend) fliegt in hohem Bogen.
+    fn katapult(&mut self, ctx: &mut Context, von: Vec3, nach: Vec3, feuer: bool, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let (farbe, material) = if feuer { (vec3(1.0, 0.5, 0.2), Material::Emissive { glow: 1.5 }) } else { (vec3(0.52, 0.49, 0.45), Material::Standard) };
+        let g = 0.75 * groesse;
+        let entity = self.fest(ctx, f.meteor, von, Quat::IDENTITY, Vec3::splat(g), farbe, material, true);
+        let weite = von.distance(nach);
+        let drehung = vec3(self.rng.range(-6.0, 6.0), self.rng.range(-6.0, 6.0), self.rng.range(-6.0, 6.0));
+        self.wuerfe.push(Wurf { entity, von, nach, alter: 0.0, dauer: (weite / 20.0).max(0.4), hoehe: weite * 0.3, feuer, groesse, drehung });
+        self.muendung(ctx, von, vec3(0.9, 0.8, 0.6), 0.7);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Wurf, at: von, laut: 0.7 });
+    }
+
+    fn update_wuerfe(&mut self, ctx: &mut Context, terrain: &Terrain, sounds: &mut Vec<SoundEvent>) {
+        let dt = ctx.time.delta;
+        let mut wuerfe = std::mem::take(&mut self.wuerfe);
+        for w in &mut wuerfe {
+            w.alter += dt;
+            let t = (w.alter / w.dauer).min(1.0);
+            let pos = w.von.lerp(w.nach, t) + Vec3::Y * (4.0 * w.hoehe * t * (1.0 - t));
+            if let Some(e) = ctx.scene.try_get_mut(w.entity) {
+                e.transform.position = pos;
+                e.transform.rotation = Quat::from_rotation_x(w.drehung.x * w.alter) * Quat::from_rotation_y(w.drehung.y * w.alter) * Quat::from_rotation_z(w.drehung.z * w.alter);
+            }
+            if w.feuer {
+                self.glut(ctx, pos, 2, vec3(1.0, 0.45, 0.1), 0.6, 0.3 * w.groesse, 0.4, -1.5, 1.2, Vec3::ZERO);
+                ctx.lights.push(PointLight { position: pos, color: vec3(4.0, 2.0, 0.6), radius: 8.0 });
+            } else if self.rng.chance(0.5) {
+                Self::rauch(ctx, pos, 1, vec3(0.6, 0.56, 0.5), 0.3, 0.16, 0.7, Vec3::ZERO);
+            }
+            if t >= 1.0 {
+                ctx.scene.despawn(w.entity);
+                if w.feuer {
+                    self.explosion(ctx, terrain, pos, 0.75 * w.groesse, false, sounds);
+                } else {
+                    self.steinschlag(ctx, terrain, pos, w.groesse, sounds);
+                }
+            }
+        }
+        wuerfe.retain(|w| w.alter < w.dauer);
+        wuerfe.append(&mut self.wuerfe);
+        self.wuerfe = wuerfe;
+    }
+
+    /// Ein Felsbrocken schlägt ein: der Boden bricht, Brocken fliegen, eine Staubwelle rollt.
+    fn steinschlag(&mut self, ctx: &mut Context, terrain: &Terrain, ort: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let b = boden(terrain, ort, ort.y - 0.5).min(ort.y);
+        let unten = vec3(ort.x, b, ort.z);
+        self.druckwelle(ctx, unten, 4.0 * groesse, 0.4, 1.0, vec3(0.9, 0.75, 0.55), 1.2, 0.0);
+        self.blitz(ctx, unten + Vec3::Y * 0.3, 1.2 * groesse, vec3(1.0, 0.92, 0.75), vec3(0.4, 0.3, 0.2), 0.2, 1.4);
+        self.risse(ctx, terrain, unten, 5, 1.6 * groesse, b);
+        for _ in 0..9 {
+            let d = vec3(self.rng.range(-1.0, 1.0), self.rng.range(0.7, 1.5), self.rng.range(-1.0, 1.0));
+            let gr = self.rng.range(0.12, 0.26) * groesse;
+            let v = d * self.rng.range(3.5, 7.0);
+            self.brocken(ctx, unten + Vec3::Y * 0.3, v, gr, b, vec3(0.5, 0.47, 0.43));
+        }
+        Self::rauch(ctx, unten + Vec3::Y * 0.2, 14, vec3(0.66, 0.6, 0.52), 2.6, 0.3 * groesse, 1.6, Vec3::Y * 0.5);
+        Self::kruemel(ctx, unten, 18, 5.0);
+        self.erschuettern(unten, 0.3, 22.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Hammer, at: unten, laut: 0.8 });
+        sounds.push(SoundEvent::Zauber { klang: Klang::Beben, at: unten, laut: 0.35 });
+    }
+
+    /// Drachenatem (Feuerturm, zweiter Zweig): ein Flammenkegel aus wachsenden Feuerkugeln.
+    fn drachenatem(&mut self, ctx: &mut Context, terrain: &Terrain, von: Vec3, nach: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let richtung = (nach - von).normalize_or(Vec3::Z);
+        let weite = von.distance(nach);
+        for k in 0..14 {
+            let t = (k as f32 + 1.0) / 14.0;
+            let quer = vec3(self.rng.range(-1.0, 1.0), self.rng.range(-0.5, 0.8), self.rng.range(-1.0, 1.0)) * t * 0.6 * groesse;
+            let p = von + richtung * weite * t + quer;
+            let g = Vec3::splat((0.5 + 1.6 * t) * groesse);
+            let farbe = vec3(1.0, 0.7, 0.3).lerp(vec3(1.0, 0.35, 0.05), t);
+            let e = self.leuchten(ctx, f.kugel, p, Quat::IDENTITY, Vec3::ZERO, farbe, 1.5, 1.0);
+            self.teil(e, t * 0.18, 0.45, p, Quat::IDENTITY, farbe, Art::Blitz { groesse: g, ende: vec3(0.3, 0.05, 0.0) });
+            self.glut(ctx, p, 3, vec3(1.0, 0.5, 0.12), 2.0, 0.3 * groesse, 0.5, -1.5, 1.4, richtung * 2.0);
+        }
+        self.muendung(ctx, von, vec3(1.0, 0.6, 0.2), 1.0);
+        self.explosion(ctx, terrain, nach, 0.55 * groesse, false, sounds);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Feuerwurf, at: von, laut: 0.8 });
+    }
+
+    /// Ein Ast des Blitzes: gezackte, leuchtende Stücke mit weißem Kern.
+    fn blitzast(&mut self, ctx: &mut Context, a: Vec3, b: Vec3, zacken: f32, dicke: f32) {
+        let f = self.formen(ctx);
+        let blau = vec3(0.55, 0.8, 1.0);
+        let schritte = ((a.distance(b) / 0.9).ceil() as usize).clamp(3, 40);
+        let mut vorher = a;
+        for i in 1..=schritte {
+            let t = i as f32 / schritte as f32;
+            let mut p = a.lerp(b, t);
+            if i < schritte {
+                p += vec3(self.rng.range(-1.0, 1.0), self.rng.range(-1.0, 1.0), self.rng.range(-1.0, 1.0)) * zacken;
+            }
+            let mitte = (vorher + p) * 0.5;
+            let laenge = vorher.distance(p);
+            let drehung = Quat::from_rotation_arc(Vec3::Z, (p - vorher).normalize_or(Vec3::Z));
+            let aussen = self.leuchten(ctx, f.kugel, mitte, drehung, vec3(dicke * 4.0, dicke * 4.0, laenge * 1.2), blau, 1.8, 1.0);
+            self.teil(aussen, 0.0, 0.22, mitte, drehung, blau, Art::Gluehen);
+            let kern = self.leuchten(ctx, f.kugel, mitte, drehung, vec3(dicke * 1.4, dicke * 1.4, laenge * 1.15), Vec3::ONE, 2.8, 1.0);
+            self.teil(kern, 0.0, 0.16, mitte, drehung, Vec3::ONE, Art::Gluehen);
+            vorher = p;
+        }
+    }
+
+    /// Blitzturm: gezackter, verästelter Blitz mit gleißendem Kern und Einschlag.
+    fn blitzschlag(&mut self, ctx: &mut Context, terrain: &Terrain, von: Vec3, nach: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let blau = vec3(0.55, 0.8, 1.0);
+        self.blitzast(ctx, von, nach, 0.3 * groesse, 0.07 * groesse);
+        for _ in 0..3 {
+            let t = self.rng.range(0.2, 0.8);
+            let start = von.lerp(nach, t);
+            let ende = start + vec3(self.rng.range(-1.5, 1.5), self.rng.range(-1.5, 0.5), self.rng.range(-1.5, 1.5)) * groesse;
+            self.blitzast(ctx, start, ende, 0.25, 0.025 * groesse);
+        }
+        self.blitz(ctx, nach, 1.5 * groesse, vec3(0.9, 0.95, 1.0), blau * 0.3, 0.2, 2.4);
+        self.funken(ctx, nach, 28, vec3(0.8, 0.92, 1.0), 7.0, 0.05, 0.4, 4.0, 4.0);
+        let b = boden(terrain, nach, nach.y - 0.5).min(nach.y);
+        self.fleck(ctx, terrain, vec3(nach.x, b, nach.z), 0.9 * groesse, vec3(0.08, 0.08, 0.1), 4.0, Material::Standard, b);
+        self.licht(nach, vec3(4.0, 6.0, 9.0), 12.0 * groesse, 0.2);
+        self.licht(von, vec3(3.0, 4.0, 6.0), 8.0, 0.15);
+        self.erschuettern(nach, 0.1, 16.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Lanze, at: nach, laut: 0.45 });
+    }
+
+    /// Sonnenturm: ein gleißender goldener Strahl mit Brennfleck.
+    fn sonnenstrahl(&mut self, ctx: &mut Context, terrain: &Terrain, von: Vec3, nach: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let richtung = (nach - von).normalize_or(Vec3::NEG_Z);
+        let laenge = von.distance(nach).max(0.5);
+        let drehung = nach_y(richtung);
+        let gold = vec3(1.0, 0.82, 0.35);
+        for (dicke, farbe, staerke, weich, dauer) in [(0.1, vec3(1.0, 0.97, 0.85), 2.6, 0.0, 0.3), (0.35, gold, 1.4, 1.0, 0.45)] {
+            let e = self.leuchten(ctx, f.strahl, von, drehung, Vec3::ZERO, farbe, staerke, weich);
+            self.teil(e, 0.0, dauer, von, drehung, farbe, Art::Strahl { laenge, dicke: dicke * groesse });
+        }
+        let quer = Quat::from_rotation_arc(Vec3::Y, richtung);
+        let ring = self.leuchten(ctx, f.ring, von + richtung * 0.4, quer, Vec3::ZERO, gold, 2.2, 0.0);
+        self.teil(ring, 0.0, 0.25, von + richtung * 0.4, quer, gold, Art::Ring { von: 0.2, bis: 0.9 * groesse });
+        self.blitz(ctx, nach, 1.3 * groesse, vec3(1.0, 0.95, 0.75), gold * 0.3, 0.3, 2.2);
+        let b = boden(terrain, nach, nach.y - 0.5).min(nach.y);
+        let unten = vec3(nach.x, b + 0.06, nach.z);
+        let brand = self.leuchten(ctx, f.scheibe, unten, Quat::IDENTITY, vec3(0.9 * groesse, 1.0, 0.9 * groesse), gold, 1.4, 0.0);
+        self.teil(brand, 0.0, 0.9, unten, Quat::IDENTITY, gold, Art::Gluehen);
+        self.funken(ctx, nach, 22, gold, 5.0, 0.05, 0.45, 3.0, 4.0);
+        self.licht(nach, vec3(7.0, 5.5, 2.5), 10.0 * groesse, 0.3);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Lanze, at: von, laut: 0.4 });
+    }
+
+    /// Sturmturm: eine Windböe aus Ringen, die zum Ziel rast, und eine Druckwelle.
+    fn sturmboe(&mut self, ctx: &mut Context, von: Vec3, nach: Vec3, groesse: f32, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let richtung = (nach - von).normalize_or(Vec3::NEG_Z);
+        let weite = von.distance(nach);
+        let weiss = vec3(0.85, 0.95, 1.0);
+        let quer = Quat::from_rotation_arc(Vec3::Y, richtung);
+        for k in 0..6 {
+            let t = (k as f32 + 1.0) / 6.0;
+            let p = von + richtung * weite * t;
+            let ring = self.leuchten(ctx, f.ring, p, quer, Vec3::ZERO, weiss, 1.4, 0.0);
+            self.teil(ring, t * 0.25, 0.3, p, quer, weiss, Art::Ring { von: 0.3, bis: (0.8 + 0.8 * t) * groesse });
+            self.funken(ctx, p, 3, weiss, 3.0, 0.04, 0.3, 0.0, 2.5);
+        }
+        let b = nach - Vec3::Y * 0.5;
+        self.druckwelle(ctx, b, 3.0 * groesse, 0.35, 1.1, weiss, 1.1, 0.25);
+        Self::rauch(ctx, b + Vec3::Y * 0.3, 8, vec3(0.8, 0.82, 0.86), 3.5, 0.2, 0.8, Vec3::ZERO);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Schwung, at: von, laut: 0.6 });
     }
 }
