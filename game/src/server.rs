@@ -233,7 +233,7 @@ impl Authority {
         }
         world.day.advance(Physics::FIXED_DT);
         world.advance_buildings(Physics::FIXED_DT);
-        self.produce(world);
+        self.produce(ctx, world);
         world.think_animals(ctx);
         self.heilen(ctx, world);
         let tick = ctx.time.tick;
@@ -1216,28 +1216,28 @@ impl Authority {
         }
     }
 
-    /// Fertige Gebäude liefern ihrem Erbauer regelmäßig Rohstoffe – auch wenn er gerade nicht da ist.
-    fn produce(&mut self, world: &mut World) {
-        let mut deliveries = Vec::new();
-        // Gebäude im Radius der eigenen Dorfhalle arbeiten 10 % schneller
-        let hallen: Vec<(String, Vec3, f32)> = world
-            .buildings
-            .iter()
-            .filter(|b| b.kind == BuildingKind::Dorfhalle && b.finished())
-            .map(|b| (b.owner.clone(), b.position, bauten::bauradius(b.level)))
-            .collect();
-        for building in world.buildings.iter_mut().filter(|b| b.finished()) {
-            let Some(item) = building.kind.produces() else { continue };
-            let im_radius = hallen.iter().any(|(owner, ort, r)| *owner == building.owner && ort.distance(building.position) <= *r);
-            building.produce_in -= Physics::FIXED_DT * if im_radius { 1.1 } else { 1.0 };
-            if building.produce_in <= 0.0 {
-                building.produce_in += PRODUCTION_SECONDS;
-                deliveries.push((building.owner.clone(), item));
+    /// Die Arbeiter der Rohstoffgebäude: Bäume fällen, Vorkommen abbauen, die Ladung dem Erbauer
+    /// abliefern – auch wenn er gerade nicht da ist (siehe `arbeiter.rs`).
+    fn produce(&mut self, ctx: &mut Context, world: &mut World) {
+        use crate::arbeiter::{Ereignis, ARBEITER_ABSENDER};
+        let ereignisse = world.arbeiterschaft.takt(Physics::FIXED_DT, &world.buildings, &world.resources, &world.terrain);
+        for ereignis in ereignisse {
+            match ereignis {
+                Ereignis::Schlag(id) => {
+                    let Some(resource) = world.resources.get(&id).filter(|r| r.is_present()) else { continue };
+                    let health = resource.health.saturating_sub(1);
+                    world.resource_hit(ctx, id, health, true);
+                    let by = ARBEITER_ABSENDER;
+                    self.broadcast(if health == 0 { ServerMessage::ResourceGone { id, by } } else { ServerMessage::ResourceHit { id, health, by } });
+                }
+                Ereignis::Lieferung { gebaeude, menge } => {
+                    let Some(building) = world.buildings.iter().find(|b| b.id == gebaeude) else { continue };
+                    let (Some(item), owner) = (building.kind.produces(), building.owner.clone()) else { continue };
+                    self.give(world, &owner, &[(item, menge)]);
+                }
             }
         }
-        for (owner, item) in deliveries {
-            self.give(world, &owner, &[(item, 1)]);
-        }
+        world.arbeiter = world.arbeiterschaft.states();
     }
 
     /// Gegenstände an einen Spieler (nach Namen) – auch wenn er gerade nicht da ist.
@@ -1623,6 +1623,7 @@ impl Authority {
             // Statistik nur etwa einmal pro Sekunde mitschicken
             td: if ctx.time.tick % 60 == 0 { self.td_stand(world, true) } else { world.td.clone() },
             ereignisse: std::mem::take(&mut self.ereignisse),
+            arbeiter: world.arbeiter.clone(),
         });
         if let Some(net) = &mut self.net {
             net.broadcast(Channel::Unreliable, encode(&snapshot));

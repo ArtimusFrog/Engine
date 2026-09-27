@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod animals;
+mod arbeiter;
 mod asset_files;
 mod blender;
 mod characters;

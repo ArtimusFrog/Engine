@@ -251,6 +251,7 @@ impl Replica {
         if snapshot.tick > self.last_enemy_tick {
             self.last_enemy_tick = snapshot.tick;
             world.feinde = std::mem::take(&mut snapshot.enemies);
+            world.arbeiter = std::mem::take(&mut snapshot.arbeiter);
             world.set_weather(snapshot.weather);
             world.td_uebernehmen(std::mem::take(&mut snapshot.td));
             // Eigene Lebenspunkte (Mitspieler kommen mit der Interpolation)

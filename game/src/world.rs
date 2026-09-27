@@ -95,7 +95,7 @@ impl Resource {
     }
 
     /// Ungefährer Radius am Boden (für die Reichweite).
-    fn radius(&self) -> f32 {
+    pub fn radius(&self) -> f32 {
         match self.spec.collider {
             Shape::Capsule { radius, .. } => radius,
             Shape::Box { size } => size.x.max(size.z) * 0.5,
@@ -186,6 +186,11 @@ pub struct World {
     /// Angriffe der Truppen, die noch gezeigt werden sollen
     pub strikes: Vec<(crate::heer::EnemyKind, Vec3, Vec3)>,
     heer_ansicht: crate::heer::HeerAnsicht,
+    /// Arbeiter der Rohstoffgebäude: Simulation (nur beim Server) …
+    pub arbeiterschaft: crate::arbeiter::Arbeiterschaft,
+    /// … und was alle davon sehen (beim Client aus den Schnappschüssen)
+    pub arbeiter: Vec<crate::arbeiter::ArbeiterState>,
+    arbeiter_ansicht: crate::arbeiter::ArbeiterAnsicht,
     /// Erzwungenes Wetter (Index in `protocol::WETTER`, 0 = automatisch)
     pub weather_choice: u8,
     /// Gebäude: unsichtbares Objekt (zum Anvisieren) und die festen Körper
@@ -280,6 +285,9 @@ impl World {
             feinde: Vec::new(),
             strikes: Vec::new(),
             heer_ansicht: Default::default(),
+            arbeiterschaft: Default::default(),
+            arbeiter: Vec::new(),
+            arbeiter_ansicht: Default::default(),
             weather_choice: 0,
             building_bodies: HashMap::new(),
             tower_shots: Vec::new(),
@@ -1288,6 +1296,7 @@ impl World {
         }
         if !ctx.is_headless() {
             self.heer_ansicht.update(ctx, &self.feinde, &self.td.soldaten, &mut self.sound_events);
+            self.arbeiter_ansicht.update(ctx, &self.arbeiter);
             for (kind, from, target) in std::mem::take(&mut self.strikes) {
                 strike_visual(ctx, &mut self.sound_events, kind, from, target);
             }

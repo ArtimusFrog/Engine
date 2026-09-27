@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn gebaeude_bauen_fertigstellen_und_liefern() {
-        use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
+        use crate::bauten::BuildingKind;
         let mut pair = Pair::start(false);
         pair.run(60);
         let id = pair.client.session.local_player().unwrap();
@@ -595,8 +595,16 @@ mod tests {
         pair.run((BuildingKind::Lumberjack.build_seconds(1) * 60.0) as u32 + 30);
         assert!(pair.server.session.world().buildings.iter().all(|b| b.finished()), "Server: nicht fertig");
         assert!(pair.client.session.world().buildings.iter().all(|b| b.finished()), "Client: nicht fertig");
-        pair.run((PRODUCTION_SECONDS * 60.0) as u32 + 30);
-        assert_eq!(pair.client.session.local_inventory().wood, 11, "Holzfäller liefert nicht");
+        // Drei Arbeiter laufen los, fällen Bäume und bringen das Holz zurück
+        pair.run(60);
+        assert_eq!(pair.client.session.world().arbeiter.len(), 3, "Client sieht die Arbeiter nicht");
+        let start: Vec<Vec3> = pair.client.session.world().arbeiter.iter().map(|a| a.position).collect();
+        pair.run(60 * 5);
+        let bewegt = pair.client.session.world().arbeiter.iter().zip(&start).filter(|(a, s)| a.position.distance(**s) > 1.0).count();
+        assert!(bewegt >= 2, "Arbeiter laufen nicht los");
+        pair.run(60 * 110);
+        let holz = pair.client.session.local_inventory().wood;
+        assert!(holz >= 10 + crate::arbeiter::LADUNG, "Holzfäller liefert nicht ({holz} Holz)");
     }
 
     #[test]

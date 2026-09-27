@@ -272,14 +272,15 @@ impl Viewer {
             if let Some(nur) = std::env::args().skip_while(|a| a != "--anbau").nth(1) {
                 let namen: Vec<String> = model.attachments().iter().map(|n| n.to_string()).collect();
                 for name in namen {
-                    animator.set_visible(&name, name == nur);
+                    animator.set_visible(&name, nur.split(',').any(|n| n == name));
                 }
             }
             let mesh = animator.skinned_mesh(texture);
             let id = ctx.assets.add_mesh(mesh.clone());
             // Spielfiguren im Helden-Look wie im Spiel
             let figur = self.path.to_string_lossy().contains("figuren");
-            let material = if figur { Material::Figur { rim: 1.0 } } else { Material::Standard };
+            let npc = self.path.to_string_lossy().contains("npc");
+            let material = if figur { Material::Figur { rim: 1.0 } } else if npc { Material::Figur { rim: 0.35 } } else { Material::Standard };
             entities.push(ctx.scene.spawn(Entity::new("Modell", id).with_material(material)));
             meshes = vec![mesh];
             animated = Some((animator, id, texture));

@@ -390,7 +390,7 @@ pub fn turm_fenster(egui_ctx: &egui::Context, world: &World, building: &Building
                 ui.label(RichText::new("Voll ausgebaut").size(15.0).color(ui::ACCENT));
             }
         } else if let Some(item) = building.kind.produces() {
-            ui.label(RichText::new(format!("Liefert 1 {} alle {:.0} s", item.label(), crate::bauten::PRODUCTION_SECONDS)).size(15.0));
+            ui.label(RichText::new(format!("{} Arbeiter holen {} und bringen je {} zurück", crate::arbeiter::JE_GEBAEUDE, item.label(), crate::arbeiter::LADUNG)).size(15.0));
         } else if let Some(&(_, lp)) = world.td.barrikaden.iter().find(|(id, _)| *id == building.id) {
             ui.label(RichText::new(format!("Zustand: {lp} %")).size(15.0).color(leben_farbe(lp as u32, 100)));
         }

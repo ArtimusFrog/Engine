@@ -135,6 +135,8 @@ pub struct Playground {
     demo_mine_request: Option<crate::island::ResourceKind>,
     /// Nur zum Testen: neben das nächste Kristallvorkommen stellen und hinschauen.
     demo_crystal: Option<Option<Vec3>>,
+    /// Nur für Screenshots: `--demo-arbeiter <n> [gier]` folgt dem n-ten Arbeiter aus der Nähe
+    demo_arbeiter: Option<(usize, f32)>,
     /// Nur zum Testen: vor eine Sehenswürdigkeit stellen (`--demo-ort Name [Abstand]`).
     demo_spot: Option<(String, f32)>,
     /// Nur zum Testen: Gebäude in der Nähe aufstellen (`--demo-bau <art> [fortschritt]`, ohne
@@ -230,6 +232,7 @@ impl Playground {
             demo_mine: None,
             demo_mine_request: None,
             demo_crystal: None,
+            demo_arbeiter: None,
             demo_spot: None,
             demo_bau: None,
             demo_build_menu: false,
@@ -673,7 +676,7 @@ impl Playground {
 
     /// Baumenü: die drei Gebäude mit Beschreibung, Kosten und Ertrag.
     fn build_menu(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
-        use crate::bauten::{BuildingKind, PRODUCTION_SECONDS};
+        use crate::bauten::BuildingKind;
         use crate::tuerme::TowerKind;
         let inventory = self.session.as_ref().map(|s| s.local_inventory()).unwrap_or_default();
         let icons = self.build_icons.get_or_insert_with(|| load_build_icons(egui_ctx)).clone();
@@ -753,7 +756,7 @@ impl Playground {
                             ui.add_space(6.0);
                             kosten_zeile(ui, &kind.cost());
                             let zeile = match kind.produces() {
-                                Some(item) => format!("Liefert 1 {} alle {:.0} s · Bauzeit {:.0} s", item.label(), PRODUCTION_SECONDS, kind.build_seconds(1)),
+                                Some(item) => format!("{} Arbeiter bringen je {} {} · Bauzeit {:.0} s", crate::arbeiter::JE_GEBAEUDE, crate::arbeiter::LADUNG, item.label(), kind.build_seconds(1)),
                                 None => format!("Bauradius {:.0} m · Bauzeit {:.0} s · ausbaubar zu Rathaus und Burgfried", crate::bauten::bauradius(1), kind.build_seconds(1)),
                             };
                             ui.label(RichText::new(zeile).size(13.0).color(ui::TEXT.gamma_multiply(0.75)));
@@ -2068,6 +2071,11 @@ impl Game for Playground {
             self.radius_an = true;
         }
         self.td_open = args.iter().any(|a| a == "--demo-td");
+        if let Some(position) = args.iter().position(|a| a == "--demo-arbeiter") {
+            let n = args.get(position + 1).and_then(|n| n.parse().ok()).unwrap_or(0);
+            let gier: f32 = args.get(position + 2).and_then(|n| n.parse().ok()).unwrap_or(70.0);
+            self.demo_arbeiter = Some((n, gier));
+        }
         if let Some(position) = args.iter().position(|a| a == "--demo-turmfenster") {
             self.demo_turmfenster = Some(args.get(position + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
             self.demo_towers = true;
@@ -2375,9 +2383,9 @@ impl Game for Playground {
                     ziel: Default::default(),
                 };
                 session.world_mut().place_building(ctx, halle);
-                for (i, kind) in [BuildingKind::Lumberjack, BuildingKind::Quarry].into_iter().enumerate() {
+                for (i, kind) in [BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine].into_iter().enumerate() {
                     let world = session.world();
-                    let seite = blick.perp() * if i == 0 { 1.0 } else { -1.0 };
+                    let seite = [blick.perp(), -blick.perp(), -blick][i];
                     let at = (0..40).map(|k| mitte + seite * 19.0 - blick * (k as f32 * 0.8)).find(|&at| crate::bauten::check_site(world, kind, at, None).is_ok());
                     if let Some(at) = at {
                         let y = crate::bauten::check_site(world, kind, at, None).unwrap_or(hoehe);
@@ -2545,6 +2553,21 @@ impl Game for Playground {
                         self.orbit.avoid_walls = false;
                     }
                 }
+            }
+        }
+        if let (Some((n, gier)), Some(session)) = (self.demo_arbeiter, &self.session) {
+            let world = session.world();
+            if let (Some(a), Some(local)) = (world.arbeiter.get(n), session.local_player()) {
+                // Spieler seitlich neben den Arbeiter stellen, Kamera auf ihn richten
+                let seite = Vec2::from_angle(a.blick + gier.to_radians()) * 4.2;
+                let stand = vec2(a.position.x + seite.x, a.position.z + seite.y);
+                let character = world.players[&local].character;
+                ctx.physics.teleport_character(character, vec3(stand.x, world.terrain.height_at(stand.x, stand.y) + 0.2, stand.y));
+                let to = a.position - vec3(stand.x, a.position.y, stand.y);
+                ctx.camera.yaw = to.x.atan2(-to.z) + 0.42;
+                ctx.camera.pitch = -0.1;
+                self.orbit.distance = 2.2;
+                self.orbit.avoid_walls = false;
             }
         }
         if let (Some(kind), None, Some(session)) = (self.demo_mine_request, self.demo_mine, &mut self.session) {
