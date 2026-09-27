@@ -37,16 +37,18 @@ enum Tab {
     All,
     Resources,
     Loot,
+    Waffen,
 }
 
 impl Tab {
-    const ALL: [Tab; 3] = [Tab::All, Tab::Resources, Tab::Loot];
+    const ALL: [Tab; 4] = [Tab::All, Tab::Resources, Tab::Loot, Tab::Waffen];
 
     fn label(self) -> &'static str {
         match self {
             Tab::All => "Alles",
             Tab::Resources => "Rohstoffe",
             Tab::Loot => "Tierbeute",
+            Tab::Waffen => "Waffen",
         }
     }
 
@@ -55,8 +57,19 @@ impl Tab {
             Tab::All => true,
             Tab::Resources => !item.is_loot(),
             Tab::Loot => item.is_loot(),
+            Tab::Waffen => false,
         }
     }
+}
+
+/// Symbol der Startwaffe einer Klasse.
+fn startwaffe_symbol(class: crate::protocol::CharacterClass) -> &'static str {
+    if class == crate::protocol::CharacterClass::Zwerg { "schmiedehammer" } else { "zauberstab" }
+}
+
+fn seltenheit_farbe(s: crate::waffen::Seltenheit) -> Color32 {
+    let f = s.farbe();
+    Color32::from_rgb((f[0] * 255.0) as u8, (f[1] * 255.0) as u8, (f[2] * 255.0) as u8)
 }
 
 /// Die gerenderten Symbole (Gegenstände und Werkzeuge) als egui-Texturen, nach Dateinamen:
@@ -72,7 +85,8 @@ impl Icons {
         let Some(dir) = crate::asset_files::asset_dir() else { return icons };
         let werkzeuge = [Tool::Pickaxe, Tool::Axe].map(|t| t.icon_file(crate::protocol::CharacterClass::Mage));
         let faehigkeiten = crate::protocol::CharacterClass::ALL.into_iter().flat_map(crate::faehigkeiten::Faehigkeit::der_klasse).map(|f| f.icon_file());
-        let files = Item::ALL.iter().map(|i| i.icon_file()).chain(werkzeuge).chain(faehigkeiten);
+        let waffen = crate::waffen::WAFFEN.iter().map(|w| w.datei).chain(["schmiedehammer", "zauberstab"]);
+        let files = Item::ALL.iter().map(|i| i.icon_file()).chain(werkzeuge).chain(faehigkeiten).chain(waffen);
         for file in files {
             let path = dir.join("icons").join(format!("{file}.png"));
             let image = match Image::load_png(&path) {
@@ -141,11 +155,13 @@ fn half(image: &Image) -> Image {
 pub struct InventoryUi {
     icons: Option<Icons>,
     tab: Tab,
+    /// Waffe, die im Fenster angeklickt wurde (das Spiel holt sie ab und rüstet sie aus)
+    pub ausruesten: Option<u8>,
 }
 
 impl Default for InventoryUi {
     fn default() -> Self {
-        InventoryUi { icons: None, tab: Tab::All }
+        InventoryUi { icons: None, tab: Tab::All, ausruesten: None }
     }
 }
 
@@ -155,7 +171,7 @@ impl InventoryUi {
     }
 
     /// Das Inventar-Fenster am rechten Rand. Liefert `true`, wenn es geschlossen werden soll.
-    pub fn window(&mut self, ctx: &egui::Context, inventory: &Inventory, owner: &str) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, inventory: &Inventory, owner: &str, class: crate::protocol::CharacterClass) -> bool {
         self.icons(ctx);
         let width = MARGIN * 2.0 + COLUMNS as f32 * SLOT + (COLUMNS - 1) as f32 * GAP;
         let grid_height = ROWS as f32 * SLOT + (ROWS - 1) as f32 * GAP;
@@ -174,7 +190,7 @@ impl InventoryUi {
             painter.text(
                 title_center + egui::vec2(0.0, 20.0),
                 Align2::CENTER_CENTER,
-                format!("{owner} · Magier"),
+                format!("{owner} · {}", class.label()),
                 FontId::proportional(13.0),
                 MUTED,
             );
@@ -190,7 +206,7 @@ impl InventoryUi {
 
             // ---------- Reiter ----------
             let tabs_top = rect.top() + MARGIN + HEADER;
-            let tab_width = (width - MARGIN * 2.0 - 2.0 * 6.0) / 3.0;
+            let tab_width = (width - MARGIN * 2.0 - 3.0 * 6.0) / 4.0;
             for (index, tab) in Tab::ALL.into_iter().enumerate() {
                 let tab_rect = Rect::from_min_size(
                     egui::pos2(rect.left() + MARGIN + index as f32 * (tab_width + 6.0), tabs_top),
@@ -207,7 +223,62 @@ impl InventoryUi {
             let items: Vec<(Item, u32)> = inventory.items().filter(|&(item, _)| self.tab.shows(item)).collect();
             let grid_top = tabs_top + TABS + 10.0;
             let icons = self.icons.as_ref().expect("Symbole geladen");
+            // Waffen: Startwaffe und alle erbeuteten; Klick rüstet aus
+            let waffen: Vec<u8> = std::iter::once(0).chain(crate::waffen::WAFFEN.iter().filter(|w| inventory.waffen & (1u16 << w.id) != 0).map(|w| w.id)).collect();
             for slot in 0..COLUMNS * ROWS {
+                if self.tab != Tab::Waffen {
+                    break;
+                }
+                let (column, row) = (slot % COLUMNS, slot / COLUMNS);
+                let slot_rect = Rect::from_min_size(
+                    egui::pos2(rect.left() + MARGIN + column as f32 * (SLOT + GAP), grid_top + row as f32 * (SLOT + GAP)),
+                    egui::vec2(SLOT, SLOT),
+                );
+                let waffe = waffen.get(slot).copied();
+                let response = ui.interact(slot_rect, egui::Id::new(("inventar_waffe", slot)), egui::Sense::click());
+                slot_frame(&painter, slot_rect, response.hovered() && waffe.is_some(), waffe.is_some());
+                let Some(id) = waffe else { continue };
+                let w = crate::waffen::waffe(id);
+                let eigene = w.is_none_or(|w| w.klasse == class);
+                let getragen = (id == 0 && crate::waffen::ausgeruestet(inventory.waffe, class).is_none()) || (id != 0 && inventory.waffe == id && eigene);
+                if let Some(w) = w {
+                    painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(w.seltenheit)), StrokeKind::Inside);
+                }
+                let datei = w.map_or(startwaffe_symbol(class), |w| w.datei);
+                let tint = if eigene { Color32::WHITE } else { Color32::from_gray(90) };
+                if !icons.paint_file(&painter, slot_rect.shrink(3.0), datei, tint) {
+                    let name = w.map_or(crate::waffen::startwaffe(class), |w| w.name);
+                    painter.text(slot_rect.center(), Align2::CENTER_CENTER, &name[..1], FontId::proportional(20.0), PARCHMENT);
+                }
+                if getragen {
+                    painter.rect_stroke(slot_rect.expand(2.0), 6.0, Stroke::new(2.5, GOLD_LIGHT), StrokeKind::Outside);
+                    painter.text(slot_rect.right_top() + egui::vec2(-4.0, 2.0), Align2::RIGHT_TOP, "✔", FontId::proportional(14.0), GOLD_LIGHT);
+                }
+                if response.clicked() && eigene && !getragen {
+                    self.ausruesten = Some(id);
+                }
+                response.on_hover_ui(|ui| {
+                    ui.set_max_width(280.0);
+                    match w {
+                        Some(w) => {
+                            ui.label(egui::RichText::new(w.name).size(18.0).strong().color(seltenheit_farbe(w.seltenheit)));
+                            ui.label(egui::RichText::new(format!("{} · {}", w.seltenheit.label(), if w.klasse == crate::protocol::CharacterClass::Zwerg { "Hammer (Zwerg)" } else { "Stab (Magier)" })).size(13.0).color(GOLD));
+                            ui.label(egui::RichText::new(crate::waffen::werte_zeile(w)).size(14.0).color(Color32::WHITE));
+                            ui.label(egui::RichText::new(w.beschreibung).size(13.0).italics().color(PARCHMENT));
+                        }
+                        None => {
+                            ui.label(egui::RichText::new(crate::waffen::startwaffe(class)).size(18.0).strong().color(Color32::WHITE));
+                            ui.label(egui::RichText::new("Startwaffe · keine Boni").size(13.0).color(GOLD));
+                        }
+                    }
+                    let zeile = if getragen { "In der Hand" } else if eigene { "Klick: ausrüsten" } else { "Passt nicht zu deiner Figur" };
+                    ui.label(egui::RichText::new(zeile).size(13.0).color(MUTED));
+                });
+            }
+            for slot in 0..COLUMNS * ROWS {
+                if self.tab == Tab::Waffen {
+                    break;
+                }
                 let (column, row) = (slot % COLUMNS, slot / COLUMNS);
                 let slot_rect = Rect::from_min_size(
                     egui::pos2(rect.left() + MARGIN + column as f32 * (SLOT + GAP), grid_top + row as f32 * (SLOT + GAP)),

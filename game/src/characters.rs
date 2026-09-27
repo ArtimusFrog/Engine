@@ -82,6 +82,8 @@ pub struct Puppet {
     acting: bool,
     tool: Option<Tool>,
     schritt: (f32, f32),
+    /// Anbauteil der ausgerüsteten Waffe (None = Startwaffe „Stab“ bzw. „Hammer“)
+    waffe: Option<&'static str>,
 }
 
 impl Puppet {
@@ -110,24 +112,41 @@ impl Puppet {
             figure.joints = animator.palette();
         }
         let figure = ctx.scene.spawn(figure);
-        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None, schritt: schritt(class) };
+        let mut puppet = Puppet { animator, figure, last_position: None, speed: 0.0, acting: false, tool: None, schritt: schritt(class), waffe: None };
         puppet.set_tool(Tool::default());
         puppet
     }
 
-    /// Zeigt, was in der Hand liegt: Waffe (Stab oder Hammer) bei den Fähigkeiten, sonst das Werkzeug.
+    /// Zeigt, was in der Hand liegt: die Waffe bei den Fähigkeiten, sonst das Werkzeug.
     pub fn set_tool(&mut self, tool: Tool) {
         if self.tool == Some(tool) {
             return;
         }
         self.tool = Some(tool);
-        if let Some(animator) = &mut self.animator {
-            let waffe = matches!(tool, Tool::Faehigkeit(_));
-            animator.set_visible("Stab", waffe);
-            animator.set_visible("Hammer", waffe);
-            animator.set_visible("Spitzhacke", tool == Tool::Pickaxe);
-            animator.set_visible("Axt", tool == Tool::Axe);
+        self.zeigen();
+    }
+
+    /// Welche Waffe die Figur trägt (Anbauteil im Modell, None = Startwaffe).
+    pub fn set_waffe(&mut self, waffe: Option<&'static str>) {
+        if self.waffe == waffe {
+            return;
         }
+        self.waffe = waffe;
+        self.zeigen();
+    }
+
+    fn zeigen(&mut self) {
+        let Some(tool) = self.tool else { return };
+        let Some(animator) = &mut self.animator else { return };
+        let kampf = matches!(tool, Tool::Faehigkeit(_));
+        for start in ["Stab", "Hammer"] {
+            animator.set_visible(start, kampf && self.waffe.is_none());
+        }
+        for w in &crate::waffen::WAFFEN {
+            animator.set_visible(w.datei, kampf && self.waffe == Some(w.datei));
+        }
+        animator.set_visible("Spitzhacke", tool == Tool::Pickaxe);
+        animator.set_visible("Axt", tool == Tool::Axe);
     }
 
     /// Blendet die ganze Figur ein oder aus (z. B. Vergleichsfigur im Asset-Betrachter).

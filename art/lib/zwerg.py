@@ -428,6 +428,13 @@ def zwerg(seed=21, name="Zwerg"):
            8, lambda i, k, p: stahl_hell, hand_gewicht, unten_zu=True)
     f.als_starr("Hammer", "Hand.R", hammer_anfang)
 
+    # ================= Erbeutbare Hämmer (waffen.py), im Spiel statt des Hammers sichtbar =================
+    from waffen import HAEMMER, hammer as hammer_bauen
+    for art in HAEMMER:
+        anfang = len(f.teile)
+        hammer_bauen(f, art, GRIFF_X, GRIFF_Y, hand_gewicht, GRIFF_Z)
+        f.als_starr(art, "Hand.R", anfang)
+
     # ================= Spitzhacke und Axt (vom Magier, an die Zwergenhand gesetzt) =================
     magier_hand = Vector((-0.37, -0.075, 0.93))
     zwergen_hand = Vector((GRIFF_X, GRIFF_Y, GRIFF_Z + 0.02))

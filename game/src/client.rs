@@ -94,6 +94,15 @@ impl Replica {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Td(befehl)));
     }
 
+    /// Beute vom Boden aufheben bzw. eine Waffe ausrüsten (der Server prüft).
+    pub fn send_aufheben(&mut self, id: u32) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Aufheben(id)));
+    }
+
+    pub fn send_ausruesten(&mut self, waffe: u8) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Ausruesten(waffe)));
+    }
+
     /// Runenstein schmieden oder einsetzen (der Server prüft Ort und Inventar).
     pub fn send_runen(&mut self, befehl: crate::protocol::RunenBefehl) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Runen(befehl)));
@@ -213,6 +222,14 @@ impl Replica {
             }
             ServerMessage::SpielerGetroffen { player, schaden } => world.spieler_getroffen(player, schaden),
             ServerMessage::SpielerGefallen { player, von } => world.spieler_gefallen(player, &von),
+            ServerMessage::Beute(liste) => {
+                for b in liste {
+                    world.beute.insert(b.id, b);
+                }
+            }
+            ServerMessage::BeuteWeg(id) => {
+                world.beute.remove(&id);
+            }
             ServerMessage::AnimalHit { id, health, by: _ } => world.animal_hit(ctx, id, health, true),
             ServerMessage::BuildingPlaced(building) => world.place_building(ctx, building),
             ServerMessage::Buildings(buildings) => {
@@ -240,6 +257,7 @@ impl Replica {
             if let Some(state) = self.local_id.and_then(|id| snapshot.players.iter().find(|p| p.id == id)) {
                 if let Some(avatar) = world.players.get_mut(&state.id) {
                     avatar.leben = state.leben as f32;
+                    avatar.waffe = state.waffe;
                 }
             }
         }
@@ -345,6 +363,7 @@ impl Replica {
             avatar.facing = facing;
             avatar.tool = target.tool;
             avatar.leben = target.leben as f32;
+            avatar.waffe = target.waffe;
         }
 
         // Objekte, die nur im älteren Snapshot vorkommen, sind inzwischen zur Ruhe gekommen.

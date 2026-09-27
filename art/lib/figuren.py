@@ -771,6 +771,13 @@ def magier(seed=12, name="Magier"):
     f._objekt(bm, "Kristall", lambda poly: kristall * (0.85 + 0.4 * max(0.0, poly.normal.z) + 0.15 * (poly.index % 3)), stab_gewicht)
     f.als_starr("Stab", "Hand.R", stab_anfang)
 
+    # ================= Erbeutbare Stäbe (waffen.py), im Spiel statt des Stabs sichtbar =================
+    from waffen import STAEBE, stab as stab_bauen
+    for art in STAEBE:
+        anfang = len(f.teile)
+        stab_bauen(f, art, STAB_X, STAB_Y, stab_gewicht)
+        f.als_starr(art, "Hand.R", anfang)
+
     # ================= Spitzhacke (statt des Stabs in der Hand, im Spiel umschaltbar) =================
     hacke_anfang = len(f.teile)
     _spitzhacke(f, STAB_X, STAB_Y, stab_gewicht)

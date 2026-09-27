@@ -58,6 +58,8 @@ struct PendingHit {
     /// Einschlag (Geschoss) bzw. Mitte der Wirkung (um sich)
     punkt: Vec3,
     ziel: Option<Getroffen>,
+    /// Waffe: Faktor auf den Schaden und auf die Nachwirkung
+    faktor: (f32, f32),
 }
 
 pub struct Authority {
@@ -88,8 +90,11 @@ pub struct Authority {
     startgold: BTreeSet<String>,
     /// Siedlungsplätze mit eingesetztem Runenstein: wem sie gehören (je Straße)
     runen: Vec<Option<String>>,
-    /// Zufall für Beute (Runenfragmente)
+    /// Zufall für Beute (Runenfragmente, Waffen)
     rng: Rng,
+    /// Beute am Boden: nächste ID und wann sie verschwindet (Takt)
+    beute_naechste: u32,
+    beute_bis: HashMap<u32, u64>,
 }
 
 impl Authority {
@@ -112,6 +117,8 @@ impl Authority {
             startgold: BTreeSet::new(),
             runen: Vec::new(),
             rng: Rng::new(0xB0_07E),
+            beute_naechste: 1,
+            beute_bis: HashMap::new(),
         }
     }
 
@@ -161,6 +168,16 @@ impl Authority {
         self.produce(world);
         world.think_animals(ctx);
         self.heilen(ctx, world);
+        let tick = ctx.time.tick;
+        let alt: Vec<u32> = self.beute_bis.iter().filter(|&(_, &bis)| tick >= bis).map(|(&id, _)| id).collect();
+        for id in alt {
+            self.beute_bis.remove(&id);
+            world.beute.remove(&id);
+            self.broadcast(ServerMessage::BeuteWeg(id));
+        }
+        for (id, avatar) in world.players.iter_mut() {
+            avatar.waffe = world.inventories.get(id).map_or(0, |i| i.waffe);
+        }
         self.wildnis_takt(ctx, world);
         self.verteidigen(ctx, world);
         for strike in std::mem::take(&mut self.neue_strikes) {
@@ -263,11 +280,15 @@ impl Authority {
     /// wird; der Client liefert nur die Richtung. Abklingzeit, Reichweite und Wirkung stehen in
     /// `faehigkeiten.rs`.
     fn cast(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, target: Vec3) {
+        let waffe = world.inventories.get(&player).map_or(0, |i| i.waffe);
         let Some(avatar) = world.players.get_mut(&player) else { return };
         let Tool::Faehigkeit(platz) = avatar.tool else { return };
         let art = Faehigkeit::von(avatar.class, platz);
+        let (f_schaden, f_wirkung, f_abklingen) = crate::waffen::faktoren(waffe, avatar.class, art);
+        let faktor = (f_schaden, f_wirkung);
+        let abklingen = (art.abklingen() as f32 * f_abklingen).round() as u64;
         let fach = (platz as usize).min(2);
-        let bereit = avatar.abklingen[fach] == 0 || ctx.time.tick >= avatar.abklingen[fach] + art.abklingen();
+        let bereit = avatar.abklingen[fach] == 0 || ctx.time.tick >= avatar.abklingen[fach] + abklingen;
         if !bereit || avatar.leben <= 0.0 || !target.is_finite() {
             return;
         }
@@ -295,7 +316,7 @@ impl Authority {
                 self.broadcast(ServerMessage::SpellCast { by: player, origin, target: point, hit: ziel.is_some(), art });
                 let flight = origin.distance(point) / tempo;
                 let due = ctx.time.tick + ausholen + (flight / Physics::FIXED_DT).round() as u64;
-                self.pending_hits.push(PendingHit { due, art, by: player, from: origin, richtung: direction, punkt: point, ziel });
+                self.pending_hits.push(PendingHit { due, art, by: player, from: origin, richtung: direction, punkt: point, ziel, faktor });
             }
             Form::Nahkampf { weite, .. } => {
                 let zu = (target - center).with_y(0.0);
@@ -303,13 +324,13 @@ impl Authority {
                 let mitte = center + richtung * weite * 0.6;
                 world.cast_spell(ctx, player, center, mitte, false, true, art);
                 self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: mitte, hit: false, art });
-                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung, punkt: mitte, ziel: None });
+                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung, punkt: mitte, ziel: None, faktor });
             }
             Form::UmSich { .. } => {
                 let fuesse = center - Vec3::Y * 0.9;
                 world.cast_spell(ctx, player, center, fuesse, false, true, art);
                 self.broadcast(ServerMessage::SpellCast { by: player, origin: center, target: fuesse, hit: false, art });
-                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung: Vec3::NEG_Z, punkt: fuesse, ziel: None });
+                self.pending_hits.push(PendingHit { due: ctx.time.tick + ausholen, art, by: player, from: center, richtung: Vec3::NEG_Z, punkt: fuesse, ziel: None, faktor });
             }
         }
     }
@@ -323,7 +344,8 @@ impl Authority {
         for hit in landed {
             let art = hit.art;
             let (bremse, stun, brand, dauer) = art.wirkung();
-            let schaden = art.schaden();
+            let (bremse, stun, brand) = ((bremse * hit.faktor.1).min(0.85), stun * hit.faktor.1, brand * hit.faktor.1);
+            let schaden = art.schaden() * hit.faktor.0;
             // Was getroffen wird
             let mut tiere: Vec<u16> = Vec::new();
             let mut feinde: Vec<u16> = Vec::new();
@@ -378,12 +400,10 @@ impl Authority {
                 world.animal_hit(ctx, id, health, true);
                 self.broadcast(ServerMessage::AnimalHit { id, health, by: hit.by });
                 if health == 0 {
-                    let inventory = world.inventories.entry(hit.by).or_default();
+                    let ort = world.animals[id as usize].hit_sphere().0;
                     for &(item, amount) in kind.loot() {
-                        inventory.add_item(item, amount);
+                        self.beute_ablegen(world, ort, crate::beute::Fund::Gegenstand(item, amount));
                     }
-                    let inventory = *inventory;
-                    self.send_inventory(hit.by, inventory);
                 }
             }
         }
@@ -444,22 +464,114 @@ impl Authority {
         }
         world.wildnis.besetzt.clear();
         for g in std::mem::take(&mut world.wildnis.gefallen) {
-            let mut beute = vec![(Item::Gold, crate::wildnis::gold(g.gefahr, g.anfuehrer))];
-            let fragment = self.rng.chance(crate::wildnis::fragment_chance(g.gefahr, g.anfuehrer));
-            if fragment {
-                beute.push((Item::Runenfragment, 1));
-            }
-            self.give(world, &g.von, &beute);
-            if fragment {
-                let wer = world.players.values().find(|a| player_key(&a.name) == g.von).map_or(g.von.clone(), |a| a.name.clone());
-                let text = format!("{wer} erbeutet ein Runenfragment ({}, {}).", g.kind.label(), g.lager);
-                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
-                self.broadcast(ServerMessage::Notice(text));
+            // Alles fällt zu Boden und will mit E aufgehoben werden
+            use crate::beute::Fund;
+            self.beute_ablegen(world, g.ort, Fund::Gegenstand(Item::Gold, crate::wildnis::gold(g.gefahr, g.anfuehrer)));
+            if self.rng.chance(crate::wildnis::fragment_chance(g.gefahr, g.anfuehrer)) {
+                self.beute_ablegen(world, g.ort, Fund::Gegenstand(Item::Runenfragment, 1));
                 let ereignis = Ereignis::Heilung(g.ort + Vec3::Y);
                 world.ereignisse.push(ereignis);
                 self.ereignisse.push(ereignis);
             }
+            if self.rng.chance(crate::waffen::waffen_chance(g.gefahr, g.anfuehrer)) {
+                // Eine Waffe für die Klasse dessen, der den letzten Treffer hatte
+                let class = world.players.values().find(|a| player_key(&a.name) == g.von).map_or(CharacterClass::Mage, |a| a.class);
+                let seltenheit = crate::waffen::seltenheit_fuer(g.gefahr, self.rng.range(0.0, 1.0));
+                let passend: Vec<u8> = crate::waffen::WAFFEN.iter().filter(|w| w.klasse == class && w.seltenheit == seltenheit).map(|w| w.id).collect();
+                if !passend.is_empty() {
+                    let id = passend[(self.rng.next_u32() % passend.len() as u32) as usize];
+                    self.beute_ablegen(world, g.ort, Fund::Waffe(id));
+                    if seltenheit >= crate::waffen::Seltenheit::Episch {
+                        let name = crate::waffen::waffe(id).map_or("", |w| w.name);
+                        let text = format!("{} ({}) hinterlässt eine {} Waffe: {name}!", g.kind.label(), g.lager, if seltenheit == crate::waffen::Seltenheit::Legendaer { "legendäre" } else { "epische" });
+                        world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                        self.broadcast(ServerMessage::Notice(text));
+                    }
+                }
+            }
         }
+    }
+
+    /// Legt Beute neben `ort` auf den Boden (etwas verstreut) und meldet sie allen.
+    fn beute_ablegen(&mut self, world: &mut World, ort: Vec3, fund: crate::beute::Fund) {
+        let winkel = self.rng.range(0.0, std::f32::consts::TAU);
+        let weite = self.rng.range(0.4, 1.4);
+        let p = vec2(ort.x + winkel.cos() * weite, ort.z + winkel.sin() * weite);
+        let boden = world.terrain.height_at(p.x, p.y);
+        let id = self.beute_naechste;
+        self.beute_naechste += 1;
+        let beute = crate::beute::Bodenbeute { id, ort: vec3(p.x, boden, p.y), fund };
+        world.beute.insert(id, beute);
+        self.beute_bis.insert(id, self.tick + (crate::beute::LIEGT_SEKUNDEN / Physics::FIXED_DT) as u64);
+        self.broadcast(ServerMessage::Beute(vec![beute]));
+    }
+
+    /// Ein Spieler hebt Beute auf (E): Reichweite prüfen, ins Inventar, für alle verschwinden lassen.
+    /// Eine Waffe, die man schon hat, wird zu Gold.
+    pub fn aufheben(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, id: u32) -> Result<(), String> {
+        let Some(avatar) = world.players.get(&player) else { return Err("Unbekannter Spieler".into()) };
+        let (name, class) = (avatar.name.clone(), avatar.class);
+        let ort = ctx.physics.character_position(avatar.character);
+        let Some(beute) = world.beute.get(&id).copied() else { return Err("Die Beute ist schon weg".into()) };
+        if vec2(beute.ort.x, beute.ort.z).distance(vec2(ort.x, ort.z)) > crate::beute::AUFHEBEN_WEITE + 0.8 || (beute.ort.y - ort.y).abs() > 3.5 {
+            return Err("Zu weit weg".into());
+        }
+        world.beute.remove(&id);
+        self.beute_bis.remove(&id);
+        self.broadcast(ServerMessage::BeuteWeg(id));
+        let inventory = world.inventories.entry(player).or_default();
+        let mut meldung = None;
+        match beute.fund {
+            crate::beute::Fund::Gegenstand(item, n) => inventory.add_item(item, n),
+            crate::beute::Fund::Waffe(waffe) => {
+                let Some(w) = crate::waffen::waffe(waffe) else { return Ok(()) };
+                let bit = 1u16 << w.id;
+                if inventory.waffen & bit != 0 {
+                    inventory.gold += w.seltenheit.gold_fuer_doppelte();
+                    meldung = Some((format!("{} hast du schon – eingeschmolzen für {} Gold.", w.name, w.seltenheit.gold_fuer_doppelte()), false));
+                } else {
+                    inventory.waffen |= bit;
+                    // Die erste Waffe der eigenen Klasse gleich in die Hand nehmen
+                    if w.klasse == class && crate::waffen::ausgeruestet(inventory.waffe, class).is_none() {
+                        inventory.waffe = w.id;
+                    }
+                    let wertvoll = w.seltenheit >= crate::waffen::Seltenheit::Episch;
+                    meldung = Some((format!("{name} findet: {} ({})!", w.name, w.seltenheit.label()), wertvoll));
+                }
+            }
+        }
+        let inventory = *inventory;
+        self.send_inventory(player, inventory);
+        if let Some((text, an_alle)) = meldung {
+            world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+            if an_alle {
+                self.broadcast(ServerMessage::Notice(text));
+            } else if let Some(net) = &mut self.net {
+                if player != HOST_PLAYER {
+                    net.send(player, Channel::Reliable, encode(&ServerMessage::Notice(text)));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Eine erbeutete Waffe (oder mit 0 die Startwaffe) in die Hand nehmen.
+    pub fn ausruesten(&mut self, world: &mut World, player: PlayerId, waffe: u8) -> Result<(), String> {
+        let class = world.players.get(&player).map(|a| a.class).ok_or("Unbekannter Spieler")?;
+        let inventory = world.inventories.entry(player).or_default();
+        if waffe != 0 {
+            let w = crate::waffen::waffe(waffe).ok_or("Diese Waffe gibt es nicht")?;
+            if inventory.waffen & (1u16 << w.id) == 0 {
+                return Err("Diese Waffe hast du nicht".into());
+            }
+            if w.klasse != class {
+                return Err(format!("{} kann nur {} führen", w.name, if w.klasse == CharacterClass::Zwerg { "ein Zwerg" } else { "ein Magier" }));
+            }
+        }
+        inventory.waffe = waffe;
+        let inventory = *inventory;
+        self.send_inventory(player, inventory);
+        Ok(())
     }
 
     /// Runen: am Runenbrunnen vier Fragmente zu einem Runenstein vereinen, einen Runenstein in
@@ -967,6 +1079,7 @@ impl Authority {
                         .collect();
                     intro.push(ServerMessage::ResourceStates { gone, damaged });
                     intro.push(ServerMessage::Buildings(world.buildings.clone()));
+                    intro.push(ServerMessage::Beute(world.beute.values().copied().collect()));
                     for message in intro {
                         net.send(id, Channel::Reliable, encode(&message));
                     }
@@ -1002,6 +1115,8 @@ impl Authority {
         let mut admins = Vec::new();
         let mut changes: Vec<(ClientId, TdBefehl)> = Vec::new();
         let mut runen: Vec<(ClientId, RunenBefehl)> = Vec::new();
+        let mut aufheben: Vec<(ClientId, u32)> = Vec::new();
+        let mut ausruesten: Vec<(ClientId, u8)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -1010,6 +1125,8 @@ impl Authority {
                     Some(ClientMessage::Admin(command)) => admins.push((id, command)),
                     Some(ClientMessage::Td(befehl)) => changes.push((id, befehl)),
                     Some(ClientMessage::Runen(befehl)) => runen.push((id, befehl)),
+                    Some(ClientMessage::Aufheben(beute)) => aufheben.push((id, beute)),
+                    Some(ClientMessage::Ausruesten(waffe)) => ausruesten.push((id, waffe)),
                     _ => {}
                 }
             }
@@ -1038,6 +1155,18 @@ impl Authority {
         }
         for (id, befehl) in changes {
             let result = self.td(ctx, world, id, befehl);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, beute) in aufheben {
+            let result = self.aufheben(ctx, world, id, beute);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, waffe) in ausruesten {
+            let result = self.ausruesten(world, id, waffe);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }
@@ -1150,6 +1279,7 @@ impl Authority {
                     last_input: self.clients.get(&id).map_or(0, |c| c.last_processed),
                     tool: avatar.tool,
                     leben: avatar.leben.max(0.0).ceil() as u16,
+                    waffe: avatar.waffe,
                 }
             })
             .collect();

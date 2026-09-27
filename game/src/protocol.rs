@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0019;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001A;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -142,6 +142,8 @@ pub struct PlayerState {
     pub tool: Tool,
     /// Lebenspunkte (die höchsten stehen in `CharacterClass::max_leben`)
     pub leben: u16,
+    /// Waffe in der Hand (0 = Startwaffe, sonst ID aus `waffen.rs`)
+    pub waffe: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -201,6 +203,10 @@ pub enum ServerMessage {
     SpielerGetroffen { player: PlayerId, schaden: u16 },
     /// Ein Spieler ist gefallen und steht an seinem Startpunkt wieder auf
     SpielerGefallen { player: PlayerId, von: String },
+    /// Beute liegt jetzt am Boden (beim Beitreten: alles, was gerade liegt)
+    Beute(Vec<crate::beute::Bodenbeute>),
+    /// Beute wurde aufgehoben oder ist verschwunden
+    BeuteWeg(u32),
     /// Ein Tier wurde getroffen und hat noch `health` Leben (0 = erlegt).
     AnimalHit { id: u16, health: u8, by: PlayerId },
     /// Chatnachricht eines Spielers (vom Server geprüft).
@@ -235,6 +241,10 @@ pub enum ClientMessage {
     Td(crate::td::TdBefehl),
     /// Runenstein schmieden oder in einen Schutzstein setzen
     Runen(RunenBefehl),
+    /// Beute vom Boden aufheben (E)
+    Aufheben(u32),
+    /// Waffe ausrüsten (0 = Startwaffe)
+    Ausruesten(u8),
 }
 
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
@@ -290,10 +300,15 @@ pub struct Inventory {
     pub runenfragmente: u32,
     #[serde(default)]
     pub runensteine: u32,
+    /// Erbeutete Waffen (Bit n = Waffe n aus `waffen.rs`) und die ausgerüstete (0 = Startwaffe)
+    #[serde(default)]
+    pub waffen: u16,
+    #[serde(default)]
+    pub waffe: u8,
 }
 
 /// Alles, was im Inventar liegen kann.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Item {
     Gold,
     Wood,

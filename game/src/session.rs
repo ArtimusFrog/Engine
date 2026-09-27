@@ -105,6 +105,30 @@ impl Session {
         }
     }
 
+    /// Beute vom Boden aufheben (beim Host/Einzelspieler direkt, sonst an den Server).
+    pub fn aufheben(&mut self, ctx: &mut Context, id: u32) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_aufheben(id);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.aufheben(ctx, &mut self.world, local, id) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
+    /// Eine erbeutete Waffe ausrüsten (0 = Startwaffe).
+    pub fn ausruesten(&mut self, waffe: u8) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_ausruesten(waffe);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.ausruesten(&mut self.world, local, waffe) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Runenstein schmieden oder einsetzen (beim Host/Einzelspieler direkt, sonst an den Server).
     pub fn runen(&mut self, ctx: &mut Context, befehl: crate::protocol::RunenBefehl) {
         let local = self.local_player();
@@ -382,8 +406,21 @@ mod tests {
         assert_eq!(pair.client.session.world().animals[sheep].health, 0, "Schaf lebt beim Client noch");
         // Drei Treffer mit 0,7 s Abklingzeit dazwischen.
         assert!(ticks >= (max as u32 - 1) * 42, "Zauber zu schnell hintereinander: {ticks} Takte");
+        // Die Beute liegt jetzt am Boden (beim Client sichtbar) – mit E aufheben
+        assert_eq!(pair.client.session.local_inventory().meat, 0, "Beute direkt im Inventar");
+        let beute: Vec<crate::beute::Bodenbeute> = pair.client.session.world().beute.values().copied().collect();
+        assert_eq!(beute.len(), 2, "Fleisch und Wolle liegen nicht beim Client am Boden");
+        for b in beute {
+            pair.server_ctx.physics.teleport_character(character, b.ort + vec3(0.3, 1.0, 0.0));
+            pair.run(20);
+            let mut client_ctx = std::mem::replace(&mut pair.client_ctx, Context::headless());
+            pair.client.session.aufheben(&mut client_ctx, b.id);
+            pair.client_ctx = client_ctx;
+            pair.run(20);
+        }
         let inventory = pair.client.session.local_inventory();
-        assert_eq!((inventory.meat, inventory.wool, inventory.pelt), (2, 3, 0), "Beute im Inventar");
+        assert_eq!((inventory.meat, inventory.wool, inventory.pelt), (2, 3, 0), "Beute nicht aufgehoben");
+        assert!(pair.client.session.world().beute.is_empty(), "Beute liegt beim Client noch");
     }
 
     #[test]
@@ -699,6 +736,48 @@ mod tests {
             session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
         }
         assert!(!session.world().treffer.is_empty(), "Lager greift nicht an");
+    }
+
+    #[test]
+    fn beute_liegt_am_boden_und_wird_mit_e_aufgehoben() {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Gimli".into(), class: CharacterClass::Zwerg };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let local = session.local_player().unwrap();
+        // Ein ganzes Lager besiegen: nichts landet direkt im Inventar, alles liegt am Boden
+        let gold_vorher = session.local_inventory().gold;
+        let ids: Vec<u16> = session.world().wildnis.states().iter().map(|s| s.id).take(5).collect();
+        for id in ids {
+            let treffer = crate::wildnis::Treffer { schaden: 1e6, art: crate::tuerme::DamageKind::Arcane, ..Default::default() };
+            session.world_mut().wildnis.damage(id, treffer, "gimli", Some(local));
+        }
+        ctx.time.tick += 1;
+        session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
+        assert_eq!(session.local_inventory().gold, gold_vorher, "Beute direkt im Inventar");
+        let gold: Vec<crate::beute::Bodenbeute> = session
+            .world()
+            .beute
+            .values()
+            .filter(|b| matches!(b.fund, crate::beute::Fund::Gegenstand(crate::protocol::Item::Gold, _)))
+            .copied()
+            .collect();
+        assert!(gold.len() >= 5, "zu wenig Gold am Boden: {}", gold.len());
+        // Aus der Ferne geht nichts, daneben schon
+        session.aufheben(&mut ctx, gold[0].id);
+        assert!(session.world().beute.contains_key(&gold[0].id), "aus der Ferne aufgehoben");
+        let character = session.world().players[&local].character;
+        ctx.physics.teleport_character(character, gold[0].ort + vec3(0.5, 1.0, 0.0));
+        session.aufheben(&mut ctx, gold[0].id);
+        assert!(!session.world().beute.contains_key(&gold[0].id), "Beute liegt noch");
+        assert!(session.local_inventory().gold > gold_vorher, "Gold nicht im Inventar");
+        // Waffen: nur eigene und erbeutete lassen sich ausrüsten
+        session.ausruesten(9);
+        assert_eq!(session.local_inventory().waffe, 0, "Waffe ausgerüstet, die man nicht hat");
+        session.world_mut().inventories.get_mut(&local).unwrap().waffen |= (1 << 9) | (1 << 5);
+        session.ausruesten(5);
+        assert_eq!(session.local_inventory().waffe, 0, "Magierstab in Zwergenhand");
+        session.ausruesten(9);
+        assert_eq!(session.local_inventory().waffe, 9, "Donnerhammer nicht ausgerüstet");
     }
 
     #[test]

@@ -124,6 +124,8 @@ pub struct Playground {
     /// Nur zum Testen: dabei regelmäßig die Fähigkeit N (0–2) aufs Lager einsetzen (`--demo-angriff N`)
     demo_angriff: Option<u8>,
     demo_brunnen: bool,
+    /// Nur zum Testen: Beute vor die Figur legen (`--demo-beute`)
+    demo_beute: bool,
     /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
     demo_towers: bool,
     /// Nur zum Testen: Wellen gleich bei dieser Nummer beginnen lassen (`--demo-welle N`)
@@ -205,6 +207,7 @@ impl Playground {
             demo_lager: None,
             demo_angriff: None,
             demo_brunnen: false,
+            demo_beute: false,
             demo_towers: false,
             demo_wave: None,
             demo_yaw_offset: -0.75,
@@ -342,12 +345,22 @@ impl Playground {
         }
         let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
         let Some((target, _)) = self.spell_aim(ctx) else { return };
-        self.bereit_ab[fach] = ctx.time.elapsed + art.abklingen() as f32 * Physics::FIXED_DT + 0.05;
+        let waffe = self.session.as_ref().map_or(0, |s| s.local_inventory().waffe);
+        let (_, _, f_abklingen) = crate::waffen::faktoren(waffe, self.klasse(), art);
+        let abklingen = (art.abklingen() as f32 * f_abklingen).round();
+        self.bereit_ab[fach] = ctx.time.elapsed + abklingen * Physics::FIXED_DT + 0.05;
         self.last_cast = ctx.time.elapsed;
         self.cast_requested = Some(target);
         if let Some(session) = &mut self.session {
             session.preview_cast(art);
         }
+    }
+
+    /// Die Beute, die E hier aufheben würde.
+    fn beute_hier(&self, ctx: &Context) -> Option<crate::beute::Bodenbeute> {
+        let session = self.session.as_ref()?;
+        let p = session.world().player_position(ctx, session.local_player()?)?;
+        session.world().beute_bei(p - Vec3::Y * 0.9).copied()
     }
 
     /// Was E hier mit Runen tun würde: am Runenbrunnen schmieden oder in einen Schutzstein einsetzen.
@@ -824,6 +837,15 @@ impl Playground {
                     self.toggle_map(ctx);
                     return;
                 }
+                // E: Beute vom Boden aufheben (hat Vorrang)
+                if ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none() && self.building_window.is_none() {
+                    if let Some(id) = self.beute_hier(ctx).map(|b| b.id) {
+                        if let Some(session) = &mut self.session {
+                            session.aufheben(ctx, id);
+                        }
+                        return;
+                    }
+                }
                 // E am Runenbrunnen oder an einem Schutzstein: Runenstein schmieden bzw. einsetzen
                 if ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none() && self.building_window.is_none() && self.aim_building.is_none() {
                     if let Some(befehl) = self.runen_hier(ctx) {
@@ -1047,8 +1069,14 @@ impl Playground {
         let Some(session) = &self.session else { return };
         let inventory = session.local_inventory();
         let name = session.local_player().and_then(|id| session.world().players.get(&id)).map(|a| a.name.clone()).unwrap_or_default();
-        if self.inventory_ui.window(egui_ctx, &inventory, &name) {
+        let class = self.klasse();
+        if self.inventory_ui.window(egui_ctx, &inventory, &name, class) {
             self.toggle_inventory(ctx);
+        }
+        if let Some(waffe) = self.inventory_ui.ausruesten.take() {
+            if let Some(session) = &mut self.session {
+                session.ausruesten(waffe);
+            }
         }
     }
 
@@ -1521,6 +1549,19 @@ impl Playground {
                 painter.text(mitte + egui::vec2(0.0, 36.0), Align2::CENTER_CENTER, zeile, egui::FontId::proportional(17.0), Color32::from_white_alpha(220));
             }
         }
+        // Beute in Reichweite: E zum Aufheben
+        if let Some(b) = self.beute_hier(ctx) {
+            let mitte = egui_ctx.content_rect().center() + egui::vec2(0.0, 92.0);
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            let f = b.fund.farbe();
+            let farbe = Color32::from_rgb((f[0] * 255.0) as u8, (f[1] * 255.0) as u8, (f[2] * 255.0) as u8);
+            let zeile = match b.fund {
+                crate::beute::Fund::Waffe(id) => crate::waffen::waffe(id).map_or(String::new(), |w| format!("E: {} aufheben ({}) · {}", w.name, w.seltenheit.label(), crate::waffen::werte_zeile(w))),
+                _ => format!("E: {} aufheben", b.fund.name()),
+            };
+            painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), Color32::BLACK);
+            painter.text(mitte, Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), farbe);
+        }
         // Am Runenbrunnen oder an einem Schutzstein: was E hier tut
         if self.build_mode.is_none() && self.aim_building.is_none() {
             if let Some(befehl) = self.runen_hier(ctx) {
@@ -1579,6 +1620,15 @@ impl Playground {
             if let Some(entity) = ctx.scene.try_get(avatar.entity) {
                 let head = entity.transform.position + Vec3::Y * 1.25;
                 ui::name_tag(ctx, egui_ctx, head, &avatar.name);
+                // Lebensbalken unter dem Namen
+                let abstand = ctx.camera.position.distance(head);
+                if abstand < 40.0 {
+                    if let Some(screen) = ctx.world_to_screen(head) {
+                        let painter = egui_ctx.layer_painter(egui::LayerId::background());
+                        let alpha = (1.0 - (abstand - 15.0) / 25.0).clamp(0.0, 1.0);
+                        ui::health_bar(&painter, egui::pos2(screen.x, screen.y + 7.0), 64.0, avatar.leben / avatar.max_leben(), alpha);
+                    }
+                }
                 if let Some(text) = self.chat.bubble(id, ctx.time.elapsed) {
                     crate::chat::speech_bubble(ctx, egui_ctx, head + Vec3::Y * 0.45, text);
                 }
@@ -1588,6 +1638,34 @@ impl Playground {
         // Bei offener Karte nur die Karte (keine Leisten darüber)
         if self.screen != Screen::Playing || self.map_open {
             return;
+        }
+        // Eigener Lebensbalken über der Figur, sobald sie verletzt ist
+        if let Some(avatar) = local.and_then(|id| session.world().players.get(&id)) {
+            if avatar.leben < avatar.max_leben() - 0.5 {
+                if let Some(entity) = ctx.scene.try_get(avatar.entity) {
+                    if let Some(screen) = ctx.world_to_screen(entity.transform.position + Vec3::Y * 1.3) {
+                        let painter = egui_ctx.layer_painter(egui::LayerId::background());
+                        ui::health_bar(&painter, egui::pos2(screen.x, screen.y), 64.0, avatar.leben / avatar.max_leben(), 1.0);
+                    }
+                }
+            }
+        }
+        // Beute am Boden: Name in der Farbe der Seltenheit (aus der Nähe)
+        for b in session.world().beute.values() {
+            let oben = b.ort + Vec3::Y * 0.9;
+            let abstand = ctx.camera.position.distance(oben);
+            if abstand > 18.0 {
+                continue;
+            }
+            let Some(screen) = ctx.world_to_screen(oben) else { continue };
+            let f = b.fund.farbe();
+            let farbe = Color32::from_rgb((f[0] * 255.0) as u8, (f[1] * 255.0) as u8, (f[2] * 255.0) as u8);
+            let alpha = (1.0 - (abstand - 10.0) / 8.0).clamp(0.0, 1.0);
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            let pos = egui::pos2(screen.x, screen.y);
+            let text = b.fund.name();
+            painter.text(pos + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, &text, egui::FontId::proportional(15.0), Color32::from_black_alpha((220.0 * alpha) as u8));
+            painter.text(pos, Align2::CENTER_BOTTOM, &text, egui::FontId::proportional(15.0), farbe.gamma_multiply(alpha));
         }
         // Bei offenen Fenstern keine Leisten darüber (sie würden Titel und Text verdecken)
         let fenster = self.inventory_open || self.build_menu_open || self.admin_open || self.building_window.is_some() || self.td_open;
@@ -1775,6 +1853,7 @@ impl Game for Playground {
             self.demo_lager = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
         }
         self.demo_brunnen = args.iter().any(|a| a == "--demo-brunnen");
+        self.demo_beute = args.iter().any(|a| a == "--demo-beute");
         if let Some(i) = args.iter().position(|a| a == "--demo-angriff") {
             self.demo_angriff = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
         }
@@ -2166,6 +2245,26 @@ impl Game for Playground {
                 if let Some(session) = &mut self.session {
                     session.preview_cast(art);
                 }
+            }
+        }
+        if let (true, Some(session)) = (self.demo_beute, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_beute = false;
+                use crate::beute::{Bodenbeute, Fund};
+                let world = session.world_mut();
+                let class = world.players[&local].class;
+                let start = world.spawn;
+                let mut funde: Vec<Fund> = crate::waffen::WAFFEN.iter().filter(|w| w.klasse == class).map(|w| Fund::Waffe(w.id)).collect();
+                funde.extend([Fund::Gegenstand(crate::protocol::Item::Gold, 16), Fund::Gegenstand(crate::protocol::Item::Runenfragment, 1), Fund::Gegenstand(crate::protocol::Item::Meat, 2)]);
+                let vorne = vec3(0.0, 0.0, -1.0);
+                for (i, fund) in funde.into_iter().enumerate() {
+                    let quer = (i as f32 - 3.5) * 1.3;
+                    let p = start + vorne * (4.0 + (i % 2) as f32 * 1.5) + vec3(quer, 0.0, 0.0);
+                    let ort = vec3(p.x, world.terrain.height_at(p.x, p.z), p.z);
+                    world.beute.insert(9000 + i as u32, Bodenbeute { id: 9000 + i as u32, ort, fund });
+                }
+                self.demo_crystal = Some(Some(start + vorne * 5.0));
+                self.demo_yaw_offset = 0.0;
             }
         }
         if let (true, Some(session)) = (self.demo_brunnen, &mut self.session) {

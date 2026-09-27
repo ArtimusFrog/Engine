@@ -1,0 +1,5 @@
+"""stab_frost am Boden (siehe art/lib/beute.py)."""
+
+from beute import modell
+
+modell("stab_frost")

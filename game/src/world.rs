@@ -47,6 +47,8 @@ pub struct Avatar {
     /// Lebenspunkte (beim Client aus den Schnappschüssen) und wann zuletzt getroffen (Takt)
     pub leben: f32,
     pub getroffen: u64,
+    /// Waffe in der Hand (0 = Startwaffe)
+    pub waffe: u8,
 }
 
 impl Avatar {
@@ -233,6 +235,9 @@ pub struct World {
     /// Treffer an Spielern und Gefallene seit dem letzten Bild (die Oberfläche holt sie ab)
     pub treffer: Vec<(PlayerId, u16)>,
     pub gefallen: Vec<(PlayerId, String)>,
+    /// Beute am Boden (vom Server gemeldet) und ihre Darstellung
+    pub beute: BTreeMap<u32, crate::beute::Bodenbeute>,
+    beute_ansicht: crate::beute::BeuteAnsicht,
 }
 
 impl World {
@@ -310,6 +315,8 @@ impl World {
             runen_teile: Vec::new(),
             treffer: Vec::new(),
             gefallen: Vec::new(),
+            beute: BTreeMap::new(),
+            beute_ansicht: Default::default(),
         };
         // Lager der Wildnis: Feuer, Zelte, Kisten (mit Kollision) und ihr Name auf der Karte
         if !ctx.is_headless() {
@@ -574,6 +581,7 @@ impl World {
                 noclip: false,
                 leben: class.max_leben() as f32,
                 getroffen: 0,
+                waffe: 0,
             },
         );
         self.inventories.entry(id).or_default();
@@ -965,6 +973,14 @@ impl World {
                 Form::Geschoss { .. } => {}
             }
         }
+    }
+
+    /// Die nächste Beute in Reichweite zum Aufheben (für E und den Hinweis).
+    pub fn beute_bei(&self, ort: Vec3) -> Option<&crate::beute::Bodenbeute> {
+        self.beute
+            .values()
+            .filter(|b| vec2(b.ort.x, b.ort.z).distance(vec2(ort.x, ort.z)) <= crate::beute::AUFHEBEN_WEITE && (b.ort.y - ort.y).abs() < 3.0)
+            .min_by(|a, b| a.ort.distance(ort).total_cmp(&b.ort.distance(ort)))
     }
 
     /// Ein Spieler wurde getroffen (für roten Rand und Klang).
@@ -1491,6 +1507,9 @@ impl World {
             self.strikes.clear();
         }
         self.update_bolts(ctx);
+        if !ctx.is_headless() {
+            self.beute_ansicht.update(ctx, &self.beute);
+        }
         messen("tiere", || {
             for animal in &mut self.animals {
                 animal.update_visual(ctx);
@@ -1518,6 +1537,7 @@ impl World {
         for (id, avatar) in &self.players {
             if let Some(puppet) = self.puppets.get_mut(id) {
                 puppet.set_tool(avatar.tool);
+                puppet.set_waffe(crate::waffen::ausgeruestet(avatar.waffe, avatar.class).map(|w| w.datei));
             }
         }
         crate::messung::eintragen("figuren", _figuren);

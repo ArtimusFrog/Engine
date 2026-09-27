@@ -591,8 +591,24 @@ GEGENSTAENDE = {"gold": gold, "holz": holz, "stein": stein, "erz": erz, "fleisch
                 "faehigkeit_arkangeschoss": faehigkeit_arkangeschoss, "faehigkeit_feuerball": faehigkeit_feuerball,
                 "faehigkeit_frostnova": faehigkeit_frostnova, "faehigkeit_hammerschlag": faehigkeit_hammerschlag,
                 "faehigkeit_wurfhammer": faehigkeit_wurfhammer, "faehigkeit_erdbeben": faehigkeit_erdbeben}
+# Waffen (waffen.py) direkt aus den Figurenmodellen: Stäbe mit ihrer Krone, Hämmer schräg
+def _stab_symbol(art):
+    return lambda: _aus_magier(art, Matrix.Rotation(math.radians(45), 4, "Y"), nur_oben=0.8)
+
+
+def _hammer_symbol(knoten):
+    s = 0.7071
+    return lambda: _aus_magier(knoten, Matrix(((-s, 0, -s), (0, 1, 0), (s, 0, -s))).to_4x4() @ Matrix.Rotation(math.radians(90), 4, "Z"), figur="zwerg")
+
+
+for _art in ("stab_eiche", "stab_glut", "stab_frost", "stab_sturm", "stab_sternen"):
+    GEGENSTAENDE[_art] = _stab_symbol(_art)
+for _art in ("hammer_eisen", "hammer_runen", "hammer_streit", "hammer_donner", "hammer_drachen"):
+    GEGENSTAENDE[_art] = _hammer_symbol(_art)
+GEGENSTAENDE["schmiedehammer"] = _hammer_symbol("Hammer")
+
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
-BLICK = {"spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
+BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_")) or n == "schmiedehammer"}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
          "faehigkeit_arkangeschoss": (0.0, -1.0, 0.2), "faehigkeit_feuerball": (0.0, -1.0, 0.2), "faehigkeit_hammerschlag": (0.0, -1.0, 0.2),
          "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
 
