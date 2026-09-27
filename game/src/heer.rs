@@ -46,10 +46,15 @@ pub enum EnemyKind {
     Spinnling,
     Daemon,
     Drache,
+    // Bewohner der Lager in der Wildnis (nicht in den Wellen der Festung)
+    Bandit,
+    Banditenschuetze,
+    Pluenderer,
+    Waldspinne,
 }
 
 impl EnemyKind {
-    pub const ALL: [EnemyKind; 17] = [
+    pub const ALL: [EnemyKind; 21] = [
         EnemyKind::Knight,
         EnemyKind::Archer,
         EnemyKind::Pikeman,
@@ -67,6 +72,10 @@ impl EnemyKind {
         EnemyKind::Spinnling,
         EnemyKind::Daemon,
         EnemyKind::Drache,
+        EnemyKind::Bandit,
+        EnemyKind::Banditenschuetze,
+        EnemyKind::Pluenderer,
+        EnemyKind::Waldspinne,
     ];
 
     /// Ein großer Boss mit eigenem Modell (nicht nur ein vergrößerter Anführer)?
@@ -93,6 +102,10 @@ impl EnemyKind {
             EnemyKind::Spinnling => "Spinnling",
             EnemyKind::Daemon => "Dämonenfürst",
             EnemyKind::Drache => "Schattendrache",
+            EnemyKind::Bandit => "Bandit",
+            EnemyKind::Banditenschuetze => "Banditenschütze",
+            EnemyKind::Pluenderer => "Plünderer",
+            EnemyKind::Waldspinne => "Waldspinne",
         }
     }
 
@@ -116,6 +129,10 @@ impl EnemyKind {
             EnemyKind::Spinnling => "Spinnling",
             EnemyKind::Daemon => "Dämon",
             EnemyKind::Drache => "Drache",
+            EnemyKind::Bandit => "Bandit",
+            EnemyKind::Banditenschuetze => "Schütze",
+            EnemyKind::Pluenderer => "Plünderer",
+            EnemyKind::Waldspinne => "Spinne",
         }
     }
 
@@ -156,6 +173,10 @@ impl EnemyKind {
             EnemyKind::Spinnenkoenigin | EnemyKind::Spinnling => "spinnenkoenigin",
             EnemyKind::Daemon => "daemonenfuerst",
             EnemyKind::Drache => "schattendrache",
+            EnemyKind::Bandit => "bandit",
+            EnemyKind::Banditenschuetze => "banditenschuetze",
+            EnemyKind::Pluenderer => "pluenderer",
+            EnemyKind::Waldspinne => "waldspinne",
         }
     }
 
@@ -187,6 +208,10 @@ impl EnemyKind {
             EnemyKind::Spinnling => 35.0,
             EnemyKind::Daemon => 3200.0,
             EnemyKind::Drache => 5200.0,
+            EnemyKind::Bandit => 60.0,
+            EnemyKind::Banditenschuetze => 42.0,
+            EnemyKind::Pluenderer => 50.0,
+            EnemyKind::Waldspinne => 28.0,
         }
     }
 
@@ -206,6 +231,8 @@ impl EnemyKind {
             EnemyKind::Spinnenkoenigin => 0.35,
             EnemyKind::Daemon => 0.45,
             EnemyKind::Drache => 0.55,
+            EnemyKind::Banditenschuetze | EnemyKind::Pluenderer | EnemyKind::Waldspinne => 0.0,
+            EnemyKind::Bandit => 0.1,
         }
     }
 
@@ -258,6 +285,8 @@ impl EnemyKind {
             EnemyKind::Troll | EnemyKind::Daemon => 2.1,
             EnemyKind::Lich | EnemyKind::Spinnenkoenigin => 2.2,
             EnemyKind::Drache => 1.9,
+            EnemyKind::Pluenderer => 2.9,
+            EnemyKind::Waldspinne => 3.6,
             _ => 2.6,
         }
     }
@@ -279,6 +308,9 @@ impl EnemyKind {
             EnemyKind::Spinnling => (1.6, 1.2),
             EnemyKind::Daemon => (4.5, 2.2),
             EnemyKind::Drache => (6.0, 2.8),
+            EnemyKind::Pluenderer => (2.2, 1.5),
+            EnemyKind::Banditenschuetze => (15.0, 2.6),
+            EnemyKind::Waldspinne => (1.8, 1.3),
             _ => (2.4, 1.8),
         }
     }
@@ -303,6 +335,9 @@ impl EnemyKind {
             EnemyKind::Spinnling => 5.0,
             EnemyKind::Daemon => 60.0,
             EnemyKind::Drache => 80.0,
+            EnemyKind::Banditenschuetze | EnemyKind::Waldspinne => 4.0,
+            EnemyKind::Pluenderer => 5.0,
+            EnemyKind::Bandit => 6.0,
         }
     }
 
@@ -319,6 +354,7 @@ impl EnemyKind {
             EnemyKind::Spinnling => (1.3, 1.8),
             EnemyKind::Daemon => (2.5, 1.7),
             EnemyKind::Drache => (2.4, 2.8),
+            EnemyKind::Waldspinne => (0.35, 0.45),
             _ => (1.0, 0.6),
         }
     }

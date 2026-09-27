@@ -118,6 +118,7 @@ pub fn kopfgeld(kind: EnemyKind, boss: bool, welle: u32, schwierigkeit: Schwieri
         EnemyKind::Spinnling => 1.0,
         EnemyKind::Troll | EnemyKind::Lich | EnemyKind::Spinnenkoenigin | EnemyKind::Daemon => 150.0,
         EnemyKind::Drache => 300.0,
+        _ => 4.0,
     };
     let grund = if boss && !kind.ist_boss_art() { 60.0 } else { grund };
     (grund * (1.0 + 0.05 * welle.saturating_sub(1) as f32) * schwierigkeit.gold()).round() as u32

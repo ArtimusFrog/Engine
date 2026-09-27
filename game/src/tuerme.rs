@@ -586,6 +586,7 @@ pub fn beute(kind: crate::heer::EnemyKind) -> &'static [(Item, u32)] {
         EnemyKind::Spinnling => &[],
         EnemyKind::Troll | EnemyKind::Lich | EnemyKind::Spinnenkoenigin | EnemyKind::Daemon => &[(Item::Stone, 10), (Item::Ore, 10)],
         EnemyKind::Drache => &[(Item::Stone, 20), (Item::Ore, 25)],
+        _ => &[],
     }
 }
 

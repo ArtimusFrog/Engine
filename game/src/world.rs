@@ -1709,7 +1709,7 @@ fn strike_visual(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, kind: crate::h
     use crate::heer::EnemyKind;
     let target = target + Vec3::Y * 0.2;
     let (color, glow, streak) = match kind {
-        EnemyKind::Archer => (vec3(0.45, 0.32, 0.2), 0.0, true),
+        EnemyKind::Archer | EnemyKind::Banditenschuetze => (vec3(0.45, 0.32, 0.2), 0.0, true),
         EnemyKind::Warlock => (vec3(0.8, 0.35, 1.0), 4.0, true),
         _ => (vec3(0.9, 0.85, 0.8), 1.5, false),
     };

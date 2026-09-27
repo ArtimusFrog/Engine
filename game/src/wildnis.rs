@@ -30,30 +30,41 @@ pub struct LagerArt {
     pub anfuehrer: EnemyKind,
 }
 
+/// Eigene Bewohner der Wildnis – deutlich schwächer als die Truppen der Festung.
 pub const ARTEN: [LagerArt; 5] = [
-    LagerArt { name: "Wolfsrudel", gefahr: 1, einheiten: &[EnemyKind::Wolf, EnemyKind::Wolf, EnemyKind::Wolf], anfuehrer: EnemyKind::Wolf },
-    LagerArt { name: "Knochenlager", gefahr: 1, einheiten: &[EnemyKind::Skeleton, EnemyKind::Skeleton, EnemyKind::Archer], anfuehrer: EnemyKind::Skeleton },
-    LagerArt { name: "Späherlager", gefahr: 2, einheiten: &[EnemyKind::Archer, EnemyKind::Pikeman, EnemyKind::Assassin, EnemyKind::Archer], anfuehrer: EnemyKind::Knight },
     LagerArt {
-        name: "Hexenzirkel",
+        name: "Spinnennest",
+        gefahr: 1,
+        einheiten: &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne],
+        anfuehrer: EnemyKind::Waldspinne,
+    },
+    LagerArt { name: "Plündererlager", gefahr: 1, einheiten: &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Pluenderer], anfuehrer: EnemyKind::Pluenderer },
+    LagerArt {
+        name: "Banditenlager",
         gefahr: 2,
-        einheiten: &[EnemyKind::Warlock, EnemyKind::Skeleton, EnemyKind::Ghost, EnemyKind::Skeleton],
-        anfuehrer: EnemyKind::Warlock,
+        einheiten: &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Bandit, EnemyKind::Banditenschuetze],
+        anfuehrer: EnemyKind::Bandit,
     },
     LagerArt {
-        name: "Kriegslager",
+        name: "Plündererbande",
+        gefahr: 2,
+        einheiten: &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer],
+        anfuehrer: EnemyKind::Bandit,
+    },
+    LagerArt {
+        name: "Banditenfestung",
         gefahr: 3,
-        einheiten: &[EnemyKind::Knight, EnemyKind::Pikeman, EnemyKind::Archer, EnemyKind::Warlock, EnemyKind::Knight],
-        anfuehrer: EnemyKind::Golem,
+        einheiten: &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer, EnemyKind::Bandit],
+        anfuehrer: EnemyKind::Bandit,
     },
 ];
 
 /// Leben, Schlagkraft und Beute je Gefahrenstufe.
 fn staerke(gefahr: u8) -> (f32, f32) {
     match gefahr {
-        1 => (1.0, 0.45),
-        2 => (1.7, 0.65),
-        _ => (2.6, 0.85),
+        1 => (1.0, 1.0),
+        2 => (1.25, 1.1),
+        _ => (1.6, 1.25),
     }
 }
 
@@ -133,7 +144,7 @@ struct Wilder {
 
 impl Wilder {
     fn groesse(&self) -> f32 {
-        self.kind.groesse() * if self.anfuehrer && !matches!(self.kind, EnemyKind::Golem) { 1.35 } else { 1.0 }
+        self.kind.groesse() * if self.anfuehrer { 1.35 } else { 1.0 }
     }
 
     fn center(&self) -> Vec3 {
@@ -270,7 +281,7 @@ impl Wildnis {
             };
             let id = self.next_id;
             self.next_id = if self.next_id == u16::MAX { WILD_ID } else { self.next_id + 1 };
-            let max_health = kind.max_health() * leben * if anfuehrer { 2.5 } else { 1.0 };
+            let max_health = kind.max_health() * leben * if anfuehrer { 2.2 } else { 1.0 };
             neu.push(Wilder {
                 id,
                 kind,
@@ -281,7 +292,7 @@ impl Wildnis {
                 facing: self.rng.range(0.0, std::f32::consts::TAU),
                 health: max_health,
                 max_health,
-                schlag: kind.schlag() * schlag * if anfuehrer { 1.4 } else { 1.0 },
+                schlag: kind.schlag() * schlag * if anfuehrer { 1.3 } else { 1.0 },
                 cooldown: self.rng.range(0.5, 1.5),
                 ziel: None,
                 stun: 0.0,
@@ -571,7 +582,7 @@ impl Wildnis {
                         EnemyAction::Idle
                     },
                     health: ((w.health / w.max_health).clamp(0.0, 1.0) * 100.0).ceil() as u8,
-                    boss: w.anfuehrer && !matches!(w.kind, EnemyKind::Golem),
+                    boss: w.anfuehrer,
                     lp: w.health.max(0.0).round() as u32,
                     flags,
                 }

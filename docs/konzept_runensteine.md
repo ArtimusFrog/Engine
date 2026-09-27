@@ -19,13 +19,16 @@ Code: `wildnis.rs` (Lager und Bewohner), `faehigkeiten.rs` (Fähigkeiten der Fig
 
 | Gefahr | Lager | Bewohner | Anführer |
 |---|---|---|---|
-| 1 (außen) | Wolfsrudel | 3 Schattenwölfe | großer Wolf |
-| 1 | Knochenlager | 2 Skelette, Bogenschütze | großes Skelett |
-| 2 | Späherlager | 2 Bogenschützen, Pikenier, Meuchler | Dunkler Ritter |
-| 2 | Hexenzirkel | Dunkelmagier, 2 Skelette, Gespenst | Dunkelmagier |
-| 3 (innen) | Kriegslager | 2 Ritter, Pikenier, Bogenschütze, Dunkelmagier | Steingolem |
+| 1 (außen) | Spinnennest | 4 kleine Waldspinnen | Spinnenmutter (größer) |
+| 1 | Plündererlager | 3 Plünderer mit Beil | Plündererhauptmann |
+| 2 | Banditenlager | 2 Banditen, 2 Banditenschützen | Bandenführer |
+| 2 | Plündererbande | 3 Plünderer, Banditenschütze | Bandit |
+| 3 (innen) | Banditenfestung | 2 Banditen, Schütze, Plünderer | Banditenhauptmann |
 
-- Leben ×1 / ×1,7 / ×2,6 je Gefahr, Anführer ×2,5. Schlagkraft 45 / 65 / 85 % (Anführer ×1,4).
+Eigene Gegner, bewusst schwächer als die Truppen der Festung (Modelle: art/lib/lagergegner.py):
+Waldspinne 28 Leben, Banditenschütze 42, Plünderer 50, Bandit 60 (zum Vergleich: Dunkler Ritter 160).
+
+- Leben ×1 / ×1,25 / ×1,6 je Gefahr, Anführer ×2,2. Schlagkraft ×1 / ×1,1 / ×1,25 (Anführer ×1,3).
 - **Verhalten:** Wer näher als 15–21 m kommt (oder aus der Ferne auf sie schießt), wird bemerkt –
   dann greift das **ganze Lager** an. Verfolgt wird bis zur Leine (38–50 m vom Lager), danach kehren
   die Bewohner um und heilen sich. Fernkämpfer schießen aus bis zu 16 m.
@@ -42,7 +45,7 @@ Code: `wildnis.rs` (Lager und Bewohner), `faehigkeiten.rs` (Fähigkeiten der Fig
 | 2 | 14 % | 60 % |
 | 3 | 20 % | 85 % |
 
-  Ein ganzes Lager bringt im Mittel etwa 0,6 (Wolfsrudel) bis 1,8 (Kriegslager) Fragmente – für
+  Ein ganzes Lager bringt im Mittel etwa 0,6 (Spinnennest) bis 2 (Banditenfestung) Fragmente – für
   einen Runenstein räumt man also drei bis sechs Lager. Wer sich an die gefährlichen Lager traut,
   ist schneller.
 
