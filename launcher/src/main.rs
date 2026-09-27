@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Stroke, Vec2};
-use launcher::config::{game_dir, install_dir, update_location, GAME_NAME, PUBLIC_KEY, WEBSITE};
+use launcher::config::{game_dir, install_dir, update_location, GAME_NAME, PUBLIC_KEY};
 use launcher::{apply_update, fetch_manifest, replace_file, sha256_file, sha256_hex, source_for, Manifest, Progress};
 
 const BACKGROUND: Color32 = Color32::from_rgb(12, 14, 19);
@@ -293,9 +293,6 @@ impl LauncherApp {
             };
             ui.label(RichText::new(text).size(13.0).color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if link(ui, "Webseite").clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(WEBSITE));
-                }
                 if link(ui, "Spielordner").clicked() {
                     install::open_folder(&install_dir());
                 }
