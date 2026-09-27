@@ -178,7 +178,7 @@ impl Puppet {
                 ctx.assets.cube()
             }
         };
-        let mut figure = Entity::new("Figur", mesh).with_parent(root).with_transform(
+        let mut figure = Entity::new("Figur", mesh).with_parent(root).with_material(Material::Figur { rim: 1.0 }).with_transform(
             Transform::from_position(Vec3::Y * FEET_OFFSET)
                 // Blender-Modelle schauen nach +Z, unsere Spielfiguren nach -Z.
                 .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),

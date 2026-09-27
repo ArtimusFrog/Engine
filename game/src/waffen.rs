@@ -107,7 +107,7 @@ pub fn waffe(id: u8) -> Option<&'static Waffe> {
 pub fn startwaffe(class: CharacterClass) -> &'static str {
     match class {
         CharacterClass::Zwerg => "Schmiedehammer",
-        CharacterClass::Bogenschuetze => "Jagdbogen",
+        CharacterClass::Bogenschuetze => "Mondbogen",
         _ => "Wanderstab",
     }
 }

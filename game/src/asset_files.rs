@@ -124,7 +124,8 @@ fn rules_for(path: &Path) -> Option<Rules> {
     match folder {
         "natur" => Some(Rules { max_triangles: 5000, required_clips: &[], below_ground: 0.05 }),
         "tiere" => Some(Rules { max_triangles: 3000, required_clips: &["Idle", "Laufen", "Rennen"], below_ground: 0.05 }),
-        "figuren" => Some(Rules { max_triangles: 50000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"], below_ground: 0.05 }),
+        // Spielfiguren mitsamt allen Anbauteilen (je sechs Waffen, Werkzeuge) – sichtbar ist immer nur eine Waffe
+        "figuren" => Some(Rules { max_triangles: 70000, required_clips: &["Idle", "Laufen", "Rennen", "Springen", "Hieb", "Werfen", "Zaubern", "Abbauen", "Hacken"], below_ground: 0.05 }),
         "gebaeude" | "gegenstaende" => Some(Rules { max_triangles: 4000, required_clips: &[], below_ground: 0.05 }),
         // Figuren, die nicht gespielt werden (Wachen): stehen und gehen
         "npc" => Some(Rules { max_triangles: 30_000, required_clips: &["Idle", "Laufen"], below_ground: 0.05 }),

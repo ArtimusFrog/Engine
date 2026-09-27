@@ -65,7 +65,7 @@ class Figur:
         bm.free()
         obj = bpy.data.objects.new(name, mesh)
         bpy.context.scene.collection.objects.link(obj)
-        self._faerben(obj, farbe_von, glatt)
+        self._faerben(obj, farbe_von, glatt, schwankung=0.012 if glatt else 0.045)
         self._gewichten(obj, gewichte_von)
         self.teile.append(obj)
         return obj
@@ -135,7 +135,7 @@ class Figur:
         reihenfolge = [lage.get(f, (0, 0)) for f in bm.faces]
         return self._objekt(bm, name, lambda poly: farbe_von(*reihenfolge[poly.index], poly), gewichte_von, glatt)
 
-    def straehne(self, name, punkte, dicke_start, dicke_ende, c, gewichte_von, segmente=6, drall=0.0, flach=1.0, teilung=2):
+    def straehne(self, name, punkte, dicke_start, dicke_ende, c, gewichte_von, segmente=6, drall=0.0, flach=1.0, teilung=2, glatt=False):
         """Spitz zulaufende Strähne (Haar, Bart, Braue, Kralle) entlang einer Punktfolge."""
         ringe = []
         normale = None
@@ -151,7 +151,7 @@ class Figur:
             r = dicke_start + (dicke_ende - dicke_start) * s
             ringe.append((p, a1, a2, r, r * flach))
         farbe_von = c if callable(c) else (lambda i, k, poly: c)
-        return self.loft(name, ringe, segmente, farbe_von, gewichte_von, oben_zu=True, unten_zu=True, teilung=teilung)
+        return self.loft(name, ringe, segmente, farbe_von, gewichte_von, oben_zu=True, unten_zu=True, teilung=teilung, glatt=glatt)
 
     def metaball(self, name, formen, aufloesung, ziel, farbe_von, gewichte_von, glatt=False):
         """Weiche Form aus Ellipsoiden (Mitte, Halbachsen[, aushöhlen]), vereinfacht auf `ziel` Dreiecke."""
@@ -310,6 +310,48 @@ STAB_X, STAB_Y = -0.37, -0.075
 AUGE = Vector((0.038, -0.094, 1.752))
 
 
+def _glocke(f, name, ringe, theta, farbe_von, gewicht, innen=False, seg=40, welle=0.0):
+    """Offene Glocke (Umhang): Ringe (Mitte, rx, ry) von oben nach unten, nur zwischen den Winkeln
+    `theta` (0 = vorne) – vorne bleibt sie offen. `welle` legt unten weiche Falten."""
+    bm = bmesh.new()
+    reihen = []
+    for j, (mitte, rx, ry) in enumerate(ringe):
+        tief = j / (len(ringe) - 1)
+        reihe = []
+        for i in range(seg + 1):
+            th = math.radians(theta[0] + (theta[1] - theta[0]) * i / seg)
+            fak = 1.0 + welle * tief * math.sin(th * 7)
+            reihe.append(bm.verts.new(mitte + Vector((math.sin(th) * rx * fak, -math.cos(th) * ry * fak, 0))))
+        reihen.append(reihe)
+    for j in range(len(reihen) - 1):
+        for i in range(seg):
+            a, b, c, d = reihen[j][i], reihen[j][i + 1], reihen[j + 1][i + 1], reihen[j + 1][i]
+            bm.faces.new((a, d, c, b) if not innen else (a, b, c, d))
+    obj = f._objekt(bm, name, farbe_von, gewicht, glatt=True)
+    achse = ringe[0][0]
+    for poly in obj.data.polygons:
+        p = poly.center
+        nach_aussen = Vector((p.x - achse.x, p.y - achse.y, 0)).dot(poly.normal) > 0
+        if nach_aussen == innen:
+            poly.flip()
+    return obj
+
+
+def _platte(f, name, mitte, laenge, breite, dicke, richtung, normale, farbe_von, gewicht, spitz=0.8, wolbung=0.3):
+    """Geschwungene Panzer- bzw. Federplatte: flach, zur Spitze hin schmal, leicht gewölbt."""
+    richtung = richtung.normalized()
+    normale = (normale - richtung * normale.dot(richtung)).normalized()
+    quer = richtung.cross(normale).normalized()
+    ringe = []
+    n = 7
+    for i in range(n):
+        t = i / (n - 1)
+        b = breite * (math.sin(math.pi * min(1.0, 0.25 + t * 0.9)) ** 0.6) * (1 - spitz * t ** 2) + 0.002
+        p = mitte + richtung * (t - 0.5) * laenge + normale * wolbung * dicke * math.sin(math.pi * t)
+        ringe.append((p, quer, normale, b, dicke * (1 - 0.6 * t) + 0.001))
+    return f.loft(name, ringe, 12, farbe_von, gewicht, oben_zu=True, unten_zu=True, teilung=2, glatt=True)
+
+
 def _spiegel(p, seite):
     return Vector((p.x * seite, p.y, p.z))
 
@@ -361,13 +403,15 @@ def _abstand_zur_strecke(p, a, b):
 def magier(seed=12, name="Magier"):
     f = Figur(name, seed)
     r = f.rng
-    blau, blau_dunkel, futter = farbe("#262A36"), farbe("#1A1D26"), farbe("#101218")
+    # Blaugraue Sternenrobe unter einem offenen, dunklen Mantel, weinrote Schärpe, Silberschmuck
+    blau, blau_dunkel, futter = farbe("#5E7894"), farbe("#3E5068"), farbe("#1E222A")
     gold, gold_dunkel = farbe("#D8AE4A"), farbe("#A9812E")
-    kragen, stola = farbe("#2B2436"), farbe("#9A2A36")
-    haut, bart, haar = farbe("#EFC4A0"), farbe("#EDEAE3"), farbe("#D6D2CA")
+    kragen, stola = farbe("#3E434E"), farbe("#7E2E3C")
+    silber, silber_dunkel = farbe("#DCE0E8"), farbe("#8C929C")
+    haut, bart, haar = farbe("#E8B894"), farbe("#C4BAA8"), farbe("#AFA290")
     wange, lippe, nasenloch = farbe("#E9A688"), farbe("#C98A7A"), farbe("#5A3A34")
     leder, stiefel, holz = farbe("#5A3A24"), farbe("#4A3322"), farbe("#6E4B2E")
-    kristall, hut_blau = farbe("#A6ECFF"), farbe("#252935")
+    kristall, hut_blau = farbe("#A6ECFF"), farbe("#5E5446")
     kopf_gewicht = lambda co: {"Kopf": 1.0}
 
     # ================= Robe =================
@@ -397,18 +441,17 @@ def magier(seed=12, name="Magier"):
 
     def robe_farbe(i, k, poly):
         vorne = vorne_winkel(k + 0.5, ROBE_SEG)
+        z = poly.center.z
         if i >= 8:
-            return gold                                          # Saum
-        if 7.2 <= i < 8:
-            # gestickte Rauten über dem Saum
-            u = (k / ROBE_SEG * 18) % 1.0
-            v = (i - 7.2) / 0.8
-            return gold_dunkel if abs(u - 0.5) + abs(v - 0.5) < 0.33 else blau_dunkel
-        if poly.center.z < 1.0 and vorne < 0.2:
-            return gold * (0.95 if int(poly.center.z * 40) % 3 else 0.8)   # Borte vorne, mit Stichen
-        if poly.center.z < 1.0 and vorne < 0.3:
-            return blau_dunkel                                   # Schlitz
-        return blau * (0.88 + 0.14 * weich(0.0, 1.5, poly.center.z))
+            return blau_dunkel * 0.8                             # dunkler Saum
+        if vorne < 0.34 and z < 1.02:
+            # Vorderbahn mit gestickten Pfeilen, die nach unten zeigen
+            if vorne > 0.3:
+                return silber_dunkel                              # heller Rand der Vorderbahn
+            v = (z * 5.0) % 1.0
+            return blau_dunkel * 0.85 if abs(v - 0.5 + (vorne / 0.3) * 0.3) < 0.09 else blau_dunkel * 1.12
+        # vereinzelte silberne Sterne
+        return silber if ((k * 37 + int(i * 11) * 17) % 61) == 0 else blau * (0.9 + 0.12 * weich(0.0, 1.5, z))
 
     f.loft("Robe", robe_ringe, ROBE_SEG, robe_farbe, _robe_gewichte, teilung=3)
     f.loft("Futter", [(Vector((0, 0.03, 0.035)), X, Y, 0.3, 0.25), (Vector((0, 0.02, 0.4)), X, Y, 0.15, 0.1)], 24,
@@ -434,46 +477,52 @@ def magier(seed=12, name="Magier"):
             continue
         treffer = robe_punkt(r.uniform(0.3, 0.92), w)
         if treffer:
-            f.stern("Stern", treffer[0], treffer[1], r.uniform(0.018, 0.03), gold, _robe_gewichte)
+            f.stern("Stern", treffer[0], treffer[1], r.uniform(0.012, 0.02), silber, _robe_gewichte)
 
-    # ================= Schulterkragen =================
-    def zacken(w):
-        return 1.0 + 0.09 * max(0.0, math.cos(w * 9)) ** 2
+    # ================= Offener Mantel mit breitem Kragen =================
+    mantel = [(Vector((0, 0.012, 1.585)), 0.11, 0.095), (Vector((0, 0.006, 1.52)), 0.215, 0.152), (Vector((0, 0.002, 1.44)), 0.222, 0.158),
+              (Vector((0, 0.002, 1.27)), 0.205, 0.152), (Vector((0, 0.006, 1.1)), 0.2, 0.152), (Vector((0, 0.015, 0.9)), 0.245, 0.196),
+              (Vector((0, 0.025, 0.6)), 0.295, 0.245), (Vector((0, 0.035, 0.3)), 0.34, 0.285), (Vector((0, 0.04, 0.085)), 0.365, 0.305)]
 
-    kragen_ringe = [
-        (Vector((0, 0.01, 1.605)), X, Y, 0.08, 0.07),
-        (Vector((0, 0.0, 1.57)), X, Y, 0.17, 0.13),
-        (Vector((0, 0.0, 1.5)), X, Y, 0.235, 0.165, zacken),
-        (Vector((0, 0.0, 1.46)), X, Y, 0.25, 0.175, zacken),
-        (Vector((0, 0.0, 1.445)), X, Y, 0.245, 0.172, zacken),
-    ]
+    def mantel_farbe(poly):
+        p = poly.center
+        if p.z < 0.13:
+            return kragen * 0.72                                              # Saum
+        return kragen * (0.88 + 0.14 * max(0.0, poly.normal.z) + 0.03 * math.sin(p.z * 9))
+    _glocke(f, "Mantel", mantel, (30, 330), mantel_farbe, _robe_gewichte, seg=64, welle=0.045)
+    _glocke(f, "MantelFutter", [(m, rx * 0.985, ry * 0.985) for m, rx, ry in mantel], (30, 330), lambda poly: stola * 0.6, _robe_gewichte,
+            innen=True, seg=48, welle=0.045)
+    # Breiter, aufgestellter Kragen
+    kragen_ringe = [(Vector((0, 0.02, 1.55)), 0.13, 0.11), (Vector((0, 0.03, 1.6)), 0.15, 0.13), (Vector((0, 0.045, 1.67)), 0.175, 0.15)]
+    _glocke(f, "Mantelkragen", kragen_ringe, (45, 315), lambda poly: kragen * (1.05 if poly.normal.z > 0 else 0.85), _rumpf_gewichte, seg=40)
+    _glocke(f, "KragenInnen", [(m, rx * 0.97, ry * 0.97) for m, rx, ry in kragen_ringe], (45, 315), lambda poly: kragen * 0.6, _rumpf_gewichte,
+            innen=True, seg=30)
 
-    def kragen_farbe(i, k, p):
-        if i >= 3:
-            return gold
-        if 2.5 <= i < 3:
-            return gold_dunkel if (k // 2) % 4 == 0 else kragen     # Zierstiche über dem Goldrand
-        return kragen * (0.9 + 0.15 * (i / 3))
-
-    f.loft("Kragen", kragen_ringe, 72, kragen_farbe, _rumpf_gewichte, teilung=3)
-    # Brosche vorne am Kragen: Goldfassung mit Edelstein
-    f.kugel("Brosche", (0, -0.125, 1.565), (0.022, 0.008, 0.022), gold, _rumpf_gewichte, 16, 8, glatt=False)
-    f.kugel("Stein", (0, -0.132, 1.565), (0.012, 0.006, 0.012), farbe("#B0203A"), _rumpf_gewichte, 12, 6, glatt=False)
-
-    # ================= Stola =================
-    for seite in (1, -1):
-        pfad = [Vector((0.07 * seite, -0.135, 1.5)), Vector((0.075 * seite, -0.14, 1.3)), Vector((0.075 * seite, -0.135, 1.12)),
-                Vector((0.085 * seite, -0.16, 0.95)), Vector((0.1 * seite, -0.2, 0.7)), Vector((0.11 * seite, -0.24, 0.45))]
-        ringe = [(p, X, Y, 0.036, 0.007) for p in pfad]
-
-        def stola_farbe(i, k, p):
-            if i >= 4.3:
-                return gold if (int(i * 6) % 2 == 0) else gold_dunkel   # Goldende mit Fransen-Streifen
-            if any(abs(p.center.z - zz) < 0.012 for zz in (1.35, 1.1, 0.85)) and k in (0, 1, 7, 8, 9, 15):
-                return gold                                              # gestickte Kreuze
-            return stola
-
-        f.loft("Stola", ringe, 16, stola_farbe, _robe_gewichte, oben_zu=True, unten_zu=True, teilung=4)
+    # ================= Schärpe mit Knoten und Quasten, Kette mit Medaillons =================
+    schaerpe = [(Vector((0, 0.0, 1.025)), X, Y, 0.184, 0.142, faltig(0.03)), (Vector((0, 0.0, 1.145)), X, Y, 0.18, 0.139, faltig(0.03))]
+    f.loft("Schaerpe", schaerpe, 48, lambda i, k, p: stola * (0.85 if k % 6 == 0 else 1.0), _rumpf_gewichte, teilung=3, glatt=True)
+    f.kugel("Knoten", (0.1, -0.15, 1.09), (0.04, 0.028, 0.035), stola * 1.1, _rumpf_gewichte, 12, 8)
+    for j, (dx, laenge) in enumerate(((0.09, 0.46), (0.13, 0.36))):
+        pfad = [Vector((dx, -0.155, 1.07)), Vector((dx + 0.012, -0.175, 0.92)), Vector((dx + 0.02, -0.19, 1.07 - laenge))]
+        f.loft("Schaerpenende", [(p, X, Y, 0.042 - 0.008 * j, 0.008) for p in pfad], 12, lambda i, k, p: stola * (0.9 + 0.1 * (k % 2)),
+               _robe_gewichte, oben_zu=True, unten_zu=True, teilung=3, glatt=True)
+        ende = pfad[-1]
+        f.kugel("Quastenkopf", ende + Vector((0, 0, -0.012)), (0.02, 0.02, 0.024), gold_dunkel, _robe_gewichte, 10, 6)
+        for q in range(6):
+            w = math.tau * q / 6
+            start = ende + Vector((math.cos(w) * 0.012, math.sin(w) * 0.012, -0.03))
+            f.straehne("Quaste", [start, start + Vector((math.cos(w) * 0.006, math.sin(w) * 0.006, -0.05)), start + Vector((math.cos(w) * 0.01, 0, -0.1))],
+                       0.006, 0.002, stola * 1.25, _robe_gewichte, 5)
+    # Kette zwischen zwei Medaillons auf den Mantelaufschlägen
+    for s in (1, -1):
+        mitte = Vector((0.105 * s, -0.152, 1.47))
+        f.kugel("Medaillon", mitte, (0.034, 0.011, 0.034), silber, _rumpf_gewichte, 20, 6, glatt=False)
+        f.kugel("Medaillonring", mitte + Vector((0, -0.006, 0)), (0.024, 0.008, 0.024), silber_dunkel, _rumpf_gewichte, 16, 4, glatt=False)
+        f.kugel("Medaillonstein", mitte + Vector((0, -0.012, 0)), (0.012, 0.006, 0.012), farbe("#6FB8FF"), _rumpf_gewichte, 10, 6, glatt=False)
+    for n in range(13):
+        t = n / 12
+        p = Vector((-0.08 + 0.16 * t, -0.158 - 0.01 * math.sin(math.pi * t), 1.465 - 0.06 * math.sin(math.pi * t)))
+        f.kugel("Kettenglied", p, (0.009, 0.004, 0.006) if n % 2 else (0.006, 0.004, 0.009), silber_dunkel if n % 2 else silber, _rumpf_gewichte, 8, 4)
 
     # ================= Gürtel mit Schnalle, Tasche, Trank, Zauberbuch =================
     f.loft("Guertel", [(Vector((0, 0.0, 1.06)), X, Y, 0.172, 0.13), (Vector((0, 0.0, 1.13)), X, Y, 0.168, 0.128)], 56,
@@ -510,17 +559,18 @@ def magier(seed=12, name="Magier"):
 
         def aermel_farbe(i, k, p):
             if i >= 5:
-                return gold
-            if 4.4 <= i < 5:
-                u = (k / 40 * 10) % 1.0
-                return gold_dunkel if abs(u - 0.5) + abs((i - 4.4) / 0.6 - 0.5) < 0.33 else blau_dunkel
-            return blau * (0.93 + 0.08 * math.sin(k / 40 * math.tau * 3))
+                return kragen * 0.75                              # umgeschlagener Rand
+            return kragen * (0.9 + 0.1 * math.sin(k / 40 * math.tau * 3))
 
-        f.loft("Aermel", ringe, 40, aermel_farbe, _arm_gewichte(seite), teilung=3)
+        f.loft("Aermel", ringe, 40, aermel_farbe, _arm_gewichte(seite), teilung=3, glatt=True)
         achse = (h - e).normalized()
         q = achse.cross(Y).normalized()
         f.loft("AermelInnen", [(e.lerp(h, 1.08), q, achse.cross(q), 0.13, 0.117), (e.lerp(h, 0.7), q, achse.cross(q), 0.06, 0.055)],
-               16, lambda i, k, p: futter, _arm_gewichte(seite), oben_zu=True)
+               16, lambda i, k, p: blau * 0.7, _arm_gewichte(seite), oben_zu=True)
+        # Silberne Armreifen am Handgelenk
+        for dt in (0.93, 0.97):
+            f.loft("Armreif", [(e.lerp(h, dt), q, achse.cross(q), 0.042, 0.042), (e.lerp(h, dt + 0.02), q, achse.cross(q), 0.042, 0.042)], 14,
+                   lambda i, k, p: silber if k % 3 else silber_dunkel, _arm_gewichte(seite), oben_zu=True, unten_zu=True)
 
     # ================= Hände mit einzelnen Fingern =================
     def finger_kette(punkte, dicke):
@@ -693,6 +743,12 @@ def magier(seed=12, name="Magier"):
             welle = math.sin(t * math.pi * 2 + n) * 0.008
             punkte.append(start + Vector((-x0 * 0.55 * t + welle, -0.07 * t - 0.012 * math.sin(math.pi * t), -laenge * t)))
         f.straehne("Bartlocke", punkte, r.uniform(0.013, 0.02), 0.0015, bart * r.uniform(0.86, 1.02), _kopf_und_brust(1.45, 1.62), 7, 0.5, 0.75)
+    # Geflochtener Zopf aus der Bartmitte mit zwei Ringen
+    zopf = [Vector((0, -0.14, 1.34)), Vector((0.004, -0.15, 1.28)), Vector((-0.004, -0.155, 1.22)), Vector((0.003, -0.157, 1.16)), Vector((0, -0.157, 1.1))]
+    f.straehne("Bartzopf", zopf, 0.022, 0.008, lambda i, k, p: bart * (0.8 if (int(i * 5) + k) % 3 == 0 else 1.0), _kopf_und_brust(1.45, 1.62), 8, 1.2, 0.9)
+    for zz in (1.25, 1.15):
+        f.loft("Bartring", [(Vector((0, -0.155, zz - 0.01)), X, Y, 0.02, 0.02), (Vector((0, -0.155, zz + 0.01)), X, Y, 0.02, 0.02)], 12,
+               lambda i, k, p: silber, _kopf_und_brust(1.45, 1.62), oben_zu=True, unten_zu=True)
     for s in (1, -1):
         for j in range(7):
             start = Vector((s * (0.006 + 0.005 * j), -0.126 + 0.0025 * j, 1.69 - 0.0012 * j))
@@ -702,9 +758,10 @@ def magier(seed=12, name="Magier"):
 
     # ================= Hut =================
     krempe = [(Vector((0, 0.005, 1.835)), X, Y, 0.125, 0.13), (Vector((0, 0.005, 1.83)), X, Y, 0.24, 0.24, faltig(0.03, 1.0)),
-              (Vector((0, 0.005, 1.8)), X, Y, 0.32, 0.31, faltig(0.05, 1.0)), (Vector((0, 0.005, 1.785)), X, Y, 0.315, 0.305, faltig(0.05, 1.0)),
+              (Vector((0, 0.005, 1.81)), X, Y, 0.27, 0.265, faltig(0.04, 1.0)), (Vector((0, 0.01, 1.765)), X, Y, 0.37, 0.36, faltig(0.08, 1.0)),
+              (Vector((0, 0.01, 1.75)), X, Y, 0.365, 0.355, faltig(0.08, 1.0)), (Vector((0, 0.005, 1.795)), X, Y, 0.26, 0.255, faltig(0.04, 1.0)),
               (Vector((0, 0.005, 1.82)), X, Y, 0.125, 0.13)]
-    f.loft("Krempe", krempe, 80, lambda i, k, p: hut_blau * (0.82 if 2 <= i < 3 else 0.9), kopf_gewicht, teilung=3)
+    f.loft("Krempe", krempe, 80, lambda i, k, p: hut_blau * (0.78 if 2 <= i < 3 else 0.9), kopf_gewicht, teilung=3, glatt=True)
     # Mittellinie des Kegels: gerade nach oben, dann nach hinten geknickt; Ringe stehen quer dazu
     linie = []
     for i in range(24):
@@ -719,56 +776,41 @@ def magier(seed=12, name="Magier"):
         kegel.append((mitte, X, quer, radius, radius * 1.02, lambda w, t=t: 1.0 + 0.045 * math.sin(w * 3 + t * 7) + 0.02 * math.sin(w * 7 + t * 3)))
 
     def hut_farbe(i, k, poly):
-        if i < 1.6:
-            return gold if not 0.6 < i < 1.0 else gold_dunkel             # doppeltes Hutband
+        if i < 1.3:
+            return leder * (0.8 if 0.5 < i < 0.8 else 1.0)                # Lederband
         return hut_blau * (0.93 + 0.1 * (i / 23))
 
     hut_gewicht = lambda co: _mischen(("Kopf", 1 - weich(2.0, 2.15, co.z)), ("Hut", weich(2.0, 2.15, co.z)))
-    f.loft("Hut", kegel, 44, hut_farbe, hut_gewicht, oben_zu=True)
-    f.stern("Mond", Vector((0, -0.126, 1.865)), -Y, 0.03, gold, kopf_gewicht, zacken=6)
-    for t, w in ((0.35, 0.8), (0.5, 2.6), (0.6, 4.1), (0.72, 5.3), (0.42, 3.4)):
-        i = int(t * 23)
-        mitte = linie[i][1]
-        richtung = (linie[min(i + 1, 23)][1] - linie[max(i - 1, 0)][1]).normalized()
-        quer = X.cross(richtung).normalized()
-        radius = 0.128 * (1 - t) ** 0.85 + 0.004
-        aussen = X * math.cos(w) + quer * math.sin(w)
-        f.stern("Hutstern", mitte + aussen * radius * 1.02, aussen, 0.02 * (1 - t * 0.5), gold, hut_gewicht)
+    f.loft("Hut", kegel, 44, hut_farbe, hut_gewicht, oben_zu=True, glatt=True)
+    f.kugel("Hutspange", (0.06, -0.11, 1.86), (0.018, 0.008, 0.018), silber, kopf_gewicht, 12, 6, glatt=False)
 
     # ================= Stab =================
     stab_anfang = len(f.teile)
     stab_gewicht = lambda co: {"Hand.R": 1.0}
-    stab_ringe = []
-    for i in range(20):
-        z = 0.03 + 1.9 * i / 19
-        wackeln = Vector((0.008 * math.sin(i * 0.9), 0.008 * math.cos(i * 1.2), 0))
-        knoten = 0.005 if i in (5, 12, 16) else 0.0
-        stab_ringe.append((Vector((STAB_X, STAB_Y, z)) + wackeln, X, Y, 0.021 - 0.004 * i / 19 + knoten, 0.021 - 0.004 * i / 19 + knoten))
-
-    def stab_farbe(i, k, p):
-        if 0.82 < p.center.z < 1.0:
-            return leder * (0.75 if int(p.center.z * 90) % 2 else 1.0)    # gewickelter Ledergriff
-        return holz * (0.82 + 0.18 * ((k * 3 + int(i * 5)) % 4) / 3)
-
-    f.loft("Stab", stab_ringe, 12, stab_farbe, stab_gewicht, unten_zu=True, teilung=2)
-    oben = Vector((STAB_X, STAB_Y, 1.93))
-    for n in range(3):
-        w = math.tau * n / 3
+    for strang in range(2):
+        punkte = []
+        for i in range(34):
+            t = i / 33
+            z = 0.03 + 1.88 * t
+            w = t * math.tau * 3.2 + strang * math.pi
+            r_ = 0.011 + 0.006 * math.sin(t * 9)
+            punkte.append((Vector((STAB_X + math.cos(w) * r_, STAB_Y + math.sin(w) * r_, z)), 0.017 - 0.004 * t))
+        ringe = [(p, X, Y, d, d) for p, d in punkte]
+        f.loft("Stabast", ringe, 10, lambda i, k, p: (leder * 0.9 if 0.82 < p.center.z < 1.0 else holz) * (0.85 + 0.15 * ((k * 3 + int(i * 5)) % 4) / 3),
+               stab_gewicht, unten_zu=True, oben_zu=True, teilung=2, glatt=True)
+    for n in range(9):
+        z = 0.25 + n * 0.17 + r.uniform(-0.03, 0.03)
+        w = r.uniform(0, math.tau)
+        basis = Vector((STAB_X + math.cos(w) * 0.016, STAB_Y + math.sin(w) * 0.016, z))
+        f.straehne("Dorn", [basis, basis + Vector((math.cos(w) * 0.03, math.sin(w) * 0.03, 0.015))], 0.006, 0.001, holz * 0.8, stab_gewicht, 5)
+    oben = Vector((STAB_X, STAB_Y, 1.9))
+    for n in range(5):
+        w = math.tau * n / 5
         aussen = Vector((math.cos(w), math.sin(w), 0))
-        punkte = [oben, oben + aussen * 0.05 + Z * 0.05, oben + aussen * 0.052 + Z * 0.11, oben + aussen * 0.03 + Z * 0.16,
-                  oben + aussen * 0.008 + Z * 0.185]
-        f.straehne("Kralle", punkte, 0.013, 0.003, holz * 0.9, stab_gewicht, 8, 0.3)
-    bm = bmesh.new()
-    spitze_o = bm.verts.new(oben + Z * 0.21)
-    spitze_u = bm.verts.new(oben + Z * 0.035)
-    kranz = [bm.verts.new(oben + Z * 0.11 + Vector((math.cos(math.tau * k / 8), math.sin(math.tau * k / 8), 0)) * 0.042) for k in range(8)]
-    kranz2 = [bm.verts.new(oben + Z * 0.15 + Vector((math.cos(math.tau * (k + 0.5) / 8), math.sin(math.tau * (k + 0.5) / 8), 0)) * 0.03) for k in range(8)]
-    for k in range(8):
-        bm.faces.new((kranz[k], kranz[(k + 1) % 8], kranz2[k]))
-        bm.faces.new((kranz2[k], kranz[(k + 1) % 8], kranz2[(k + 1) % 8]))
-        bm.faces.new((kranz2[k], kranz2[(k + 1) % 8], spitze_o))
-        bm.faces.new((kranz[(k + 1) % 8], kranz[k], spitze_u))
-    f._objekt(bm, "Kristall", lambda poly: kristall * (0.85 + 0.4 * max(0.0, poly.normal.z) + 0.15 * (poly.index % 3)), stab_gewicht)
+        punkte = [oben, oben + aussen * 0.045 + Z * 0.04, oben + aussen * 0.065 + Z * 0.11, oben + aussen * 0.045 + Z * 0.18, oben + aussen * 0.018 + Z * 0.21]
+        f.straehne("Kralle", punkte, 0.012, 0.003, holz * 0.9, stab_gewicht, 8, 0.3, glatt=True)
+    f.kugel("Kern", oben + Z * 0.115, (0.048, 0.048, 0.048), kristall * 1.25, stab_gewicht, 16, 10)
+    f.kugel("Kernring", oben + Z * 0.115, (0.056, 0.012, 0.056), silber, stab_gewicht, 20, 4, glatt=False)
     f.als_starr("Stab", "Hand.R", stab_anfang)
 
     # ================= Erbeutbare Stäbe (waffen.py), im Spiel statt des Stabs sichtbar =================

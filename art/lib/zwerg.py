@@ -87,7 +87,7 @@ def _verschieben(f, anfang, versatz, skala=1.0, um=Vector()):
 def zwerg(seed=21, name="Zwerg"):
     f = Figur(name, seed)
     r = f.rng
-    kette, kette_dunkel = farbe("#8C939C"), farbe("#5E656E")
+    kette, kette_dunkel = farbe("#6A727C"), farbe("#454B54")
     rot, rot_dunkel = farbe("#A3282B"), farbe("#6E1A1C")
     gold, gold_dunkel = farbe("#D8AE4A"), farbe("#A9812E")
     bronze = farbe("#B07A3A")

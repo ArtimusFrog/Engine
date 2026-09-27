@@ -1,13 +1,16 @@
-"""Bogenschütze – dritte Spielfigur (Baukasten: figuren.py).
+"""Bogenschützin – dritte Spielfigur (Baukasten: figuren.py), im Stil einer Mondlicht-Elfe.
 
-Ein junger Waldläufer, gleiche Maße und gleiches Skelett wie der Magier: grünes Wams mit kurzem,
-vorne geschlitztem Rock, Lederweste mit Schnürung, breiter Gürtel mit Tasche und Messer, grüner
-Kapuzenumhang (Kapuze auf, das Gesicht frei), lederne Armschienen und Handschuhe, Hose und hohe
-Stulpenstiefel. Auf dem Rücken ein Köcher voller Pfeile mit Gurt über der Brust. Braunes Haar,
-kurzer Bart, grüne Augen.
-In der linken Faust der Bogen (Anbauteil „Bogen“ bzw. die erbeutbaren Bögen aus waffen.py), in
-der rechten Spitzhacke oder Axt.
+Schlank und hochgewachsen (etwa 1,76 m): silberweißes Haar mit hohem, weit schwingendem
+Pferdeschwanz und Kristallschmuck, lange Elfenohren, große violette Augen. Blauer Schulterumhang
+mit hohem Stehkragen und weißem Saum, dahinter zwei lange, hellblaue Umhangbahnen. Dunkelblaues,
+kurzes Mieder mit weißen Brustschalen und einer leuchtenden Mondsichel, freier Bauch, gekreuzte
+Ledergürtel mit weißer Schnalle, weiße Federplatten an den Hüften, dunkelblaue Hose, hohe braune
+Stiefel mit weißen Knie- und Spitzenpanzern, weiße Armschienen, braune Handschuhe, ein weißer
+Schulterpanzer rechts. In der linken Faust der Mondbogen (oder ein erbeuteter Bogen aus waffen.py),
+in der rechten Spitzhacke oder Axt.
 
+Gleiche Knochennamen wie der Magier, eigene Maße. Der Pferdeschwanz hängt am Knochen „Hut“ und
+schwingt so in allen Animationen nach.
 Koordinaten wie in der Werkstatt: Z oben, die Figur schaut nach -Y, Füße im Ursprung, links (L) +X.
 """
 
@@ -16,19 +19,91 @@ import math
 import bmesh
 from mathutils import Quaternion, Vector
 
-from figuren import (AUGE, ELLBOGEN, FINGER, HAENGT, HANDGELENK, HOCH, HUEFTE, KNIE, KNOECHEL, SCHULTER, STAB_X, STAB_Y, ZEHEN, Figur,
-                     _abstand_zur_strecke, _arm_gewichte, _axt, _clip, _gehen, _kopf_und_brust, _mischen, _mit, _robe_gewichte,
-                     _rumpf_gewichte, _schleife, _spiegel, _spitzhacke, farbe, weich)
+from figuren import HAENGT, HOCH, Figur, _axt, _clip, _gehen, _glocke, _mischen, _mit, _platte, _schleife, _spitzhacke, farbe, weich
 from werkstatt import animation
 
 X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
 
-# Der Bogen liegt in der linken Faust: Griff quer (entlang Y) bei
-BOGEN_GRIFF = Vector((0.36, -0.03, 0.905))
+# Gelenke (Meter). L = +X, R = -X, vorne = -Y.
+SCHULTER = Vector((0.165, 0.0, 1.45))
+ELLBOGEN = Vector((0.235, 0.02, 1.19))
+HANDGELENK = Vector((0.28, -0.01, 0.955))
+FINGER = Vector((0.3, -0.03, 0.87))
+HUEFTE = Vector((0.092, 0.0, 0.93))
+KNIE = Vector((0.09, -0.005, 0.5))
+KNOECHEL = Vector((0.088, 0.02, 0.085))
+ZEHEN = Vector((0.088, -0.13, 0.025))
+KOPF = Vector((0.0, -0.005, 1.66))
+AUGE = Vector((0.033, -0.083, 1.672))
+# Griffe: links der Bogen (quer, entlang Y), rechts ein senkrechter Stiel (Werkzeuge)
+BOGEN_GRIFF = Vector((0.3, -0.035, 0.915))
+GRIFF_R = Vector((-0.305, -0.07, 0.915))
+
+
+def _spiegel(p, seite):
+    return Vector((p.x * seite, p.y, p.z))
+
+
+def _rumpf(co):
+    z = co.z
+    return _mischen(("Becken", 1 - weich(1.0, 1.12, z)), ("Bauch", weich(1.0, 1.12, z) * (1 - weich(1.24, 1.34, z))),
+                    ("Brust", weich(1.24, 1.34, z) * (1 - weich(1.5, 1.56, z))), ("Hals", weich(1.5, 1.56, z)))
+
+
+def _huefte_bein(co):
+    """Unten am Becken gehen die Hüften weich in die Oberschenkel über."""
+    if co.z > 0.95:
+        return _rumpf(co)
+    bein = weich(0.95, 0.8, co.z)
+    links = weich(-0.04, 0.04, co.x)
+    return _mischen(("Becken", 1 - bein), ("Oberschenkel.L", bein * links), ("Oberschenkel.R", bein * (1 - links)))
+
+
+def _arm(seite):
+    s = "L" if seite > 0 else "R"
+    schulter, ellbogen, hand = _spiegel(SCHULTER, seite), _spiegel(ELLBOGEN, seite), _spiegel(HANDGELENK, seite)
+
+    def gewichte(co):
+        oben = ellbogen - schulter
+        t1 = (co - schulter).dot(oben) / oben.length_squared
+        unten = hand - ellbogen
+        t2 = (co - ellbogen).dot(unten) / unten.length_squared
+        if t1 < 0.15:
+            return _mischen(("Brust", 1 - weich(-0.1, 0.15, t1)), (f"Oberarm.{s}", weich(-0.1, 0.15, t1)))
+        if t2 < 0.0:
+            return _mischen((f"Oberarm.{s}", 1 - weich(-0.15, 0.1, t2)), (f"Unterarm.{s}", weich(-0.15, 0.1, t2)))
+        if t2 > 0.95:
+            return _mischen((f"Unterarm.{s}", 1 - weich(0.95, 1.1, t2)), (f"Hand.{s}", weich(0.95, 1.1, t2)))
+        return {f"Unterarm.{s}": 1.0}
+    return gewichte
+
+
+def _bein(seite):
+    sn = "L" if seite > 0 else "R"
+    return lambda co: _mischen((f"Unterschenkel.{sn}", 1 - weich(0.45, 0.56, co.z)), (f"Oberschenkel.{sn}", weich(0.45, 0.56, co.z)))
+
+
+def _achsen(a, b):
+    achse = (b - a).normalized()
+    q = achse.cross(Y if abs(achse.y) < 0.9 else X).normalized()
+    return q, achse.cross(q).normalized()
+
+
+def _schlauch(f, name, punkte, radien, seg, farbe_von, gewicht, zu=True, teilung=2, form=None):
+    """Glatter Schlauch entlang einer Punktfolge (Gliedmaßen, Stiefel, Ärmel)."""
+    ringe = []
+    for i, (p, r) in enumerate(zip(punkte, radien)):
+        a = punkte[max(i - 1, 0)]
+        b = punkte[min(i + 1, len(punkte) - 1)]
+        q1, q2 = _achsen(a, b)
+        rx, ry = r if isinstance(r, tuple) else (r, r)
+        ring = (p, q1, q2, rx, ry)
+        ringe.append(ring + ((form,) if form else ()))
+    return f.loft(name, ringe, seg, farbe_von, gewicht, oben_zu=zu, unten_zu=zu, teilung=teilung, glatt=True)
 
 
 def _schale(f, name, mitte, rx, ry, rz, theta, phi, farbe_von, gewicht, innen=False, seg=(40, 16), form=None):
-    """Stück einer Ellipsoid-Schale (Kapuze, Umhang): Winkel `theta` (um Z, 0 = vorne) von–bis,
+    """Stück einer Ellipsoid-Schale (Kragen, Umhang): Winkel `theta` (um Z, 0 = vorne) von–bis,
     `phi` (Höhe, -90 unten … 90 oben) von–bis. `form(theta, phi)` → Faktor auf den Radius."""
     bm = bmesh.new()
     nt, np_ = seg
@@ -46,8 +121,7 @@ def _schale(f, name, mitte, rx, ry, rz, theta, phi, farbe_von, gewicht, innen=Fa
         for i in range(nt):
             a, b, c, d = reihen[j][i], reihen[j][i + 1], reihen[j + 1][i + 1], reihen[j + 1][i]
             bm.faces.new((a, b, c, d) if not innen else (d, c, b, a))
-    obj = f._objekt(bm, name, farbe_von, gewicht)
-    # Nach außen (bzw. innen) zeigen lassen: recalc kennt bei offenen Flächen die Seite nicht
+    obj = f._objekt(bm, name, farbe_von, gewicht, glatt=True)
     for poly in obj.data.polygons:
         nach_aussen = (poly.center - mitte).dot(poly.normal) > 0
         if nach_aussen == innen:
@@ -55,315 +129,335 @@ def _schale(f, name, mitte, rx, ry, rz, theta, phi, farbe_von, gewicht, innen=Fa
     return obj
 
 
-def _faust(griff, achse, seite, dicke, haut):
+def _faust(griff, achse, seite, dicke):
     """Faust aus Metaball-Formen, die sich um einen Stab entlang `achse` schließt."""
     achse = achse.normalized()
     q1 = achse.cross(Z if abs(achse.z) < 0.9 else X).normalized()
     q2 = achse.cross(q1).normalized()
-    formen = [(griff + q1 * 0.028 * seite + q2 * 0.01, (0.03, 0.03, 0.03))]
+    formen = [(griff + q1 * 0.024 * seite + q2 * 0.008, (0.026, 0.026, 0.026))]
     for i in range(4):
-        versatz = achse * (0.022 - 0.0145 * i)
+        versatz = achse * (0.019 - 0.0125 * i)
         punkte = []
-        for j, w in enumerate((0.3, -0.6, -1.5, -2.4, -3.1)):
-            rad = 0.03 - 0.0015 * j
-            punkte.append(griff + versatz + (q1 * math.cos(w) * seite + q2 * math.sin(w)) * rad)
+        for w in (0.3, -0.6, -1.5, -2.4, -3.1):
+            punkte.append(griff + versatz + (q1 * math.cos(w) * seite + q2 * math.sin(w)) * 0.026)
         for a, b in zip(punkte, punkte[1:]):
             for t in (0.0, 0.33, 0.66):
                 formen.append((a.lerp(b, t), (dicke,) * 3))
-        dicke *= 0.97
+        dicke *= 0.96
     for t in (0.0, 0.5, 1.0):
-        formen.append((griff + achse * 0.035 + q1 * (0.02 - 0.035 * t) * seite - q2 * 0.025, (dicke * 1.1,) * 3))   # Daumen
+        formen.append((griff + achse * 0.03 + q1 * (0.018 - 0.03 * t) * seite - q2 * 0.022, (dicke * 1.05,) * 3))
     return formen
 
 
 def bogenschuetze(seed=31, name="Bogenschuetze"):
     f = Figur(name, seed)
     r = f.rng
-    gruen, gruen_dunkel, gruen_hell = farbe("#3F6B34"), farbe("#2A4A24"), farbe("#6E9A4A")
-    umhang, umhang_dunkel, umhang_innen = farbe("#2F5A3A"), farbe("#1F3E28"), farbe("#1A2A1C")
-    leder, leder_dunkel, leder_hell = farbe("#7A4E2C"), farbe("#4A2E1A"), farbe("#A06A3A")
-    hose, stiefel = farbe("#5A4A3C"), farbe("#4A3020")
-    gold, messing = farbe("#D8AE4A"), farbe("#B8904A")
-    haut, wange, lippe, nasenloch = farbe("#EDBF98"), farbe("#E4A080"), farbe("#C4826E"), farbe("#5A3A34")
-    haar, haar_dunkel = farbe("#6A4226"), farbe("#4A2C18")
-    holz, stahl = farbe("#6E4B2E"), farbe("#A8B0BA")
+    haut, haut_schatten = farbe("#F6D6C4"), farbe("#E8B8A4")
+    lippe, wange = farbe("#D98A94"), farbe("#F0A8A8")
+    navy, navy_dunkel, navy_hell = farbe("#1E2A5A"), farbe("#141C40"), farbe("#34479A")
+    blau, blau_hell = farbe("#4E6FD8"), farbe("#8AB0F0")
+    eisblau, kristall = farbe("#A8D8FF"), farbe("#7FE0FF")
+    weiss, weiss_schatten = farbe("#F2F4FA"), farbe("#C8D0E4")
+    silber = farbe("#E6E8F2")
+    haar, haar_schatten, haar_glanz = farbe("#ECEAF4"), farbe("#BFC0D8"), farbe("#FFFFFF")
+    leder, leder_dunkel = farbe("#7A4A2E"), farbe("#4E2E1C")
+    iris = farbe("#8A6AE0")
     kopf_gewicht = lambda co: {"Kopf": 1.0}
 
-    def vorne_winkel(k, seg):
-        w = math.tau * k / seg
-        return abs(math.atan2(math.sin(w + math.pi / 2), math.cos(w + math.pi / 2)))
+    # ================= Körper: Beine, Hüften, Taille, Brustkorb, Hals =================
+    def rumpf_form(w):
+        # Vorne etwas flacher, Rücken gerundet
+        return 1.0 - 0.06 * max(0.0, -math.sin(w))
 
-    # ================= Wams mit kurzem Rock =================
-    falten = [r.uniform(0.6, 1.4) for _ in range(8)]
-
-    def faltig(staerke, phase=0.0):
-        return lambda w: 1.0 + staerke * sum(math.sin(w * (3 + i) + phase + falten[i]) * falten[i] / (3 + i) for i in range(6))
-
-    wams = [
-        (Vector((0, 0.005, 1.58)), X, Y, 0.1, 0.085),
-        (Vector((0, 0.0, 1.52)), X, Y, 0.19, 0.13),
-        (Vector((0, 0.0, 1.42)), X, Y, 0.185, 0.132),
-        (Vector((0, -0.005, 1.28)), X, Y, 0.17, 0.128),
-        (Vector((0, 0.0, 1.12)), X, Y, 0.158, 0.12),
-        (Vector((0, 0.0, 0.98)), X, Y, 0.182, 0.14, faltig(0.02)),
-        (Vector((0, 0.005, 0.86)), X, Y, 0.21, 0.165, faltig(0.05)),
-        (Vector((0, 0.01, 0.76)), X, Y, 0.232, 0.185, faltig(0.07)),
-        (Vector((0, 0.01, 0.74)), X, Y, 0.228, 0.182, faltig(0.07)),
-    ]
-    SEG = 64
-
-    def wams_farbe(i, k, p):
-        vorne = vorne_winkel(k + 0.5, SEG)
-        if i >= 6.6:
-            return leder_hell                                                   # Saum
-        if p.center.z < 0.97 and vorne < 0.1:
-            return gruen_dunkel * 0.7                                            # vorne geschlitzt
-        return gruen * (0.9 + 0.12 * weich(0.7, 1.6, p.center.z)) * (0.96 if k % 8 == 0 else 1.0)
-
-    f.loft("Wams", wams, SEG, wams_farbe, _robe_gewichte, teilung=3)
-    f.loft("Futter", [(Vector((0, 0.01, 0.745)), X, Y, 0.22, 0.175), (Vector((0, 0.0, 0.9)), X, Y, 0.14, 0.1)], 24,
-           lambda i, k, p: gruen_dunkel * 0.6, _robe_gewichte, oben_zu=True)
-
-    # ================= Lederweste mit Schnürung =================
-    weste = [
-        (Vector((0, 0.005, 1.54)), X, Y, 0.195, 0.138),
-        (Vector((0, 0.0, 1.42)), X, Y, 0.192, 0.14),
-        (Vector((0, -0.005, 1.28)), X, Y, 0.177, 0.136),
-        (Vector((0, 0.0, 1.14)), X, Y, 0.166, 0.128),
-        (Vector((0, 0.0, 1.07)), X, Y, 0.17, 0.132),
+    rumpf = [
+        (Vector((0, 0.005, 0.84)), X, Y, 0.1, 0.085),
+        (Vector((0, 0.01, 0.9)), X, Y, 0.158, 0.11),
+        (Vector((0, 0.012, 0.97)), X, Y, 0.168, 0.115),
+        (Vector((0, 0.01, 1.04)), X, Y, 0.145, 0.1),
+        (Vector((0, 0.005, 1.12)), X, Y, 0.112, 0.082),
+        (Vector((0, 0.0, 1.2)), X, Y, 0.118, 0.085),
+        (Vector((0, -0.005, 1.28)), X, Y, 0.135, 0.095),
+        (Vector((0, 0.0, 1.37)), X, Y, 0.145, 0.098),
+        (Vector((0, 0.005, 1.44)), X, Y, 0.15, 0.09),
+        (Vector((0, 0.01, 1.5)), X, Y, 0.075, 0.06),
+        (Vector((0, 0.012, 1.56)), X, Y, 0.042, 0.042),
+        (Vector((0, 0.01, 1.6)), X, Y, 0.04, 0.042),
     ]
 
-    def weste_farbe(i, k, p):
-        vorne = vorne_winkel(k + 0.5, 48)
-        if vorne < 0.14:
-            # Schnürung: Kreuze aus hellem Band über der dunklen Öffnung
-            z = p.center.z
-            return leder_hell if abs(((z * 26) % 1.0) - 0.5) < 0.18 else gruen_dunkel * 0.8
-        if i < 0.3 or i > 3.7:
-            return leder_dunkel
-        return leder * (0.9 + 0.1 * ((k + int(i * 4)) % 3) / 2)
+    def rumpf_farbe(i, k, p):
+        z = p.center.z
+        if z < 1.02:
+            return navy * (0.92 if k % 7 == 0 else 1.0)                            # Hose
+        if z < 1.2:
+            return haut if z > 1.04 else navy_dunkel                               # freier Bauch
+        if z < 1.46:
+            return navy * (0.95 + 0.05 * math.sin(k * 0.8))                        # Mieder
+        return haut                                                                # Hals
+    f.loft("Koerper", [ring + (rumpf_form,) for ring in rumpf], 48, rumpf_farbe, _huefte_bein, teilung=3, glatt=True)
+    # Nabel als kleine Vertiefung
+    f.kugel("Nabel", (0, -0.084, 1.1), (0.006, 0.003, 0.008), haut_schatten, _rumpf, 8, 4)
 
-    f.loft("Weste", weste, 48, weste_farbe, _rumpf_gewichte, teilung=3)
-    for s in (1, -1):
-        for z in (1.46, 1.34, 1.22, 1.12):
-            f.kugel("Oese", (0.03 * s, -0.142 + 0.004 * (1.46 - z), z), (0.006, 0.004, 0.006), messing, _rumpf_gewichte, 6, 4)
-
-    # ================= Gürtel, Tasche, Messer =================
-    f.loft("Guertel", [(Vector((0, 0.0, 0.98)), X, Y, 0.188, 0.146), (Vector((0, 0.0, 1.05)), X, Y, 0.184, 0.143)], 56,
-           lambda i, k, p: leder_dunkel * (0.8 if k % 7 == 0 else 1.0), _rumpf_gewichte, teilung=2)
-    f.kiste("Schnalle", (0, -0.148, 1.015), (0.05, 0.012, 0.045), messing, _rumpf_gewichte)
-    f.kiste("Schnallenmitte", (0, -0.154, 1.015), (0.028, 0.008, 0.024), leder_dunkel, _rumpf_gewichte)
-    f.kiste("Tasche", (0.17, -0.06, 0.93), (0.07, 0.045, 0.085), leder * 1.1, _rumpf_gewichte)
-    f.kiste("Taschenklappe", (0.17, -0.085, 0.965), (0.075, 0.01, 0.045), leder_dunkel, _rumpf_gewichte)
-    f.kugel("Knopf", (0.17, -0.092, 0.95), (0.007, 0.004, 0.007), messing, _rumpf_gewichte, 8, 4)
-    messer = Quaternion(Y, math.radians(20))
-    f.kiste("Scheide", (-0.17, -0.07, 0.9), (0.03, 0.02, 0.15), leder_dunkel, _rumpf_gewichte, messer)
-    f.kiste("Messergriff", (-0.185, -0.07, 1.0), (0.02, 0.018, 0.07), holz, _rumpf_gewichte, messer)
-    f.kugel("Messerknauf", (-0.2, -0.07, 1.04), (0.015, 0.015, 0.015), messing, _rumpf_gewichte, 8, 4)
-
-    # ================= Ärmel, Armschienen =================
-    for seite in (1, -1):
-        s, e, h = _spiegel(SCHULTER, seite), _spiegel(ELLBOGEN, seite), _spiegel(HANDGELENK, seite)
-        ringe = []
-        for t, (a, b), radius in ((0.0, (s + Vector((-0.04 * seite, 0, 0.03)), e), 0.08), (0.5, (s, e), 0.078), (1.0, (s, e), 0.07),
-                                  (0.35, (e, h), 0.064)):
-            achse = (b - a).normalized()
-            q = achse.cross(Y).normalized()
-            ringe.append((a.lerp(b, t), q, achse.cross(q).normalized(), radius, radius * 0.92, faltig(0.03, seite)))
-        f.loft("Aermel", ringe, 28, lambda i, k, p: gruen * (0.92 + 0.08 * math.sin(k / 28 * math.tau * 3)), _arm_gewichte(seite), teilung=3)
-        ringe = []
-        for t, radius in ((0.3, 0.06), (0.55, 0.066), (0.85, 0.058), (1.02, 0.052)):
-            achse = (h - e).normalized()
-            q = achse.cross(Y).normalized()
-            ringe.append((e.lerp(h, t), q, achse.cross(q).normalized(), radius, radius * 0.9))
-
-        def schiene(i, k, p):
-            if (k % 6) == 0:
-                return leder_hell                                                # Nähte
-            return leder_dunkel * (1.1 if i < 0.4 or i > 2.6 else 1.0)
-
-        f.loft("Armschiene", ringe, 18, schiene, _arm_gewichte(seite), unten_zu=True, teilung=2)
-        # Schnürriemen über der Armschiene
-        for t in (0.5, 0.72):
-            f.loft("Riemen", [(e.lerp(h, t) - (h - e).normalized() * 0.006, q, achse.cross(q).normalized(), 0.069, 0.064),
-                              (e.lerp(h, t) + (h - e).normalized() * 0.006, q, achse.cross(q).normalized(), 0.069, 0.064)], 16,
-                   lambda i, k, p: leder_hell, _arm_gewichte(seite), oben_zu=True, unten_zu=True)
-
-    # ================= Hände =================
-    # Links: Faust um den Bogengriff (quer, entlang Y); rechts: Faust um einen senkrechten Stiel
-    # (Spitzhacke, Axt) – so hält sie auch die Sehne
-    handschuh = leder_dunkel * 1.2
-    f.metaball("HandL", _faust(BOGEN_GRIFF, Y, 1, 0.0092, haut), 0.003, 2200,
-               lambda poly: handschuh if poly.center.z > BOGEN_GRIFF.z + 0.02 else haut * (0.95 if poly.normal.x < 0 else 1.0), lambda co: {"Hand.L": 1.0}, glatt=True)
-    griff_r = Vector((STAB_X, STAB_Y, 0.915))
-    f.metaball("HandR", _faust(griff_r, Z, -1, 0.0092, haut), 0.003, 2200,
-               lambda poly: handschuh if poly.center.z > griff_r.z + 0.03 else haut, lambda co: {"Hand.R": 1.0}, glatt=True)
-
-    # ================= Beine: Hose und hohe Stulpenstiefel =================
+    # Beine: Hose bis unters Knie, darüber die hohen Stiefel
     for seite in (1, -1):
         sn = "L" if seite > 0 else "R"
-        k_, h_ = _spiegel(KNIE, seite), _spiegel(HUEFTE, seite)
-        ringe = [(Vector((0.1 * seite, 0.015, 0.4)), X, Y, 0.058, 0.058), (k_, X, Y, 0.066, 0.066), (Vector((0.1 * seite, 0.0, 0.72)), X, Y, 0.078, 0.078),
-                 (h_ + Vector((0, 0, -0.03)), X, Y, 0.092, 0.09)]
-        f.loft("Hose", ringe, 16, lambda i, k, p: hose * (0.9 if k % 5 == 0 else 1.0),
-               lambda co, sn=sn: _mischen((f"Unterschenkel.{sn}", 1 - weich(0.46, 0.58, co.z)), (f"Oberschenkel.{sn}", weich(0.46, 0.58, co.z))), teilung=2)
-        schaft = [(Vector((0.1 * seite, 0.03, 0.06)), X, Y, 0.056, 0.06), (Vector((0.1 * seite, 0.02, 0.2)), X, Y, 0.058, 0.058),
-                  (Vector((0.1 * seite, 0.015, 0.4)), X, Y, 0.066, 0.066), (Vector((0.1 * seite, 0.01, 0.47)), X, Y, 0.078, 0.08),
-                  (Vector((0.1 * seite, 0.005, 0.5)), X, Y, 0.083, 0.085), (Vector((0.1 * seite, 0.005, 0.49)), X, Y, 0.066, 0.066)]
-        f.loft("Stiefelschaft", schaft, 18, lambda i, k, p: stiefel * (1.3 if i >= 3.0 else 1.0) * (0.92 if k % 9 == 0 else 1.0),
-               lambda co, sn=sn: _mischen((f"Unterschenkel.{sn}", 1 - weich(0.5, 0.56, co.z)), (f"Oberschenkel.{sn}", weich(0.5, 0.56, co.z))),
-               unten_zu=True, teilung=2)
-        f.kugel("Stiefelschnalle", (0.1 * seite + 0.05 * seite, -0.02, 0.3), (0.006, 0.02, 0.016), messing, lambda co, sn=sn: {f"Unterschenkel.{sn}": 1.0}, 8, 4)
-        fuss = [(Vector((0.1 * seite, 0.06, 0.045)), X, Z, 0.052, 0.045), (Vector((0.1 * seite, 0.055, 0.02)), X, Z, 0.058, 0.03),
-                (Vector((0.1 * seite, -0.02, 0.05)), X, Z, 0.06, 0.055), (Vector((0.1 * seite, -0.09, 0.045)), X, Z, 0.052, 0.04),
-                (Vector((0.1 * seite, -0.14, 0.045)), X, Z, 0.036, 0.03), (Vector((0.1 * seite, -0.17, 0.055)), X, Z, 0.014, 0.012),
-                (Vector((0.1 * seite, -0.175, 0.07)), X, Z, 0.003, 0.003)]
-        f.loft("Stiefel", fuss, 16, lambda i, k, p: stiefel * (0.55 if p.center.z < 0.012 else 1.0),
-               lambda co, sn=sn: {f"Fuss.{sn}": 1.0}, oben_zu=True, unten_zu=True, teilung=3)
+        h_, k_, a_ = _spiegel(HUEFTE, seite), _spiegel(KNIE, seite), _spiegel(KNOECHEL, seite)
+        punkte = [h_ + Vector((0.01 * seite, 0.005, 0.02)), h_.lerp(k_, 0.35), h_.lerp(k_, 0.75), k_, k_.lerp(a_, 0.4), a_ + Vector((0, 0, 0.05))]
+        radien = [0.085, 0.075, 0.058, 0.05, 0.047, 0.036]
+        _schlauch(f, "Bein", punkte, radien, 20, lambda i, k, p: navy * (0.9 if k % 10 == 0 else 1.0) * (1.08 if p.normal.x * seite > 0.6 else 1.0),
+                  _bein(seite), zu=False, teilung=3)
+        # Hoher Stiefel: Schaft bis übers Knie, weißer Kniepanzer, Absatz, weiße Spitze
+        schaft = [a_ + Vector((0, 0.005, -0.02)), a_ + Vector((0, 0.0, 0.1)), k_.lerp(a_, 0.45), k_ + Vector((0, 0, -0.02)), k_ + Vector((0, 0.0, 0.045))]
+        _schlauch(f, "Stiefelschaft", schaft, [0.042, 0.043, 0.052, 0.058, 0.063], 20,
+                  lambda i, k, p: leder * (0.88 if k % 5 == 0 else 1.0) * (1.15 if i > 3.4 else 1.0), _bein(seite), zu=False, teilung=2)
+        _platte(f, "Kniepanzer", k_ + Vector((0, -0.055, 0.02)), 0.17, 0.045, 0.02, Z, -Y,
+                lambda i, k, p: weiss if p.normal.dot(-Y) > 0.3 else weiss_schatten, _bein(seite), spitz=0.95, wolbung=1.2)
+        _platte(f, "Kniezacke", k_ + Vector((0.035 * seite, -0.04, -0.01)), 0.1, 0.02, 0.012, Vector((0.3 * seite, 0, 1)), Vector((seite, -1, 0)),
+                lambda i, k, p: weiss_schatten, _bein(seite), spitz=0.95)
+        fuss = [(Vector((0.088 * seite, 0.05, 0.035)), X, Z, 0.036, 0.035), (Vector((0.088 * seite, 0.03, 0.012)), X, Z, 0.04, 0.02),
+                (Vector((0.088 * seite, -0.03, 0.04)), X, Z, 0.042, 0.04), (Vector((0.088 * seite, -0.09, 0.035)), X, Z, 0.036, 0.03),
+                (Vector((0.088 * seite, -0.14, 0.03)), X, Z, 0.022, 0.02), (Vector((0.088 * seite, -0.165, 0.028)), X, Z, 0.004, 0.004)]
 
-    # ================= Kopf: junges Gesicht =================
+        def stiefel_farbe(i, k, p):
+            if p.center.y < -0.075:
+                return weiss if p.normal.z > -0.3 else weiss_schatten                 # weiße Spitze
+            if p.center.z < 0.012:
+                return leder_dunkel * 0.6
+            return leder
+        f.loft("Stiefel", fuss, 16, stiefel_farbe, lambda co, sn=sn: {f"Fuss.{sn}": 1.0}, oben_zu=True, unten_zu=True, teilung=3, glatt=True)
+        f.kiste("Absatz", (0.088 * seite, 0.045, 0.02), (0.03, 0.03, 0.04), leder_dunkel, lambda co, sn=sn: {f"Fuss.{sn}": 1.0})
+
+    # ================= Mieder: Brustschalen, Mondsichel, Rüschen =================
+    for s in (1, -1):
+        mitte = Vector((0.052 * s, -0.082, 1.31))
+        f.kugel("Brustschale", mitte, (0.055, 0.04, 0.05), lambda poly: blau * (0.85 + 0.25 * max(0.0, -poly.normal.y)), _rumpf, 16, 10)
+        # weiße Panzerfassung um die Schale, spitz zur Mitte
+        _platte(f, "Schalenrand", mitte + Vector((0.008 * s, -0.03, 0.035)), 0.11, 0.018, 0.01, Vector((-s * 0.9, 0, -0.35)), Vector((0, -1, 0.5)),
+                lambda i, k, p: weiss, _rumpf, spitz=0.9, wolbung=0.6)
+    f.kiste("Miedersteg", (0, -0.106, 1.34), (0.018, 0.012, 0.09), navy_dunkel, _rumpf)
+    # Mondsichel: leuchtender Halbmond auf der Brust
+    bm = bmesh.new()
+    rand = []
+    for k in range(13):
+        w = math.radians(40 + k * 280 / 12)
+        aussen = Vector((math.cos(w) * 0.026, -0.118, 1.39 + math.sin(w) * 0.026))
+        innen = Vector((math.cos(w) * 0.017 + 0.009, -0.119, 1.39 + math.sin(w) * 0.019))
+        rand.append((bm.verts.new(aussen), bm.verts.new(innen)))
+    for (a, b), (c, d) in zip(rand, rand[1:]):
+        bm.faces.new((a, c, d, b))
+    mond = f._objekt(bm, "Mond", lambda poly: kristall * 1.3, _rumpf)
+    for poly in mond.data.polygons:
+        if poly.normal.y > 0:
+            poly.flip()
+    f.kugel("Mondfassung", (0, -0.11, 1.39), (0.032, 0.008, 0.032), navy_dunkel, _rumpf, 16, 6, glatt=False)
+    # Saum des Mieders: gezackter dunkler Rand
+    for k in range(10):
+        w = math.pi * (0.2 + 0.6 * k / 9)
+        p = Vector((math.cos(w) * 0.12, -math.sin(w) * 0.09, 1.215))
+        _platte(f, "Zacke", p, 0.05, 0.016, 0.006, -Z, Vector((math.cos(w), -math.sin(w), 0)), lambda i, k2, p2: navy_dunkel, _rumpf, spitz=0.95)
+
+    # ================= Gürtel: gekreuzte Lederriemen, weiße Schnalle, Federplatten =================
+    for neig, dz in ((8, 0.0), (-10, 0.03)):
+        q = Quaternion(Y, math.radians(neig))
+        ringe = [(Vector((0, 0.005, 0.965 + dz)) + q @ Vector((0, 0, -0.018)), q @ X, Y, 0.17, 0.118),
+                 (Vector((0, 0.005, 0.965 + dz)) + q @ Vector((0, 0, 0.018)), q @ X, Y, 0.172, 0.12)]
+        f.loft("Riemen", ringe, 48, lambda i, k, p: leder * (0.85 if k % 6 == 0 else 1.0), _rumpf, teilung=1)
+    _platte(f, "Schnalle", Vector((0, -0.125, 0.98)), 0.06, 0.028, 0.012, X, -Y, lambda i, k, p: weiss, _rumpf, spitz=0.3, wolbung=0.5)
+    f.kugel("Schnallenstein", (0, -0.134, 0.98), (0.012, 0.005, 0.012), kristall, _rumpf, 10, 6, glatt=False)
+    for s in (1, -1):
+        for j, (dz, laenge) in enumerate(((0.0, 0.22), (-0.03, 0.18), (-0.06, 0.14))):
+            mitte = Vector((0.16 * s, -0.02 + 0.012 * j, 0.86 + dz))
+            _platte(f, "Hueftfeder", mitte, laenge, 0.035 - 0.005 * j, 0.01, Vector((0.25 * s, 0.1, -1)), Vector((s, -0.3, 0)),
+                    lambda i, k, p, j=j: (weiss if j != 1 else weiss_schatten) * (0.95 + 0.05 * (k % 2)), _huefte_bein, spitz=0.95, wolbung=0.8)
+
+    # ================= Arme: Haut, kurze Ärmel, Armschienen, Handschuhe =================
+    for seite in (1, -1):
+        s_, e_, h_ = _spiegel(SCHULTER, seite), _spiegel(ELLBOGEN, seite), _spiegel(HANDGELENK, seite)
+        punkte = [s_ + Vector((-0.02 * seite, 0, 0.02)), s_.lerp(e_, 0.5), e_, e_.lerp(h_, 0.5), h_]
+        _schlauch(f, "Arm", punkte, [0.05, 0.042, 0.036, 0.034, 0.028], 16, lambda i, k, p: haut, _arm(seite), zu=False, teilung=3)
+        # kurzer, dunkler Ärmel
+        _schlauch(f, "Aermel", [s_ + Vector((-0.02 * seite, 0, 0.03)), s_.lerp(e_, 0.18), s_.lerp(e_, 0.36)], [0.058, 0.05, 0.047], 16,
+                  lambda i, k, p: navy_dunkel * (1.15 if i > 1.6 else 1.0), _arm(seite), zu=False, teilung=2)
+        # Armschiene: weiß, zur Hand hin weiter, mit spitzem Flügel
+        schiene = [e_.lerp(h_, 0.2), e_.lerp(h_, 0.55), e_.lerp(h_, 0.92)]
+        _schlauch(f, "Armschiene", schiene, [0.04, 0.042, 0.038], 16, lambda i, k, p: weiss if k % 8 else weiss_schatten, _arm(seite), zu=False, teilung=2)
+        q1, q2 = _achsen(e_, h_)
+        _platte(f, "Schienenfluegel", e_.lerp(h_, 0.45) + (Vector((seite, 0, 0)) - Vector((seite, 0, 0)).project(h_ - e_)).normalized() * 0.04,
+                0.16, 0.022, 0.01, (e_ - h_), Vector((seite, 0, 0)), lambda i, k, p: weiss, _arm(seite), spitz=0.95, wolbung=0.6)
+        f.loft("Schienenband", [(e_.lerp(h_, 0.62), q1, q2, 0.044, 0.044), (e_.lerp(h_, 0.68), q1, q2, 0.044, 0.044)], 16,
+               lambda i, k, p: blau, _arm(seite), oben_zu=True, unten_zu=True)
+    # Weißer Schulterpanzer rechts, geschichtet
+    sr = _spiegel(SCHULTER, -1)
+    schulter_gewicht = lambda co: _mischen(("Oberarm.R", 0.65), ("Brust", 0.35))
+    f.kugel("Schulterkappe", sr + Vector((-0.02, 0, 0.035)), (0.07, 0.068, 0.045), lambda poly: weiss if poly.normal.z > 0.3 else weiss_schatten,
+            schulter_gewicht, 20, 10, glatt=True)
+    for j in range(3):
+        mitte = sr + Vector((-0.06 - 0.012 * j, 0.0, 0.0 - 0.035 * j))
+        _platte(f, "Schulterplatte", mitte, 0.16 - 0.025 * j, 0.06 - 0.008 * j, 0.012, Vector((0, 1, -0.25)), Vector((-1, 0, 0.35)),
+                lambda i, k, p, j=j: (weiss if j % 2 == 0 else weiss_schatten) * (0.96 + 0.04 * (k % 2)), schulter_gewicht, spitz=0.6, wolbung=1.4)
+    f.stern("Schulterstein", sr + Vector((-0.03, -0.05, 0.07)), Vector((-0.3, -1, 0.6)), 0.014, kristall, lambda co: _mischen(("Oberarm.R", 0.6), ("Brust", 0.4)), zacken=4)
+
+    # Hände: links Faust um den Bogengriff, rechts um einen senkrechten Stiel; braune, fingerlose Handschuhe
+    handschuh = leder
+    f.metaball("HandL", _faust(BOGEN_GRIFF, Y, 1, 0.0082), 0.0028, 2000,
+               lambda poly: handschuh if poly.center.z > BOGEN_GRIFF.z + 0.012 else haut, lambda co: {"Hand.L": 1.0}, glatt=True)
+    f.metaball("HandR", _faust(GRIFF_R, Z, -1, 0.0082), 0.0028, 2000,
+               lambda poly: handschuh if poly.center.z > GRIFF_R.z + 0.022 else haut, lambda co: {"Hand.R": 1.0}, glatt=True)
+
+    # ================= Kopf: schmales Gesicht, große Augen, Elfenohren =================
     kopf = [
-        (Vector((0, 0.005, 1.75)), (0.09, 0.102, 0.11)),                 # Schädel
-        (Vector((0, -0.022, 1.685)), (0.076, 0.072, 0.068)),             # Kiefer und Wangen
-        (Vector((0.048, -0.07, 1.72)), (0.028, 0.024, 0.02)),            # Wangenknochen
-        (Vector((-0.048, -0.07, 1.72)), (0.028, 0.024, 0.02)),
-        (Vector((0, -0.082, 1.776)), (0.064, 0.026, 0.018)),             # Brauenbogen
-        (Vector((0, -0.1, 1.742)), (0.012, 0.02, 0.028)),                # gerade Nase
-        (Vector((0, -0.114, 1.718)), (0.014, 0.02, 0.018)),
-        (Vector((0, -0.124, 1.706)), (0.016, 0.016, 0.014)),
-        (Vector((0.016, -0.114, 1.702)), (0.01, 0.011, 0.009)),          # Nasenflügel
-        (Vector((-0.016, -0.114, 1.702)), (0.01, 0.011, 0.009)),
-        (Vector((0, -0.078, 1.642)), (0.036, 0.03, 0.028)),              # kantiges Kinn
-        (Vector((0, -0.098, 1.672)), (0.019, 0.011, 0.007)),             # Unterlippe
-        (Vector((0, -0.105, 1.679)), (0.021, 0.01, 0.0032), True),       # Mundspalte
-        (Vector((0, 0.0, 1.61)), (0.05, 0.05, 0.06)),                    # Hals
+        (KOPF + Vector((0, 0.01, 0.02)), (0.078, 0.092, 0.098)),            # Schädel
+        (KOPF + Vector((0, -0.028, -0.04)), (0.064, 0.064, 0.056)),         # Wangen
+        (KOPF + Vector((0, -0.07, -0.085)), (0.024, 0.024, 0.02)),          # spitzes Kinn
+        (KOPF + Vector((0, -0.05, -0.07)), (0.045, 0.04, 0.03)),            # Kiefer
+        (KOPF + Vector((0, -0.08, 0.02)), (0.056, 0.02, 0.016)),            # Brauenbogen
+        (KOPF + Vector((0, -0.088, -0.012)), (0.008, 0.014, 0.02)),         # kleine Nase
+        (KOPF + Vector((0, -0.096, -0.026)), (0.009, 0.01, 0.008)),
+        (KOPF + Vector((0, -0.085, -0.058)), (0.016, 0.01, 0.007)),         # volle Unterlippe
+        (KOPF + Vector((0, -0.087, -0.045)), (0.015, 0.008, 0.005)),        # Oberlippe
+        (KOPF + Vector((0, -0.086, -0.05)), (0.016, 0.009, 0.0026), True),  # Mundspalte
+        (KOPF + Vector((0, 0.005, -0.1)), (0.04, 0.04, 0.05)),              # Hals
     ]
     for s in (1, -1):
-        kopf += [
-            (_spiegel(AUGE, s) + Vector((0, -0.006, 0)), (0.019, 0.013, 0.013), True),       # Augenhöhle
-            (_spiegel(AUGE, s) + Vector((0, -0.007, 0.01)), (0.017, 0.009, 0.005)),          # Oberlid
-            (Vector((0.092 * s, 0.008, 1.735)), (0.013, 0.028, 0.04)),                        # Ohr
-        ]
+        kopf.append((_spiegel(AUGE, s) + Vector((0, -0.004, 0)), (0.021, 0.013, 0.015), True))    # große Augenhöhle
+    lippe_mitte = KOPF + Vector((0, -0.084, -0.056))
 
     def gesicht(poly):
         p = poly.center
-        c = haut * (0.95 if p.z < 1.66 else 1.0)
-        if (p - Vector((0, -0.098, 1.672))).length < 0.018 and p.y < -0.09:
+        if (p - lippe_mitte).length < 0.016 and p.y < -0.075:
             return lippe
-        # Kurzer Bart an Kinn, Kiefer und über der Lippe
-        bart = p.y < -0.02 and (p.z < 1.672 or (abs(p.x) < 0.03 and 1.683 < p.z < 1.695 and p.y < -0.1)) and p.z > 1.6
-        if bart and not (p - Vector((0, -0.098, 1.672))).length < 0.02:
-            return haar * (0.9 + 0.1 * ((poly.index * 7) % 3) / 2)
-        rosig = math.exp(-(((abs(p.x) - 0.05) ** 2 + (p.z - 1.718) ** 2) / 0.016 ** 2)) if p.y < -0.05 else 0.0
-        return c.lerp(wange, rosig * 0.6)
-
-    f.metaball("Kopf", kopf, 0.0045, 5000, gesicht,
-               lambda co: _mischen(("Kopf", weich(1.6, 1.66, co.z)), ("Hals", 1 - weich(1.6, 1.66, co.z))), glatt=True)
+        rosig = math.exp(-(((abs(p.x) - 0.042) ** 2 + (p.z - KOPF.z + 0.035) ** 2) / 0.014 ** 2)) if p.y < -0.04 else 0.0
+        return haut.lerp(wange, rosig * 0.55)
+    f.metaball("Kopf", kopf, 0.004, 5200, gesicht,
+               lambda co: _mischen(("Kopf", weich(1.52, 1.58, co.z)), ("Hals", 1 - weich(1.52, 1.58, co.z))), glatt=True)
     for s in (1, -1):
         auge = _spiegel(AUGE, s)
-        f.kugel("Augapfel", auge, (0.012, 0.012, 0.012), farbe("#EDE6DA"), kopf_gewicht, 16, 12)
-        f.kugel("Iris", auge + Vector((-0.001 * s, -0.0103, 0.0005)), (0.0068, 0.0028, 0.0068), farbe("#4E8A4A"), kopf_gewicht, 14, 8)
-        f.kugel("Pupille", auge + Vector((-0.001 * s, -0.012, 0.0005)), (0.0034, 0.0016, 0.0034), farbe("#0E1116"), kopf_gewicht, 10, 6)
-        f.kugel("Glanz", auge + Vector((-0.004 * s, -0.0126, 0.0035)), (0.0016, 0.0008, 0.0016), farbe("#FFFFFF"), kopf_gewicht, 8, 4)
-        f.kugel("Nasenloch", Vector((0.009 * s, -0.122, 1.694)), (0.004, 0.0035, 0.0025), nasenloch, kopf_gewicht, 10, 6)
-        # Gerade, kräftige Brauen
-        for j in range(7):
-            x = 0.014 + 0.0095 * j
-            basis = Vector((x * s, -0.104 + 1.3 * (x - 0.03) ** 2, 1.772 + 0.004 * math.sin(math.pi * x / 0.08)))
-            richtung = Vector((0.7 * s, -0.2, 0.3 + r.uniform(-0.1, 0.15))).normalized()
-            laenge = 0.016 + 0.01 * (j / 6)
-            f.straehne("Braue", [basis, basis + richtung * laenge * 0.6, basis + richtung * laenge], 0.0055, 0.0012, haar_dunkel, kopf_gewicht, 6, 0.4, 0.6)
-    # Schnurrbart
+        f.kugel("Augapfel", auge, (0.0165, 0.012, 0.015), farbe("#F4F0FA"), kopf_gewicht, 16, 12)
+        f.kugel("Iris", auge + Vector((-0.001 * s, -0.0105, 0.0005)), (0.0105, 0.003, 0.0115), iris, kopf_gewicht, 16, 8)
+        f.kugel("Pupille", auge + Vector((-0.001 * s, -0.0125, 0.0005)), (0.0045, 0.0016, 0.0055), farbe("#1A1030"), kopf_gewicht, 10, 6)
+        f.kugel("Glanz", auge + Vector((-0.004 * s, -0.0132, 0.0045)), (0.002, 0.0008, 0.002), farbe("#FFFFFF"), kopf_gewicht, 8, 4)
+        # Wimpern: dunkler Bogen über dem Auge, außen hochgezogen
+        punkte = [auge + Vector((0.014 * s, -0.006, 0.007)), auge + Vector((0.0, -0.011, 0.012)), auge + Vector((-0.016 * s, -0.004, 0.009)),
+                  auge + Vector((-0.024 * s, 0.002, 0.016))]
+        f.straehne("Wimpern", list(reversed(punkte)) if s > 0 else punkte, 0.0035, 0.001, farbe("#2A2040"), kopf_gewicht, 6, 0.0, 0.5)
+        # feine Braue
+        brauen = [auge + Vector((0.012 * s, -0.008, 0.027)), auge + Vector((-0.004 * s, -0.012, 0.032)), auge + Vector((-0.022 * s, -0.006, 0.03))]
+        f.straehne("Braue", brauen, 0.0028, 0.001, haar_schatten * 0.8, kopf_gewicht, 5, 0.0, 0.5)
+        # Lange, spitze Elfenohren nach hinten oben
+        ohr = [KOPF + Vector((0.074 * s, 0.005, -0.012)), KOPF + Vector((0.09 * s, 0.022, 0.012)), KOPF + Vector((0.108 * s, 0.04, 0.04)),
+               KOPF + Vector((0.125 * s, 0.058, 0.075))]
+        f.straehne("Ohr", ohr, 0.02, 0.002, haut, kopf_gewicht, 10, 0.0, 0.45)
+        f.kugel("Ohrring", KOPF + Vector((0.078 * s, 0.0, -0.03)), (0.006, 0.006, 0.006), kristall, kopf_gewicht, 8, 4)
+    f.kugel("Stirnstein", KOPF + Vector((0, -0.088, 0.045)), (0.007, 0.004, 0.01), kristall, kopf_gewicht, 8, 6, glatt=False)
+
+    # ================= Haar: Kappe, Seitensträhnen, Pony, hoher Pferdeschwanz =================
+    f.metaball("Haar", [(KOPF + Vector((0, 0.018, 0.035)), (0.086, 0.098, 0.096)), (KOPF + Vector((0, 0.05, 0.0)), (0.08, 0.07, 0.08))], 0.008, 1200,
+               lambda poly: haar if poly.normal.z > 0.2 else haar_schatten, kopf_gewicht)
+    # Glatt nach hinten gestrichenes Haar: eine Schale mit sanften Rillen zum Pferdeschwanz hin
+    def haar_form(th, ph):
+        return 1.0 + 0.025 * math.sin(th * 14) * math.cos(ph) + 0.06 * max(0.0, -math.cos(th)) * max(0.0, math.sin(ph))
+
+    def haar_farbe(poly):
+        p, n = poly.center, poly.normal
+        glanz = abs(math.sin(math.atan2(p.x, -p.y + 0.02) * 7)) < 0.25 and n.z > 0.3
+        return haar_glanz if glanz else (haar if n.z > -0.1 else haar_schatten)
+    _schale(f, "Haarschale", KOPF + Vector((0, 0.015, 0.03)), 0.088, 0.1, 0.1, (-150, 150), (-10, 90), haar_farbe, kopf_gewicht, seg=(40, 12), form=haar_form)
+    _schale(f, "Hinterkopf", KOPF + Vector((0, 0.02, 0.025)), 0.086, 0.098, 0.1, (110, 250), (-60, 0), haar_farbe, kopf_gewicht, seg=(20, 8), form=haar_form)
+    # Seitensträhnen, die das Gesicht rahmen; ein Pony fällt schräg übers rechte Auge
     for s in (1, -1):
-        for j in range(4):
-            start = Vector((s * (0.004 + 0.005 * j), -0.116, 1.69))
-            ende = Vector((s * (0.028 + 0.004 * j), -0.106, 1.678 - 0.003 * j))
-            f.straehne("Schnurrbart", [start, start.lerp(ende, 0.5) + Vector((0, -0.003, 0)), ende], 0.0045, 0.0012, haar, kopf_gewicht, 5, 0.3, 0.7)
-    # Haar: Grundmasse und Strähnen, die unter der Kapuze in die Stirn und an den Seiten hervorkommen
-    f.metaball("Haar", [(Vector((0, 0.02, 1.775)), (0.098, 0.1, 0.1)), (Vector((0, 0.06, 1.68)), (0.09, 0.06, 0.07))], 0.009, 800,
-               lambda poly: haar, kopf_gewicht)
-    for n in range(14):
-        theta = math.radians(-60 + 120 * n / 13 + r.uniform(-4, 4))
-        aussen = Vector((math.sin(theta), -math.cos(theta), 0))
-        start = aussen * 0.085 + Vector((0, 0.0, 1.82))
-        punkte = [start, start + aussen * 0.02 + Vector((0, -0.01, -0.03)), start + aussen * 0.03 + Vector((0, -0.005, -0.06 - 0.02 * abs(math.sin(theta))))]
-        f.straehne("Strähne", punkte, r.uniform(0.01, 0.014), 0.003, haar * r.uniform(0.85, 1.05), kopf_gewicht, 6, 0.4, 0.7)
-
-    # ================= Kapuze (auf) und Umhang =================
-    hauptmitte = Vector((0, 0.012, 1.745))
-
-    def kapuzen_form(th, ph):
-        # Vorne weiter (Gesichtsöffnung), oben leicht spitz nach hinten
-        vorne = max(0.0, math.cos(th))
-        return 1.0 + 0.1 * vorne * max(0.0, math.sin(ph)) + 0.05 * math.sin(ph) ** 8
-
-    def kapuzen_farbe(poly):
-        rand = abs(math.degrees(math.atan2(poly.center.x, -(poly.center.y - hauptmitte.y)))) < 50
-        return umhang_dunkel if rand else umhang * (0.92 + 0.08 * ((poly.index * 13) % 5) / 4)
-
-    kapuzen_gewicht = lambda co: _mischen(("Kopf", weich(1.6, 1.7, co.z)), ("Brust", 1 - weich(1.6, 1.7, co.z)))
-    _schale(f, "Kapuze", hauptmitte, 0.128, 0.138, 0.145, (48, 312), (-55, 88), kapuzen_farbe, kapuzen_gewicht, seg=(40, 14), form=kapuzen_form)
-    _schale(f, "KapuzeInnen", hauptmitte, 0.12, 0.13, 0.137, (48, 312), (-55, 88), lambda poly: umhang_innen, kapuzen_gewicht, innen=True, seg=(32, 12),
-            form=kapuzen_form)
-    # Zipfel der Kapuze fällt über den Rücken
-    zipfel = [hauptmitte + Vector((0, 0.13, 0.07)), hauptmitte + Vector((0, 0.17, 0.0)), hauptmitte + Vector((0, 0.2, -0.1)), hauptmitte + Vector((0, 0.22, -0.2))]
-    f.straehne("Zipfel", zipfel, 0.05, 0.012, umhang, kapuzen_gewicht, 10, 0.0, 0.5)
-    # Kragen und Umhang über Schultern und Rücken
-    f.loft("Kragen", [(Vector((0, 0.01, 1.52)), X, Y, 0.215, 0.16, faltig(0.03)), (Vector((0, 0.01, 1.6)), X, Y, 0.12, 0.11, faltig(0.02))], 48,
-           lambda i, k, p: umhang * (0.95 if k % 6 else 0.85), _rumpf_gewichte, teilung=2)
-
-    def umhang_form(th, ph):
-        # Nach unten weiter, sanfte Falten
-        unten = max(0.0, -math.sin(ph))
-        return 1.0 + 0.35 * unten + 0.04 * math.sin(th * 9 + ph * 2) * unten
-
-    umhang_gewicht = lambda co: _mischen(("Brust", weich(1.05, 1.35, co.z)), ("Bauch", 1 - weich(1.05, 1.35, co.z)))
-    mitte_umhang = Vector((0, 0.03, 1.5))
-    _schale(f, "Umhang", mitte_umhang, 0.2, 0.15, 0.62, (95, 265), (-80, 5), lambda poly: umhang * (0.9 + 0.1 * ((poly.index * 7) % 5) / 4),
-            umhang_gewicht, seg=(36, 16), form=umhang_form)
-    _schale(f, "UmhangInnen", mitte_umhang, 0.192, 0.142, 0.61, (95, 265), (-80, 5), lambda poly: umhang_innen, umhang_gewicht, innen=True,
-            seg=(28, 12), form=umhang_form)
-    f.kugel("Spange", (0.13, -0.11, 1.52), (0.02, 0.008, 0.02), gold, _rumpf_gewichte, 12, 6, glatt=False)
-    f.stern("Blatt", Vector((0.13, -0.119, 1.52)), -Y, 0.014, gruen_hell, _rumpf_gewichte, zacken=3)
-
-    # ================= Köcher mit Pfeilen und Gurt =================
-    unten_k, oben_k = Vector((0.1, 0.26, 1.02)), Vector((-0.14, 0.24, 1.6))
-    achse = (oben_k - unten_k).normalized()
-    q = achse.cross(Y).normalized()
-    q2 = achse.cross(q).normalized()
-    ringe = [(unten_k.lerp(oben_k, t), q, q2, rad, rad * 0.85) for t, rad in ((0.0, 0.05), (0.05, 0.062), (0.9, 0.068), (1.0, 0.07))]
-
-    def koecher_farbe(i, k, p):
-        t = (p.center - unten_k).dot(achse) / (oben_k - unten_k).length
-        if t > 0.9 or t < 0.08:
-            return leder_dunkel
-        if abs(t - 0.5) < 0.03:
-            return messing
-        return leder * (0.9 + 0.1 * ((k + int(t * 8)) % 3) / 2)
-
-    f.loft("Koecher", ringe, 16, koecher_farbe, _rumpf_gewichte, unten_zu=True, teilung=2)
-    for n in range(7):
-        w = math.tau * n / 7
-        basis = oben_k + (q * math.cos(w) + q2 * math.sin(w)) * 0.035 - achse * 0.02
-        spitze = basis + achse * r.uniform(0.12, 0.18) + (q * math.cos(w) + q2 * math.sin(w)) * 0.01
-        f.loft("Pfeilschaft", [(basis, q, q2, 0.006, 0.006), (spitze, q, q2, 0.006, 0.006)], 5, lambda i, k, p: holz, _rumpf_gewichte, oben_zu=True)
-        feder = farbe("#C8322A") if n % 3 else farbe("#F0EADA")
         for j in range(3):
-            v = w + math.tau * j / 3
-            aus = (q * math.cos(v) + q2 * math.sin(v))
-            bm = bmesh.new()
-            for seite in (1, -1):
-                # Beide Seiten der Feder (eigene Eckpunkte, sonst gäbe es die Fläche doppelt)
-                a = bm.verts.new(spitze - achse * 0.09)
-                b = bm.verts.new(spitze - achse * 0.01)
-                c = bm.verts.new(spitze - achse * 0.07 + aus * 0.022)
-                bm.faces.new((a, b, c) if seite > 0 else (a, c, b))
-            f._objekt(bm, "Feder", lambda poly, feder=feder: feder, _rumpf_gewichte)
-    gurt = [Vector((-0.17, -0.1, 1.5)), Vector((-0.08, -0.155, 1.36)), Vector((0.06, -0.16, 1.2)), Vector((0.17, -0.12, 1.06))]
-    f.loft("Gurt", [(p, X, Y, 0.024, 0.006) for p in gurt], 8, lambda i, k, p: leder_dunkel, _rumpf_gewichte, oben_zu=True, unten_zu=True, teilung=3)
-    f.kugel("Gurtschnalle", (0.0, -0.162, 1.27), (0.018, 0.006, 0.016), messing, _rumpf_gewichte, 8, 4, glatt=False)
+            start = KOPF + Vector((0.07 * s, -0.05 + 0.02 * j, 0.06))
+            punkte = [start, start + Vector((0.012 * s, -0.012, -0.06)), start + Vector((0.006 * s, -0.01, -0.12 - 0.02 * j)),
+                      start + Vector((-0.004 * s, -0.004, -0.17 - 0.03 * j))]
+            f.straehne("Seitenstraehne", punkte, 0.016, 0.003, haar * r.uniform(0.92, 1.02), kopf_gewicht, 8, 0.3, 0.6, glatt=True)
+    pony = [KOPF + Vector((0.02, -0.08, 0.1)), KOPF + Vector((-0.02, -0.1, 0.06)), KOPF + Vector((-0.05, -0.102, 0.02)), KOPF + Vector((-0.07, -0.085, -0.03))]
+    f.straehne("Pony", pony, 0.024, 0.004, haar_glanz * 0.96, kopf_gewicht, 10, 0.2, 0.5, glatt=True)
+    # Pferdeschwanz: vom Hinterkopf steil hoch, dann in großem Bogen nach hinten und weit hinab
+    ansatz = KOPF + Vector((0, 0.07, 0.11))
+    schwanz_gewicht = lambda co: _mischen(("Kopf", 1 - weich(1.8, 1.55, co.z) * weich(0.05, 0.2, co.y)), ("Hut", weich(1.8, 1.55, co.z) * weich(0.05, 0.2, co.y)))
+    def schwanz_punkt(t, seitlich=0.0, tief=0.0):
+        # hoch (bis ~1,98 m), in großem Bogen zurück (bis ~0,45 m hinter dem Kopf) und hinab bis ~0,9 m
+        y = 0.07 + 0.38 * math.sin(t * math.pi * 0.62) ** 0.9 + 0.05 * t
+        z = 1.77 + 0.21 * math.sin(t * math.pi * 1.05) - 0.9 * t ** 1.8 - tief * t
+        x = seitlich * (0.015 + 0.06 * t)
+        return Vector((x, y, z))
 
-    # ================= Bogen (linke Hand) =================
+    linie = [schwanz_punkt(j / 16) for j in range(17)]
+    ringe = []
+    for j, p in enumerate(linie):
+        t = j / 16
+        richtung = (linie[min(j + 1, 16)] - linie[max(j - 1, 0)]).normalized()
+        quer = X
+        normale = richtung.cross(quer).normalized()
+        # am Band schmal, dann voll und breit, zur Spitze fein auslaufend
+        r_ = 0.034 + 0.05 * math.sin(math.pi * min(1.0, t * 1.6)) ** 0.7 * (1 - t) ** 0.35 + 0.004
+        form = lambda w, t=t: 1.0 + 0.1 * math.sin(w * 9 + t * 4) + 0.05 * math.sin(w * 17)
+        ringe.append((p, quer, normale, r_ * 1.15, r_ * 0.85, form))
+
+    def schwanz_farbe(i, k, p):
+        glanz = (k % 9) in (2, 3) and p.normal.z > 0.0
+        return haar_glanz if glanz else (haar if p.normal.z > -0.2 else haar_schatten)
+    f.loft("Pferdeschwanz", ringe, 28, schwanz_farbe, schwanz_gewicht, oben_zu=True, unten_zu=True, teilung=2, glatt=True)
+    # Locken, die sich oben und an den Seiten aus der Masse lösen
+    for n in range(7):
+        seitlich = (n - 3) / 3.0
+        punkte = [schwanz_punkt(0.15 + 0.1 * j, seitlich * 1.6, 0.02 * n) + Vector((0, 0, 0.03 * (1 - j / 8))) for j in range(9)]
+        f.straehne("Locke", punkte, 0.02, 0.003, haar * (0.95 + 0.05 * (n % 2)), schwanz_gewicht, 8, 0.4, 0.55, glatt=True)
+    f.loft("Haarband", [(ansatz + Vector((0, 0, -0.01)), X, Y, 0.036, 0.034), (ansatz + Vector((0, 0.005, 0.025)), X, Y, 0.034, 0.032)], 16,
+           lambda i, k, p: navy_hell, kopf_gewicht, oben_zu=True, unten_zu=True)
+    # Kristallschmuck am Pferdeschwanz: ein Fächer leuchtender Kristalle
+    for j, (w, laenge) in enumerate(((-35, 0.1), (-12, 0.13), (12, 0.13), (35, 0.1), (0, 0.16))):
+        a = math.radians(w)
+        richtung = Vector((math.sin(a), -0.35, math.cos(a))).normalized()
+        basis = ansatz + Vector((0, -0.03, 0.02))
+        _platte(f, "Haarkristall", basis + richtung * laenge * 0.5, laenge, 0.018, 0.01, richtung, Vector((0, -1, 0.3)),
+                lambda i, k, p, j=j: kristall if j % 2 == 0 else blau_hell, kopf_gewicht, spitz=0.95, wolbung=0.3)
+
+    # ================= Schulterumhang mit Stehkragen, lange Umhangbahnen =================
+    hals = Vector((0, 0.012, 1.5))
+
+    def kragen_form(th, ph):
+        # Nach oben weit aufstehend, vorne offen
+        return 1.0 + 0.35 * max(0.0, math.sin(ph))
+
+    kragen_gewicht = lambda co: _mischen(("Brust", 1 - weich(1.55, 1.64, co.z) * 0.4), ("Hals", weich(1.55, 1.64, co.z) * 0.4))
+    _schale(f, "Stehkragen", hals + Vector((0, 0, 0.05)), 0.075, 0.07, 0.1, (38, 322), (-10, 70),
+            lambda poly: blau_hell if (poly.center - hals).length > 0.1 else blau, kragen_gewicht, seg=(32, 6), form=kragen_form)
+    _schale(f, "KragenInnen", hals + Vector((0, 0, 0.05)), 0.07, 0.065, 0.097, (38, 322), (-10, 70), lambda poly: navy_dunkel, kragen_gewicht, innen=True,
+            seg=(24, 5), form=kragen_form)
+
+    def capelet_form(th, ph):
+        unten = max(0.0, -math.sin(ph))
+        return 1.0 + 0.2 * unten + 0.05 * math.sin(th * 6) * unten
+
+    def capelet_farbe(poly):
+        p = poly.center
+        if p.z < 1.305:
+            return weiss                                                           # weißer Saum
+        # zum Saum hin heller, oben satt blau
+        return blau.lerp(blau_hell, weich(1.42, 1.32, p.z) * 0.6) * (0.92 + 0.12 * max(0.0, poly.normal.z))
+    # Glocke vom Kragen über die Schultern, vorne offen (dort sitzt die Mondsichel)
+    glocke = [(Vector((0, 0.012, 1.535)), 0.085, 0.075), (Vector((0, 0.01, 1.5)), 0.15, 0.11), (Vector((0, 0.008, 1.46)), 0.2, 0.135),
+              (Vector((0, 0.008, 1.41)), 0.215, 0.145), (Vector((0, 0.01, 1.35)), 0.222, 0.152), (Vector((0, 0.012, 1.3)), 0.226, 0.156)]
+    _glocke(f, "Schulterumhang", glocke, (28, 332), capelet_farbe, _rumpf, seg=48, welle=0.05)
+    _glocke(f, "UmhangFutter", [(m, rx * 0.97, ry * 0.97) for m, rx, ry in glocke], (28, 332), lambda poly: navy_dunkel, _rumpf, innen=True, seg=36,
+            welle=0.05)
+    f.kugel("Kragenschloss", (0, -0.1, 1.49), (0.018, 0.008, 0.018), weiss, _rumpf, 12, 6, glatt=False)
+    # Zwei lange Umhangbahnen hinten, hellblau, zur Spitze schmal
+    umhang_gewicht = lambda co: _mischen(("Brust", weich(1.0, 1.35, co.z)), ("Becken", 1 - weich(1.0, 1.35, co.z)))
+    for s in (1, -1):
+        punkte = [Vector((0.08 * s, 0.13, 1.4)), Vector((0.12 * s, 0.17, 1.1)), Vector((0.14 * s, 0.2, 0.8)), Vector((0.15 * s, 0.22, 0.5)),
+                  Vector((0.15 * s, 0.23, 0.36))]
+        ringe = []
+        for j, p in enumerate(punkte):
+            b = 0.085 * (1 - 0.55 * (j / 4) ** 2)
+            ringe.append((p, X, Y, b * 0.85, 0.006, lambda w: 1.0 + 0.25 * abs(math.cos(w)) * 0.0))
+
+        def bahn_farbe(i, k, p):
+            # oben kräftig blau, nach unten eisig hell
+            return blau.lerp(eisblau, min(1.0, i / 4.0))
+        f.loft("Umhangbahn", ringe, 16, bahn_farbe, umhang_gewicht, oben_zu=True, unten_zu=True, teilung=3, glatt=True)
+
+    # ================= Mondbogen (linke Hand) und erbeutbare Bögen =================
     from waffen import BOEGEN, bogen as bogen_bauen
     bogen_gewicht = lambda co: {"Hand.L": 1.0}
     anfang = len(f.teile)
@@ -374,22 +468,22 @@ def bogenschuetze(seed=31, name="Bogenschuetze"):
         bogen_bauen(f, art, BOGEN_GRIFF, bogen_gewicht)
         f.als_starr(art, "Hand.L", anfang)
 
-    # ================= Spitzhacke und Axt (rechte Hand, wie beim Magier) =================
+    # ================= Spitzhacke und Axt (rechte Hand) =================
     hand_gewicht = lambda co: {"Hand.R": 1.0}
     anfang = len(f.teile)
-    _spitzhacke(f, STAB_X, STAB_Y, hand_gewicht)
+    _spitzhacke(f, GRIFF_R.x, GRIFF_R.y, hand_gewicht)
     f.als_starr("Spitzhacke", "Hand.R", anfang)
     anfang = len(f.teile)
-    _axt(f, STAB_X, STAB_Y, hand_gewicht)
+    _axt(f, GRIFF_R.x, GRIFF_R.y, hand_gewicht)
     f.als_starr("Axt", "Hand.R", anfang)
 
-    # ================= Skelett (wie der Magier) =================
-    f.knochen_dazu("Becken", (0, 0, 0.95), (0, 0, 1.1), None, HOCH)
-    f.knochen_dazu("Bauch", (0, 0, 1.1), (0, 0, 1.3), "Becken", HOCH)
-    f.knochen_dazu("Brust", (0, 0, 1.3), (0, 0, 1.56), "Bauch", HOCH)
-    f.knochen_dazu("Hals", (0, 0, 1.56), (0, 0, 1.65), "Brust", HOCH)
-    f.knochen_dazu("Kopf", (0, 0, 1.65), (0, 0, 1.9), "Hals", HOCH)
-    f.knochen_dazu("Hut", (0, 0.02, 1.9), (0, 0.15, 2.0), "Kopf", HOCH)
+    # ================= Skelett (Namen wie beim Magier; „Hut“ trägt den Pferdeschwanz) =================
+    f.knochen_dazu("Becken", (0, 0, 0.93), (0, 0, 1.06), None, HOCH)
+    f.knochen_dazu("Bauch", (0, 0, 1.06), (0, 0, 1.26), "Becken", HOCH)
+    f.knochen_dazu("Brust", (0, 0, 1.26), (0, 0, 1.5), "Bauch", HOCH)
+    f.knochen_dazu("Hals", (0, 0, 1.5), (0, 0, 1.58), "Brust", HOCH)
+    f.knochen_dazu("Kopf", (0, 0, 1.58), (0, 0, 1.8), "Hals", HOCH)
+    f.knochen_dazu("Hut", (0, 0.1, 1.82), (0, 0.3, 1.7), "Kopf", HOCH)
     for seite, sn in ((1, "L"), (-1, "R")):
         f.knochen_dazu(f"Oberarm.{sn}", _spiegel(SCHULTER, seite), _spiegel(ELLBOGEN, seite), "Brust", HAENGT)
         f.knochen_dazu(f"Unterarm.{sn}", _spiegel(ELLBOGEN, seite), _spiegel(HANDGELENK, seite), f"Oberarm.{sn}", HAENGT)

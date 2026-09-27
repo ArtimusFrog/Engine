@@ -40,6 +40,7 @@ const MAT_WATER: f32 = 1.0;
 const MAT_FOLIAGE: f32 = 2.0;
 const MAT_EMISSIVE: f32 = 3.0;
 const MAT_GROUND: f32 = 4.0;
+const MAT_FIGUR: f32 = 6.0;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -769,11 +770,25 @@ fn shade(in: VertexOut, front: bool, texel: vec4<f32>, pattern_w: f32) -> vec4<f
         // Gegenlicht: Blätter leuchten durch, wenn die Sonne hinter ihnen steht.
         let behind = pow(max(dot(-view, g.sun_dir.xyz), 0.0), 3.0);
         translucent = g.sun_color.rgb * behind * 0.45 * visibility;
+    } else if (kind == MAT_FIGUR) {
+        // Helden-Look: Licht läuft weich um die Form, der Übergang ins Dunkle ist gemalt weich,
+        // Schatten sind nie ganz schwarz; Farben etwas kräftiger
+        let visibility = mix(0.5, 1.0, sun_visibility(in.world_pos, n));
+        let umlauf = clamp((n_dot_l + 0.4) / 1.4, 0.0, 1.0);
+        diffuse = smoothstep(0.05, 0.75, umlauf) * visibility * cloud_shadow(in.world_pos);
+        let grau = dot(albedo, vec3<f32>(0.299, 0.587, 0.114));
+        albedo = max(mix(vec3<f32>(grau), albedo, 1.15), vec3<f32>(0.0));
     } else if (n_dot_l > 0.0) {
         diffuse *= sun_visibility(in.world_pos, n);
     }
     let ambient = mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
     var color = night_grade(albedo * (ambient + g.sun_color.rgb * diffuse + translucent));
+    if (kind == MAT_FIGUR) {
+        // Kantenlicht: die Silhouette leuchtet leicht in Himmels- und Sonnenfarbe
+        let kante = pow(1.0 - max(dot(n, view), 0.0), 3.5);
+        let seite = 0.6 + 0.4 * max(dot(n, g.sun_dir.xyz), 0.0);
+        color += (g.sky_ambient.rgb * 1.3 + g.sun_color.rgb * 0.3) * kante * seite * in.material.y * 0.45;
+    }
     // Nasser Glanz: flache Flächen spiegeln bei Regen ein wenig den Himmel
     if (g.weather.y > 0.0 && kind != MAT_FOLIAGE && n.y > 0.6) {
         let fres = pow(1.0 - max(dot(n, view), 0.0), 5.0);

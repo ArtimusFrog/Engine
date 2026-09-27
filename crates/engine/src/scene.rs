@@ -55,6 +55,9 @@ pub enum Material {
     /// Farbe = unsichtbar – so blendet man es weich aus. `soft` (0–1): Kanten, die vom
     /// Betrachter wegzeigen, weich ausblenden (Kugeln wirken dann wie leuchtende Wolken).
     Glow { strength: f32, soft: f32 },
+    /// Spielfiguren im stilisierten Helden-Look: weich umlaufendes Licht, kräftigere Farben und
+    /// ein Kantenlicht, das die Silhouette vom Hintergrund abhebt. `rim` = Stärke (≈ 0.5–1.5).
+    Figur { rim: f32 },
     /// Boden der Landschaft: der Shader fügt feine Details hinzu (Grasbüschel, Farbflecken,
     /// Gesteinsschichten an Hängen), damit er aus der Nähe nicht glatt wirkt.
     Ground,
@@ -71,6 +74,7 @@ impl Material {
             Material::Emissive { glow } => [3.0, glow, 0.0, 0.0],
             Material::Ground => [4.0, 0.0, 0.0, 0.0],
             Material::Glow { strength, soft } => [5.0, strength, soft, 0.0],
+            Material::Figur { rim } => [6.0, rim, 0.0, 0.0],
         }
     }
 

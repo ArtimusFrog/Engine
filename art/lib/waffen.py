@@ -210,7 +210,7 @@ BOEGEN = ["bogen_eibe", "bogen_lang", "bogen_glut", "bogen_elfen", "bogen_sturm"
 # Länge, Standhöhe (Abstand Griff–Sehne), Recurve (wie stark sich die Enden zurückbiegen),
 # Breite der Wurfarme, Holzfarbe, zweite Farbe
 _BOGEN_ART = {
-    "Bogen": (1.36, 0.15, 0.0, 0.03, "#7A5230", "#5E3C20"),
+    "Bogen": (1.5, 0.14, 0.11, 0.042, "#EEF0F8", "#4E6FD8"),
     "bogen_eibe": (1.46, 0.15, 0.0, 0.032, "#C98A4A", "#8A4E28"),
     "bogen_lang": (1.72, 0.16, 0.0, 0.034, "#5A3A22", "#C8B48A"),
     "bogen_glut": (1.4, 0.15, 0.05, 0.034, "#2A2224", "#FF7A2A"),
@@ -228,13 +228,55 @@ def _bogen_linie(y, laenge, stand, recurve):
     return z
 
 
+def _klinge(f, name, basis, richtung, laenge, breite, farbe_von, gewicht, flach=0.35):
+    """Kristall- bzw. Zierklinge: vom Fuß breiter werdend, dann spitz zulaufend, flach."""
+    richtung = richtung.normalized()
+    quer = richtung.cross(X if abs(richtung.x) < 0.9 else Y).normalized()
+    quer2 = richtung.cross(quer).normalized()
+    ringe = [(basis, quer, quer2, breite * 0.4, breite * 0.4 * flach), (basis + richtung * laenge * 0.35, quer, quer2, breite, breite * flach),
+             (basis + richtung * laenge, quer, quer2, 0.001, 0.001)]
+    f.loft(name, ringe, 4, farbe_von, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+
+
+def _mondbogen_zier(f, griff, laenge, stand, recurve, gewicht):
+    """Verzierung des Mondbogens: Sichelbügel um den Griff, Edelstein, Kristallklingen an den Armen."""
+    weiss, silber, blau = farbe("#F4F6FC"), farbe("#C8D0E8"), farbe("#4E6FD8")
+    kristall, kristall_hell = farbe("#6FE0FF"), farbe("#C8F4FF")
+    # Sichelbügel: ein Bogen vor der Faust (Richtung -Z, zum Ziel), innen blau
+    ringe = []
+    for i in range(15):
+        t = i / 14
+        w = math.pi * (0.1 + 0.8 * t)
+        p = griff + Vector((0, -math.cos(w) * 0.16, -math.sin(w) * 0.1 - 0.02))
+        tangente = Vector((0, math.sin(w) * 0.16, -math.cos(w) * 0.1)).normalized()
+        dicke = 0.012 + 0.01 * math.sin(math.pi * t)
+        ringe.append((p, X, tangente.cross(X).normalized(), 0.02 + 0.012 * math.sin(math.pi * t), dicke))
+    f.loft("Sichelbuegel", ringe, 10, lambda i, k, p: blau if k in (4, 5, 6) else weiss, gewicht, oben_zu=True, unten_zu=True, teilung=2, glatt=True)
+    # Edelstein vorne am Bügel und kleine Zacken
+    stein = griff + Vector((0, 0, -0.125))
+    _klinge(f, "Mondstein", stein + Vector((0, 0, 0.02)), -Z, 0.07, 0.03, lambda i, k, p: kristall_hell if k % 2 else kristall, gewicht, flach=0.5)
+    _klinge(f, "Mondstein", stein + Vector((0, 0, 0.02)), Z, 0.03, 0.03, lambda i, k, p: kristall, gewicht, flach=0.5)
+    for s in (1, -1):
+        _klinge(f, "Buegelzacke", griff + Vector((0, s * 0.12, -0.06)), Vector((0, s * 0.4, -1)), 0.07, 0.02, lambda i, k, p: silber, gewicht)
+    # Kristallklingen an beiden Armen: je eine große nach vorne und eine kleinere nach außen
+    for s in (1, -1):
+        for anteil, groesse in ((0.42, 1.0), (0.72, 0.75)):
+            y = s * anteil * laenge / 2
+            z = _bogen_linie(y, laenge, stand, recurve)
+            basis = griff + Vector((0, y, z - 0.01))
+            _klinge(f, "Kristallklinge", basis, Vector((0, s * 0.35, -1)), 0.2 * groesse, 0.035 * groesse,
+                    lambda i, k, p: kristall_hell if k % 2 else kristall, gewicht)
+            _klinge(f, "Zierklinge", basis + Vector((0, s * 0.03, 0.01)), Vector((0, s * 1.0, -0.45)), 0.12 * groesse, 0.028 * groesse,
+                    lambda i, k, p: silber if k % 2 else weiss, gewicht)
+
+
 def bogen(f, art, griff, gewicht):
-    """Einer der Bögen (`art` aus BOEGEN oder der Jagdbogen „Bogen“), gegriffen bei `griff`."""
+    """Einer der Bögen (`art` aus BOEGEN oder der Mondbogen „Bogen“), gegriffen bei `griff`."""
     laenge, stand, recurve, breite, holz_hex, zweit_hex = _BOGEN_ART[art]
     holz, zweit = farbe(holz_hex), farbe(zweit_hex)
     leder = farbe("#43291A")
     gold, horn = farbe("#D8AE4A"), farbe("#EDE3CB")
-    sehne = farbe("#E8E0CC") if art != "bogen_sturm" else farbe("#BFE6FF")
+    sehne = farbe("#E8E0CC") if art not in ("bogen_sturm", "Bogen") else farbe("#BFE6FF")
     n = 26
     ringe = []
     for i in range(n):
@@ -246,6 +288,8 @@ def bogen(f, art, griff, gewicht):
         s = abs(y) / (laenge / 2)
         griffstueck = abs(y) < 0.07
         b = breite * (1.25 if griffstueck else (1.0 - 0.6 * s))
+        if art == "Bogen" and not griffstueck:
+            b = breite * (0.75 + 0.55 * math.sin(math.pi * min(1.0, s * 1.15)) - 0.45 * s * s)
         d = breite * (0.85 if griffstueck else (0.55 - 0.3 * s))
         ringe.append((griff + Vector((0, y, z)), X, quer, b, d))
 
@@ -254,6 +298,11 @@ def bogen(f, art, griff, gewicht):
         s = abs(y) / (laenge / 2)
         if abs(y) < 0.07:
             return leder * (0.75 if int(y * 90) % 2 else 1.0)                  # Ledergriff
+        if art == "Bogen":
+            # Mondbogen: weiß-silberne Arme mit blauer Mittelrille, Spitzen hellblau
+            if s > 0.9:
+                return farbe("#8AB0F0")
+            return zweit if k in (0, 9) else holz * (0.92 + 0.08 * max(0.0, p.normal.z))
         if s > 0.93:
             return gold if art in ("bogen_elfen", "bogen_sturm") else horn       # Spitzen
         if art == "bogen_eibe":
@@ -268,7 +317,7 @@ def bogen(f, art, griff, gewicht):
             return zweit if abs(((s * 10) % 1.0) - 0.5) < 0.08 else holz          # Blitzbänder
         return holz * (0.88 + 0.12 * ((k + int(s * 8)) % 3) / 2)
 
-    f.loft("Bogen" + art, ringe, 10, bogen_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    f.loft("Bogen" + art, ringe, 10, bogen_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2, glatt=True)
     # Sehne von Spitze zu Spitze
     oben = griff + Vector((0, laenge / 2, _bogen_linie(laenge / 2, laenge, stand, recurve)))
     unten = griff + Vector((0, -laenge / 2, _bogen_linie(-laenge / 2, laenge, stand, recurve)))
@@ -277,7 +326,9 @@ def bogen(f, art, griff, gewicht):
         f.kugel("Nocke", spitze, (0.012, 0.014, 0.012), gold if art in ("bogen_elfen", "bogen_sturm") else horn, gewicht, 8, 4, glatt=False)
     # Pfeilauflage und Verzierungen
     f.kiste("Auflage", griff + Vector((breite * 1.1, 0.075, -0.004)), (0.01, 0.02, 0.02), leder * 1.2, gewicht)
-    if art == "bogen_glut":
+    if art == "Bogen":
+        _mondbogen_zier(f, griff, laenge, stand, recurve, gewicht)
+    elif art == "bogen_glut":
         f.kugel("Glutstein", griff + Vector((0, 0.0, -0.035)), (0.022, 0.03, 0.02), farbe("#FF8A2A"), gewicht, 10, 6, glatt=False)
     elif art == "bogen_elfen":
         for i in range(10):

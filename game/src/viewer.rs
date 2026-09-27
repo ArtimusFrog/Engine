@@ -268,9 +268,19 @@ impl Viewer {
                 .find(|name| model.clip(name).is_some())
                 .unwrap_or_else(|| model.clips[0].name.clone());
             animator.play(&clip, true, 0.0);
+            // Nur für Screenshots: `--anbau <name>` zeigt von den Anbauteilen (Waffen, Werkzeuge) nur dieses
+            if let Some(nur) = std::env::args().skip_while(|a| a != "--anbau").nth(1) {
+                let namen: Vec<String> = model.attachments().iter().map(|n| n.to_string()).collect();
+                for name in namen {
+                    animator.set_visible(&name, name == nur);
+                }
+            }
             let mesh = animator.skinned_mesh(texture);
             let id = ctx.assets.add_mesh(mesh.clone());
-            entities.push(ctx.scene.spawn(Entity::new("Modell", id)));
+            // Spielfiguren im Helden-Look wie im Spiel
+            let figur = self.path.to_string_lossy().contains("figuren");
+            let material = if figur { Material::Figur { rim: 1.0 } } else { Material::Standard };
+            entities.push(ctx.scene.spawn(Entity::new("Modell", id).with_material(material)));
             meshes = vec![mesh];
             animated = Some((animator, id, texture));
         }
