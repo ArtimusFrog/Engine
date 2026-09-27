@@ -47,6 +47,22 @@ enum Getroffen {
     Wild(u16),
 }
 
+/// Verfolgt einen Schuss von `origin` in `richtung` bis zum ersten Treffer: Tier, Boden, Baum
+/// oder Fels – oder eine Einheit der Festung bzw. ein Lagerbewohner (die haben keine Kollision).
+fn strahl_ziel(ctx: &Context, world: &World, player: PlayerId, origin: Vec3, richtung: Vec3, weite: f32) -> (Vec3, Option<Getroffen>) {
+    let (mut point, animal) = world.spell_target(ctx, origin, richtung, weite, Some(player));
+    let mut ziel = animal.map(Getroffen::Tier);
+    if let Some((enemy, distance)) = world.heer.ray_hit(origin, richtung, origin.distance(point)) {
+        point = origin + richtung * distance;
+        ziel = Some(Getroffen::Feind(enemy));
+    }
+    if let Some((wild, distance)) = world.wildnis.ray_hit(origin, richtung, origin.distance(point)) {
+        point = origin + richtung * distance;
+        ziel = Some(Getroffen::Wild(wild));
+    }
+    (point, ziel)
+}
+
 /// Wo eine Fähigkeit trifft.
 #[derive(Clone, Copy, Debug)]
 enum Bereich {
@@ -339,7 +355,7 @@ impl Authority {
         let Some(avatar) = world.players.get_mut(&player) else { return };
         let Tool::Faehigkeit(platz) = avatar.tool else { return };
         let art = Faehigkeit::von(avatar.class, platz);
-        let fach = (platz as usize).min(2);
+        let fach = (platz as usize).min(3);
         if tick < avatar.abklingen[fach] || avatar.leben <= 0.0 || !target.is_finite() {
             return;
         }
@@ -347,6 +363,8 @@ impl Authority {
         let stufe = match art {
             Faehigkeit::Hammerschlag => kombo_stufe(avatar.kombo, tick),
             Faehigkeit::Arkangeschoss if avatar.ladung >= LADUNG_MAX => 1,
+            // Pfeilschuss: kritischer Treffer
+            Faehigkeit::Pfeilschuss if self.rng.chance(KRIT_CHANCE) => 1,
             _ => 0,
         };
         if art == Faehigkeit::Hammerschlag {
@@ -397,23 +415,15 @@ impl Authority {
                 hits.push(h);
                 (origin, origin + richtung * laenge, true)
             }
-            (Faehigkeit::Arkangeschoss | Faehigkeit::Feuerball | Faehigkeit::Wurfhammer, _) => {
+            (Faehigkeit::Arkangeschoss | Faehigkeit::Feuerball | Faehigkeit::Wurfhammer | Faehigkeit::Pfeilschuss | Faehigkeit::Explosivpfeil, _) => {
                 let Form::Geschoss { tempo, flaeche } = art.form() else { return };
                 let Some(origin) = world.cast_origin(ctx, player, target) else { return };
                 let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
                 let range = origin.distance(target).min(art.reichweite()) + 0.5;
-                let (mut point, animal) = world.spell_target(ctx, origin, richtung, range, Some(player));
-                let mut ziel = animal.map(Getroffen::Tier);
-                // Einheiten der Festung und der Lager haben keine Kollision: eigene Strahltests
-                if let Some((enemy, distance)) = world.heer.ray_hit(origin, richtung, origin.distance(point)) {
-                    point = origin + richtung * distance;
-                    ziel = Some(Getroffen::Feind(enemy));
-                }
-                if let Some((wild, distance)) = world.wildnis.ray_hit(origin, richtung, origin.distance(point)) {
-                    point = origin + richtung * distance;
-                    ziel = Some(Getroffen::Wild(wild));
-                }
-                let due = ausholen + takte(origin.distance(point) / tempo);
+                let (point, ziel) = strahl_ziel(ctx, world, player, origin, richtung, range);
+                // Der Explosivpfeil zündet erst nach einer Weile
+                let zuender = if art == Faehigkeit::Explosivpfeil { takte(ZUENDER) } else { 0 };
+                let due = ausholen + takte(origin.distance(point) / tempo) + zuender;
                 if flaeche > 0.0 {
                     let mut h = schlag(due, origin, richtung, point, Bereich::Kreis(flaeche), schaden, wirkung(art.wirkung(stufe)));
                     h.flammen = art == Faehigkeit::Feuerball;
@@ -449,6 +459,70 @@ impl Authority {
                     }
                 }
                 (origin, point, ziel.is_some())
+            }
+            (Faehigkeit::Salve, _) => {
+                // Fünf Pfeile im Fächer, jeder mit eigenem Ziel
+                let Form::Geschoss { tempo, .. } = art.form() else { return };
+                let Some(origin) = world.cast_origin(ctx, player, target) else { return };
+                let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
+                let mitte = SALVE_PFEILE / 2;
+                let mut mitte_punkt = origin;
+                let mut getroffen = false;
+                for k in 0..SALVE_PFEILE {
+                    let winkel = (k as f32 - mitte as f32) / mitte.max(1) as f32 * SALVE_FAECHER;
+                    let r = Quat::from_rotation_y(winkel.to_radians()) * richtung;
+                    let (punkt, ziel) = strahl_ziel(ctx, world, player, origin, r, art.reichweite());
+                    if let Some(ziel) = ziel {
+                        let due = ausholen + takte(origin.distance(punkt) / tempo);
+                        hits.push(schlag(due, origin, r, punkt, Bereich::Ziel(ziel), schaden, wirkung(art.wirkung(stufe))));
+                        getroffen = true;
+                    }
+                    if k == mitte {
+                        mitte_punkt = punkt;
+                    } else {
+                        kette.push(punkt);
+                    }
+                }
+                (origin, mitte_punkt, getroffen)
+            }
+            (Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen, _) => {
+                // Eine Stelle am Boden unter dem Fadenkreuz
+                let Form::Flaeche { reichweite, radius } = art.form() else { return };
+                let Some(origin) = world.cast_origin(ctx, player, target) else { return };
+                let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
+                // Der Punkt unter dem Fadenkreuz (höchstens so weit wie die Reichweite), darunter der Boden
+                let punkt = if origin.distance(target) <= reichweite { target } else { world.spell_target(ctx, origin, richtung, reichweite, Some(player)).0 };
+                let boden = ctx.physics.raycast(punkt + Vec3::Y * 4.0, Vec3::NEG_Y, 40.0, Some(character)).map_or_else(|| world.terrain.height_at(punkt.x, punkt.z), |(_, d)| punkt.y + 4.0 - d);
+                let mitte = vec3(punkt.x, boden, punkt.z);
+                let ziel = mitte + Vec3::Y * 0.6;
+                match art {
+                    Faehigkeit::Meteorsturm => {
+                        for i in 0..METEORE {
+                            // Der erste trifft die Mitte, die anderen verteilt im Kreis
+                            let ort = if i == 0 {
+                                mitte
+                            } else {
+                                let w = self.rng.range(0.0, std::f32::consts::TAU);
+                                let r = self.rng.range(0.15, 1.0).sqrt() * radius * 0.85;
+                                let p = mitte + vec3(w.cos() * r, 0.0, w.sin() * r);
+                                vec3(p.x, world.terrain.height_at(p.x, p.z).max(mitte.y - 1.5).min(mitte.y + 1.5), p.z)
+                            };
+                            hits.push(schlag(tick + takte(meteor_zeit(i)), ort + Vec3::Y * 4.0, Vec3::NEG_Y, ort + Vec3::Y * 0.5, Bereich::Kreis(METEOR_RADIUS), schaden, wirkung(art.wirkung(stufe))));
+                            kette.push(ort);
+                        }
+                    }
+                    Faehigkeit::Ahnenhammer => {
+                        hits.push(schlag(ausholen, mitte + Vec3::Y * 5.0, Vec3::NEG_Y, ziel, Bereich::Kreis(AHNEN_INNEN), schaden, wirkung(art.wirkung(stufe))));
+                        let aussen = Wirkung { stun: 1.5, ..Default::default() };
+                        hits.push(schlag(ausholen, mitte + Vec3::Y * 5.0, Vec3::NEG_Y, ziel, Bereich::Ring(AHNEN_INNEN, radius), schaden * AHNEN_AUSSEN_ANTEIL, wirkung(aussen)));
+                    }
+                    _ => {
+                        for i in 0..REGEN_WELLEN {
+                            hits.push(schlag(tick + takte(regen_zeit(i)), mitte + Vec3::Y * 8.0, Vec3::NEG_Y, ziel, Bereich::Kreis(radius), schaden, wirkung(art.wirkung(stufe))));
+                        }
+                    }
+                }
+                (origin, mitte, false)
             }
             (Faehigkeit::Hammerschlag, _) => {
                 let richtung = flach(target - center);
@@ -791,7 +865,11 @@ impl Authority {
                 return Err("Diese Waffe hast du nicht".into());
             }
             if w.klasse != class {
-                return Err(format!("{} kann nur {} führen", w.name, if w.klasse == CharacterClass::Zwerg { "ein Zwerg" } else { "ein Magier" }));
+                return Err(format!("{} kann nur {} führen", w.name, match w.klasse {
+                    CharacterClass::Zwerg => "ein Zwerg",
+                    CharacterClass::Bogenschuetze => "ein Bogenschütze",
+                    _ => "ein Magier",
+                }));
             }
         }
         inventory.waffe = waffe;

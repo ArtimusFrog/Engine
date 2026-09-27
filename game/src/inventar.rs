@@ -64,7 +64,11 @@ impl Tab {
 
 /// Symbol der Startwaffe einer Klasse.
 fn startwaffe_symbol(class: crate::protocol::CharacterClass) -> &'static str {
-    if class == crate::protocol::CharacterClass::Zwerg { "schmiedehammer" } else { "zauberstab" }
+    match class {
+        crate::protocol::CharacterClass::Zwerg => "schmiedehammer",
+        crate::protocol::CharacterClass::Bogenschuetze => "jagdbogen",
+        _ => "zauberstab",
+    }
 }
 
 fn seltenheit_farbe(s: crate::waffen::Seltenheit) -> Color32 {
@@ -264,7 +268,11 @@ impl InventoryUi {
                     match w {
                         Some(w) => {
                             ui.label(egui::RichText::new(w.name).size(18.0).strong().color(seltenheit_farbe(w.seltenheit)));
-                            ui.label(egui::RichText::new(format!("{} · {}", w.seltenheit.label(), if w.klasse == crate::protocol::CharacterClass::Zwerg { "Hammer (Zwerg)" } else { "Stab (Magier)" })).size(13.0).color(GOLD));
+                            ui.label(egui::RichText::new(format!("{} · {}", w.seltenheit.label(), match w.klasse {
+                                crate::protocol::CharacterClass::Zwerg => "Hammer (Zwerg)",
+                                crate::protocol::CharacterClass::Bogenschuetze => "Bogen (Bogenschütze)",
+                                _ => "Stab (Magier)",
+                            })).size(13.0).color(GOLD));
                             ui.label(egui::RichText::new(crate::waffen::werte_zeile(w)).size(14.0).color(Color32::WHITE));
                             ui.label(egui::RichText::new(w.beschreibung).size(13.0).italics().color(PARCHMENT));
                         }
@@ -317,7 +325,7 @@ impl InventoryUi {
     /// Auswahlleiste unten in der Mitte: Werkzeuge und die drei Fähigkeiten der Figur, der gewählte
     /// Platz leuchtet. `abklingen`: Restzeit der Fähigkeiten in Sekunden (0 = bereit);
     /// `punkte`: je Fähigkeit (gefüllt, von) – arkane Ladungen bzw. Stand der Kombo.
-    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize, class: crate::protocol::CharacterClass, abklingen: [f32; 3], punkte: [Option<(u8, u8)>; 3]) {
+    pub fn hotbar(&mut self, ctx: &egui::Context, selected: usize, class: crate::protocol::CharacterClass, abklingen: [f32; 4], punkte: [Option<(u8, u8)>; 4]) {
         self.icons(ctx);
         let jetzt = ctx.input(|i| i.time);
         if self.auswahl.0 != selected {
@@ -352,6 +360,20 @@ impl InventoryUi {
                     }
                 }
                 slot_frame(painter, slot_rect, active, tool.is_some());
+                // Ultimative Fähigkeit: goldener Doppelrahmen, pulsiert, sobald sie bereit ist
+                if let Some(Tool::Faehigkeit(platz)) = tool {
+                    if tool.and_then(|t| t.faehigkeit(class)).is_some_and(|f| f.ist_ultimativ()) {
+                        let bereit = abklingen[(platz as usize).min(3)] <= 0.0;
+                        let puls = if bereit { 0.5 + 0.5 * (jetzt as f32 * 4.0).sin() } else { 0.0 };
+                        if bereit {
+                            painter.rect_stroke(slot_rect.expand(3.0 + 2.0 * puls), 6.0, Stroke::new(2.5, Color32::from_rgba_unmultiplied(255, 180, 60, (90.0 + 120.0 * puls) as u8)), StrokeKind::Outside);
+                        }
+                        painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(1.5, Color32::from_rgb(255, 170, 60)), StrokeKind::Inside);
+                        for ecke in [slot_rect.left_top(), slot_rect.right_top(), slot_rect.left_bottom(), slot_rect.right_bottom()] {
+                            diamond(painter, ecke, 4.0, Color32::from_rgb(255, 190, 80), GOLD_DARK);
+                        }
+                    }
+                }
                 if active {
                     painter.rect_stroke(slot_rect, 4.0, Stroke::new(2.0, GOLD_LIGHT), StrokeKind::Inside);
                 }
@@ -363,7 +385,7 @@ impl InventoryUi {
                     }
                     // Abklingzeit: dunkler Schleier von oben und die Sekunden
                     if let Tool::Faehigkeit(platz) = tool {
-                        let rest = abklingen[(platz as usize).min(2)];
+                        let rest = abklingen[(platz as usize).min(3)];
                         if rest > 0.0 {
                             let gesamt = tool.faehigkeit(class).map_or(1.0, |f| f.abklingen(0) as f32 / 60.0);
                             let mut schleier = slot_rect.shrink(3.0);
@@ -377,8 +399,12 @@ impl InventoryUi {
                 }
                 // Punkte unter der Fähigkeit: arkane Ladungen (voll: leuchten) bzw. Kombo
                 if let Some(Tool::Faehigkeit(platz)) = tool {
-                    if let Some((voll, von)) = punkte[(platz as usize).min(2)] {
-                        let farbe = if class == crate::protocol::CharacterClass::Zwerg { Color32::from_rgb(255, 205, 110) } else { Color32::from_rgb(175, 140, 255) };
+                    if let Some((voll, von)) = punkte[(platz as usize).min(3)] {
+                        let farbe = match class {
+                            crate::protocol::CharacterClass::Zwerg => Color32::from_rgb(255, 205, 110),
+                            crate::protocol::CharacterClass::Bogenschuetze => Color32::from_rgb(170, 230, 130),
+                            _ => Color32::from_rgb(175, 140, 255),
+                        };
                         // Voll geladen bzw. als Nächstes kommt der Schmetterschlag
                         let fertig = voll + (class == crate::protocol::CharacterClass::Zwerg) as u8 >= von;
                         for k in 0..von {

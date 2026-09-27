@@ -80,7 +80,7 @@ pub struct Playground {
     last_harvest: f32,
     last_cast: f32,
     /// Wann jede der drei Fähigkeiten wieder bereit ist (Spielzeit in Sekunden)
-    bereit_ab: [f32; 3],
+    bereit_ab: [f32; 4],
     /// Hammerschlag: Takt und Stufe des letzten Schlags (die eigene Figur zeigt die Kombo sofort)
     kombo: Option<(u64, u8)>,
     /// Kamerawackeln, das im letzten Bild auf Gier und Neigung lag (wird wieder abgezogen)
@@ -199,7 +199,7 @@ impl Playground {
             aim_animal: None,
             last_harvest: 0.0,
             last_cast: -10.0,
-            bereit_ab: [0.0; 3],
+            bereit_ab: [0.0; 4],
             kombo: None,
             wackel_versatz: (0.0, 0.0),
             getroffen_um: -10.0,
@@ -370,7 +370,7 @@ impl Playground {
 
     /// Setzt die Fähigkeit auf Platz `platz` ein, sobald sie bereit ist (Ziel: das Fadenkreuz).
     fn faehigkeit_nutzen(&mut self, ctx: &Context, platz: u8) {
-        let fach = (platz as usize).min(2);
+        let fach = (platz as usize).min(3);
         if ctx.time.elapsed < self.bereit_ab[fach] {
             return;
         }
@@ -413,9 +413,9 @@ impl Playground {
     }
 
     /// Punkte unter den Fähigkeiten: arkane Ladungen bzw. wie weit die Kombo ist.
-    fn faehigkeits_punkte(&self, ctx: &Context) -> [Option<(u8, u8)>; 3] {
+    fn faehigkeits_punkte(&self, ctx: &Context) -> [Option<(u8, u8)>; 4] {
         use crate::faehigkeiten::{Faehigkeit, LADUNG_MAX};
-        let mut punkte = [None; 3];
+        let mut punkte = [None; 4];
         match Faehigkeit::von(self.klasse(), 0) {
             Faehigkeit::Arkangeschoss => punkte[0] = Some((self.ladung(), LADUNG_MAX)),
             Faehigkeit::Hammerschlag => {
@@ -2011,7 +2011,11 @@ impl Game for Playground {
         // Nur zum Testen: Figur für diesen Start festlegen (`--figur barbar`).
         let args: Vec<String> = std::env::args().collect();
         if let Some(name) = args.iter().position(|a| a == "--figur").and_then(|i| args.get(i + 1)) {
-            if let Some(class) = crate::protocol::CharacterClass::ALL.into_iter().find(|c| c.label().eq_ignore_ascii_case(name)) {
+            let name = match name.to_lowercase().as_str() {
+                "bogenschuetze" | "bogen" | "archer" => "Bogenschütze".to_string(),
+                _ => name.clone(),
+            };
+            if let Some(class) = crate::protocol::CharacterClass::ALL.into_iter().find(|c| c.label().eq_ignore_ascii_case(&name)) {
                 self.settings.character = class;
             }
         }

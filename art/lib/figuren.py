@@ -1110,3 +1110,14 @@ def _magier_faehigkeiten(armatur):
                  "Fuss.L": (-14, 0, 0), "Fuss.R": (-18, 0, 0), "Becken.pos": (0, 0, -0.14)}
     _clip(armatur, "Frostnova", 30, [(0, ruhe), (6, hoch), (11, runter), (14, aufschlag),
                                      (19, _mit(aufschlag, Brust=(22, 0, 0), Oberarm_L=(-30, 0, 75))), (30, ruhe)])
+
+    # Meteor (ultimativ): Stab und Hände zum Himmel, auf die Zehen, Kraft sammeln – dann den Stab
+    # mit Ausfallschritt aufs Ziel richten (Bild 20), die Linke öffnet sich zum Ziel
+    ruf = {"Oberarm.R": (-170, 0, -8), "Unterarm.R": (-15, 0, 0), "Oberarm.L": (-160, 0, 25), "Unterarm.L": (-30, 0, 0),
+           "Brust": (-14, 0, 0), "Bauch": (-5, 0, 0), "Kopf": (-18, 0, 0), "Hut": (10, 0, 0), "Becken.pos": (0, 0, 0.03)}
+    zeigen = {"Oberarm.R": (-95, 0, -4), "Unterarm.R": (-5, 0, 0), "Oberarm.L": (-85, 0, 30), "Unterarm.L": (-5, 0, 0),
+              "Brust": (18, -10, 0), "Bauch": (8, -5, 0), "Kopf": (-8, 8, 0), "Hut": (-8, 0, 0),
+              "Oberschenkel.L": (-30, 0, 0), "Unterschenkel.L": (32, 0, 0), "Oberschenkel.R": (18, 0, 0), "Unterschenkel.R": (10, 0, 0),
+              "Becken.pos": (0, 0, -0.05)}
+    _clip(armatur, "Meteor", 36, [(0, ruhe), (8, ruf), (16, _mit(ruf, Oberarm_R=(-176, 0, -8), Brust=(-17, 4, 0))), (20, zeigen),
+                                  (27, _mit(zeigen, Brust=(20, -12, 0))), (36, ruhe)])

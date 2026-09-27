@@ -61,6 +61,9 @@ fn zauber_klang(klang: crate::zauberbild::Klang) -> usize {
         Wurf => 9,
         Fangen => 10,
         Beben => 11,
+        Pfeilschuss => 12,
+        Pfeiltreffer => 13,
+        Himmel => 14,
     }
 }
 
@@ -145,6 +148,9 @@ impl Sounds {
                 sound(a, "wurf", wurf),
                 sound(a, "fangen", fangen),
                 sound(a, "beben", beben),
+                sound(a, "bogensehne", bogensehne),
+                sound(a, "pfeiltreffer", pfeiltreffer),
+                sound(a, "himmel", himmel),
             ],
         }
     }
@@ -219,7 +225,7 @@ impl Sounds {
                 SoundEvent::Zauber { klang, at, laut } => {
                     // Schwere Klänge tragen weiter
                     let range = match klang {
-                        crate::zauberbild::Klang::Explosion | crate::zauberbild::Klang::Beben | crate::zauberbild::Klang::Lanze => 90.0,
+                        crate::zauberbild::Klang::Explosion | crate::zauberbild::Klang::Beben | crate::zauberbild::Klang::Lanze | crate::zauberbild::Klang::Himmel => 90.0,
                         _ => 45.0,
                     };
                     let id = self.zauber[zauber_klang(klang)];
@@ -846,5 +852,43 @@ fn beben() -> SoundBuffer {
         let grollen = tief.next(lp.next(n, 0.06), 0.08) * envelope(t, 0.03, 0.9) * 5.0 * (0.7 + 0.3 * sine(t, 5.0));
         let stein = if steine.next() > 0.97 { steine.next() * envelope(t, 0.05, 0.6) * 0.5 } else { 0.0 };
         wumms + grollen + stein
+    })
+}
+
+/// Bogensehne schnellt vor: tiefes Schnappen mit kurz nachschwingender Sehne und Luftzischen.
+fn bogensehne() -> SoundBuffer {
+    let mut noise = Noise::new(81);
+    let mut lp = LowPass::default();
+    render(0.45, |t| {
+        let schnapp = sine(t, 95.0 + 40.0 * (-t * 30.0).exp()) * envelope(t, 0.001, 0.07) * 1.1;
+        let sehne = (sine(t, 210.0) * 0.5 + sine(t, 420.0) * 0.25) * envelope(t, 0.002, 0.12) * (1.0 + 0.3 * sine(t, 18.0)) * 0.6;
+        let n = noise.next();
+        let zisch = (n - lp.next(n, 0.25)) * envelope(t, 0.01, 0.08) * 0.5;
+        schnapp + sehne + zisch
+    })
+}
+
+/// Pfeil schlägt ein: dumpfes Tock mit kurzem Nachzittern.
+fn pfeiltreffer() -> SoundBuffer {
+    let mut noise = Noise::new(82);
+    let mut lp = LowPass::default();
+    render(0.35, |t| {
+        let tock = lp.next(noise.next(), 0.3) * envelope(t, 0.001, 0.025) * 1.2;
+        let holz = sine(t, 310.0 - t * 200.0) * envelope(t, 0.001, 0.05) * 0.7;
+        let zittern = sine(t, 150.0) * (t * 90.0).sin().abs() * envelope(t, 0.01, 0.12) * 0.3;
+        tock + holz + zittern
+    })
+}
+
+/// Feuerkreis am Himmel, Geisterhammer: tiefes, anschwellendes Dröhnen mit Schimmer.
+fn himmel() -> SoundBuffer {
+    let mut noise = Noise::new(83);
+    let mut lp = LowPass::default();
+    render(2.4, |t| {
+        let huelle = (t / 0.6).min(1.0) * (-(t - 0.6).max(0.0) / 0.9).exp();
+        let droehnen = (sine(t, 55.0) * 0.6 + sine(t, 82.5) * 0.4 + sine(t, 110.0 + 3.0 * sine(t, 0.7)) * 0.3) * huelle;
+        let wind = lp.next(noise.next(), 0.04) * huelle * 3.0;
+        let schimmer = (sine(t, 880.0) + sine(t, 1320.0) * 0.6) * huelle * 0.08 * (1.0 + sine(t, 6.0));
+        droehnen + wind + schimmer
     })
 }

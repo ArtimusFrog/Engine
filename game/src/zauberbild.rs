@@ -31,6 +31,10 @@ pub enum Klang {
     Wurf,
     Fangen,
     Beben,
+    Pfeilschuss,
+    Pfeiltreffer,
+    /// Feuerkreis am Himmel, Geisterhammer: tiefes Dröhnen
+    Himmel,
 }
 
 /// Was die Effekte von einer Spielfigur wissen müssen (jedes Bild neu, aus `World`).
@@ -73,6 +77,9 @@ struct Formen {
     kristall: MeshId,
     /// Zylinder entlang +Y (Strahl der Arkanlanze)
     strahl: MeshId,
+    /// Pfeil entlang +Z (Mitte im Ursprung) und ein kantiger Meteor
+    pfeil: MeshId,
+    meteor: MeshId,
 }
 
 fn formen(ctx: &mut Context) -> Formen {
@@ -87,6 +94,8 @@ fn formen(ctx: &mut Context) -> Formen {
         dorn: a.named_mesh("zauber_dorn", dorn_mesh),
         kristall: a.named_mesh("zauber_kristall", kristall_mesh),
         strahl: a.named_mesh("zauber_strahl", strahl_mesh),
+        pfeil: a.named_mesh("zauber_pfeil", pfeil_mesh),
+        meteor: a.named_mesh("zauber_meteor", meteor_mesh),
     }
 }
 
@@ -225,6 +234,51 @@ fn strahl_mesh() -> MeshData {
     m
 }
 
+/// Pfeil (80 cm) entlang +Z: Holzschaft, Stahlspitze vorne, rot-weiße Federn hinten.
+fn pfeil_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    let holz = vec3(0.55, 0.37, 0.2);
+    let stahl = vec3(0.55, 0.58, 0.63);
+    let n = 5;
+    let ring = |z: f32, r: f32, k: u32| {
+        let w = TAU * k as f32 / n as f32;
+        vec3(w.cos() * r, w.sin() * r, z)
+    };
+    for k in 0..n {
+        let (a0, a1) = (ring(-0.4, 0.011, k), ring(-0.4, 0.011, k + 1));
+        let (b0, b1) = (ring(0.34, 0.011, k), ring(0.34, 0.011, k + 1));
+        m.push_triangle(a0, b1, a1, holz);
+        m.push_triangle(a0, b0, b1, holz * 0.9);
+        // Spitze: breite Klinge, die spitz zuläuft
+        let (c0, c1) = (ring(0.33, 0.026, k), ring(0.33, 0.026, k + 1));
+        m.push_triangle(c0, vec3(0.0, 0.0, 0.42), c1, stahl);
+        m.push_triangle(c1, vec3(0.0, 0.0, 0.33), c0, stahl * 0.7);
+    }
+    // Drei Federn hinten
+    for k in 0..3 {
+        let w = TAU * k as f32 / 3.0;
+        let d = vec3(w.cos(), w.sin(), 0.0);
+        let farbe = if k == 0 { vec3(0.95, 0.92, 0.85) } else { vec3(0.75, 0.12, 0.1) };
+        let (a, b, c) = (d * 0.01 + Vec3::Z * -0.38, d * 0.01 + Vec3::Z * -0.22, d * 0.045 + Vec3::Z * -0.36);
+        m.push_triangle(a, b, c, farbe);
+        m.push_triangle(a, c, b, farbe * 0.85);
+    }
+    m
+}
+
+/// Kantiger Meteor (Durchmesser etwa 1), die Farbe kommt vom Objekt.
+fn meteor_mesh() -> MeshData {
+    let mut m = MeshData::icosphere(1, Vec3::ONE);
+    for (i, v) in m.vertices.iter_mut().enumerate() {
+        let p = Vec3::from(v.position);
+        let beule = 0.85 + 0.3 * (((i * 7919) % 97) as f32 / 97.0);
+        v.position = (p * beule).into();
+        let dunkel = 0.55 + 0.45 * (((i * 104729) % 89) as f32 / 89.0);
+        v.color = [dunkel, dunkel * 0.8, dunkel * 0.7];
+    }
+    m
+}
+
 /// Wie ein Teil sich über seine Lebenszeit verändert.
 #[derive(Clone, Copy, Debug)]
 enum Art {
@@ -244,6 +298,54 @@ enum Art {
     Brocken { geschw: Vec3, drehen: Vec3, boden: f32, groesse: f32 },
     /// Strahl der Arkanlanze (Länge, Dicke)
     Strahl { laenge: f32, dicke: f32 },
+    /// Leuchtet und blinkt immer schneller (Zünder des Explosivpfeils)
+    Blinken,
+    /// Steht, dann im letzten Drittel so tief in den Boden sinken
+    Versinken { tiefe: f32 },
+    /// Leuchtender Kreis, der sich dreht, weich ein- und ausblendet
+    Drehen { tempo: f32, groesse: Vec3 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PfeilArt {
+    Normal,
+    /// Kritischer Treffer: goldener Schweif
+    Krit,
+    Explosiv,
+}
+
+/// Ein fliegender Pfeil (Pfeilschuss, Salve, Explosivpfeil).
+struct Pfeil {
+    spieler: PlayerId,
+    art: PfeilArt,
+    von: Option<Vec3>,
+    pos: Vec3,
+    nach: Vec3,
+    hit: bool,
+    alter: f32,
+    ausholen: f32,
+    tempo: f32,
+    holz: EntityId,
+    schweif: EntityId,
+    glut: Option<EntityId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FallArt {
+    Meteor,
+    Hammer,
+    Pfeil,
+}
+
+/// Etwas stürzt vom Himmel (Teile: Objekt, Versatz entlang der Fallrichtung, Größe).
+struct Faller {
+    teile: Vec<(EntityId, f32, Vec3)>,
+    von: Vec3,
+    nach: Vec3,
+    alter: f32,
+    dauer: f32,
+    drehung: Quat,
+    art: FallArt,
 }
 
 struct Teil {
@@ -306,6 +408,15 @@ enum Spaeter {
     Beben { spieler: PlayerId, mitte: Vec3, haupt: bool, radius: f32 },
     Hieb { spieler: PlayerId, stufe: u8, richtung: Vec3 },
     Lanze { spieler: PlayerId, nach: Vec3 },
+    Klang { klang: Klang, at: Vec3, laut: f32 },
+    Zuendung { ort: Vec3 },
+    Himmelskreis { mitte: Vec3 },
+    Meteor { ort: Vec3 },
+    Ahnenkreis { mitte: Vec3 },
+    Ahnenfall { spieler: PlayerId, mitte: Vec3 },
+    Ahnenschlag { spieler: PlayerId, mitte: Vec3 },
+    Regenstart { spieler: PlayerId, mitte: Vec3 },
+    Regenwelle { mitte: Vec3 },
 }
 
 /// Die Figur holt aus: Magie sammelt sich an Stab und Händen.
@@ -325,6 +436,8 @@ pub struct Zauberbild {
     lichter: Vec<Licht>,
     geschosse: Vec<Geschoss>,
     haemmer: Vec<Hammerflug>,
+    pfeile: Vec<Pfeil>,
+    faller: Vec<Faller>,
     termine: Vec<(f32, Spaeter)>,
     sammeln: Vec<Sammeln>,
     /// Flammenteppiche (Mitte, Restzeit)
@@ -351,6 +464,8 @@ impl Default for Zauberbild {
             lichter: Vec::new(),
             geschosse: Vec::new(),
             haemmer: Vec::new(),
+            pfeile: Vec::new(),
+            faller: Vec::new(),
             termine: Vec::new(),
             sammeln: Vec::new(),
             flammen: Vec::new(),
@@ -608,6 +723,44 @@ impl Zauberbild {
                 self.haemmer.push(Hammerflug { spieler, punkte, hit, naechster: 0, pos: origin, alter: 0.0, ausholen, losgeflogen: false, hammer: None, aura, schweif, drehung: 0.0 });
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
             }
+            (Faehigkeit::Pfeilschuss | Faehigkeit::Explosivpfeil | Faehigkeit::Salve, _) => {
+                let tempo = match art.form() {
+                    faehigkeiten::Form::Geschoss { tempo, .. } => tempo,
+                    _ => 50.0,
+                };
+                let pfeil_art = match (art, stufe) {
+                    (Faehigkeit::Explosivpfeil, _) => PfeilArt::Explosiv,
+                    (Faehigkeit::Pfeilschuss, 1) => PfeilArt::Krit,
+                    _ => PfeilArt::Normal,
+                };
+                for ziel in std::iter::once(target).chain(if art == Faehigkeit::Salve { kette.iter().copied() } else { [].iter().copied() }) {
+                    self.pfeil_los(ctx, spieler, pfeil_art, ziel, hit, ausholen, tempo);
+                }
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                self.termine.push((ausholen, Spaeter::Klang { klang: Klang::Pfeilschuss, at: origin, laut: if art == Faehigkeit::Pfeilschuss { 0.6 } else { 0.9 } }));
+            }
+            (Faehigkeit::Pfeilregen, _) => {
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                self.termine.push((ausholen, Spaeter::Regenstart { spieler, mitte: target }));
+                for i in 0..faehigkeiten::REGEN_WELLEN {
+                    self.termine.push((faehigkeiten::regen_zeit(i) - 0.45, Spaeter::Regenwelle { mitte: target }));
+                }
+            }
+            (Faehigkeit::Meteorsturm, _) => {
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                self.termine.push((ausholen * 0.6, Spaeter::Himmelskreis { mitte: target }));
+                for (i, &ort) in kette.iter().enumerate() {
+                    self.termine.push((faehigkeiten::meteor_zeit(i) - faehigkeiten::METEOR_FALL, Spaeter::Meteor { ort }));
+                }
+                sounds.push(SoundEvent::Cast { player: spieler });
+            }
+            (Faehigkeit::Ahnenhammer, _) => {
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                let fall = faehigkeiten::AHNEN_FALL;
+                self.termine.push(((ausholen - fall - 0.35).max(0.0), Spaeter::Ahnenkreis { mitte: target }));
+                self.termine.push((ausholen - fall, Spaeter::Ahnenfall { spieler, mitte: target }));
+                self.termine.push((ausholen, Spaeter::Ahnenschlag { spieler, mitte: target }));
+            }
             (Faehigkeit::Erdbeben, _) => {
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
                 self.termine.push((ausholen, Spaeter::Beben { spieler, mitte: target, haupt: true, radius: 7.0 }));
@@ -632,6 +785,8 @@ impl Zauberbild {
         self.update_sammeln(ctx, figuren);
         self.update_geschosse(ctx, terrain, figuren, sounds);
         self.update_haemmer(ctx, terrain, figuren, sounds);
+        self.update_pfeile(ctx, terrain, figuren, sounds);
+        self.update_faller(ctx, terrain, sounds);
         // Was jetzt dran ist
         let mut i = 0;
         while i < self.termine.len() {
@@ -731,6 +886,56 @@ impl Zauberbild {
                     }
                 }
                 Faehigkeit::Hammerschlag => {}
+                Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Explosivpfeil | Faehigkeit::Pfeilregen => {
+                    // Aufgelegter Pfeil: Nocke an der Zughand, die Spitze ragt über den Bogen hinaus
+                    let nocke = figur.hand_r;
+                    let richtung = (figur.spitze - nocke).normalize_or(figur.vorne());
+                    let pfeil = *s.kugel.get_or_insert_with(|| self.fest(ctx, f.pfeil, nocke, Quat::IDENTITY, Vec3::ONE, Vec3::ONE, Material::Standard, false));
+                    if let Some(e) = ctx.scene.try_get_mut(pfeil) {
+                        e.transform.position = nocke + richtung * 0.4;
+                        e.transform.rotation = Quat::from_rotation_arc(Vec3::Z, richtung);
+                    }
+                    let spitze = nocke + richtung * 0.82;
+                    match s.art {
+                        Faehigkeit::Explosivpfeil => {
+                            self.glut(ctx, spitze, 1, vec3(1.0, 0.4, 0.1), 0.4, 0.1, 0.25, -1.0, 0.6, Vec3::ZERO);
+                            ctx.lights.push(PointLight { position: spitze, color: vec3(2.5, 1.0, 0.3) * t, radius: 3.0 });
+                        }
+                        Faehigkeit::Pfeilregen => {
+                            self.funken(ctx, spitze, 2, vec3(1.0, 0.85, 0.45), 0.8, 0.04, 0.3, -1.0, 3.5);
+                            ctx.lights.push(PointLight { position: spitze, color: vec3(2.5, 2.0, 1.0) * t, radius: 4.0 });
+                        }
+                        _ => {}
+                    }
+                }
+                Faehigkeit::Meteorsturm => {
+                    // Glut sammelt sich über dem Stab, Funken steigen um den Magier auf
+                    let kugel = *s.kugel.get_or_insert_with(|| self.leuchten(ctx, f.kugel, figur.spitze, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.4, 0.08), 1.8, 1.0));
+                    if let Some(e) = ctx.scene.try_get_mut(kugel) {
+                        e.transform.position = figur.spitze + Vec3::Y * 0.2;
+                        e.transform.scale = Vec3::splat(0.7 * aus(t) * (1.0 + 0.1 * (s.alter * 31.0).sin()));
+                    }
+                    for k in 0..2 {
+                        let w = s.alter * 6.0 + k as f32 * PI;
+                        let p = fuesse + vec3(w.cos() * 1.3, 0.1, w.sin() * 1.3);
+                        self.glut(ctx, p, 1, vec3(1.0, 0.4, 0.08), 1.5, 0.14, 0.6, -5.0, 0.4, Vec3::Y);
+                    }
+                    ctx.lights.push(PointLight { position: figur.spitze, color: vec3(4.0, 1.6, 0.4) * t, radius: 7.0 });
+                }
+                Faehigkeit::Ahnenhammer => {
+                    // Der Hammer glüht golden, Lichter der Ahnen steigen im Kreis auf
+                    let kugel = *s.kugel.get_or_insert_with(|| self.leuchten(ctx, f.kugel, figur.spitze, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.8, 0.4), 1.8, 1.0));
+                    if let Some(e) = ctx.scene.try_get_mut(kugel) {
+                        e.transform.position = figur.spitze;
+                        e.transform.scale = Vec3::splat(0.8 * aus(t));
+                    }
+                    for k in 0..3 {
+                        let w = s.alter * 4.0 + k as f32 * TAU / 3.0;
+                        let p = fuesse + vec3(w.cos() * 1.1, 0.2 + t * 1.5, w.sin() * 1.1);
+                        self.funken(ctx, p, 1, vec3(1.0, 0.82, 0.45), 0.5, 0.06, 0.5, -1.5, 3.0);
+                    }
+                    ctx.lights.push(PointLight { position: figur.spitze, color: vec3(4.0, 3.2, 1.6) * t, radius: 8.0 });
+                }
             }
         }
         for s in &sammeln {
@@ -813,7 +1018,7 @@ impl Zauberbild {
                     ctx.scene.despawn(e);
                 }
                 if feuer {
-                    self.explosion(ctx, terrain, pos, sounds);
+                    self.explosion(ctx, terrain, pos, 1.0, true, sounds);
                 } else {
                     self.arkan_treffer(ctx, pos, richtung, g.hit, sounds);
                 }
@@ -841,15 +1046,19 @@ impl Zauberbild {
     }
 
     /// Feuerball schlägt ein: Feuerkugel, Druckwelle, Funken, Rauch, Brandfleck, Flammenteppich.
-    fn explosion(&mut self, ctx: &mut Context, terrain: &Terrain, ort: Vec3, sounds: &mut Vec<SoundEvent>) {
+    fn explosion(&mut self, ctx: &mut Context, terrain: &Terrain, ort: Vec3, groesse: f32, teppich: bool, sounds: &mut Vec<SoundEvent>) {
         let boden_y = boden(terrain, ort, ort.y - 0.5).min(ort.y);
         let unten = vec3(ort.x, boden_y, ort.z);
         let am_boden = ort.y - boden_y < 2.5;
-        self.blitz(ctx, ort, 3.4, vec3(1.0, 0.92, 0.7), vec3(0.9, 0.2, 0.02), 0.45, 3.0);
+        self.blitz(ctx, ort, 3.4 * groesse, vec3(1.0, 0.92, 0.7), vec3(0.9, 0.2, 0.02), 0.45, 3.0);
         let f = self.formen(ctx);
         let kugel = self.leuchten(ctx, f.kugel, ort, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.45, 0.08), 1.6, 1.0);
-        self.teil(kugel, 0.05, 0.7, ort, Quat::IDENTITY, vec3(1.0, 0.45, 0.08), Art::Blitz { groesse: Vec3::splat(5.0), ende: vec3(0.4, 0.05, 0.0) });
-        if am_boden {
+        self.teil(kugel, 0.05, 0.7, ort, Quat::IDENTITY, vec3(1.0, 0.45, 0.08), Art::Blitz { groesse: Vec3::splat(5.0 * groesse), ende: vec3(0.4, 0.05, 0.0) });
+        if am_boden && !teppich {
+            self.druckwelle(ctx, unten, 5.8 * groesse, 0.45, 1.5, vec3(1.0, 0.5, 0.15), 2.0, 0.0);
+            self.fleck(ctx, terrain, unten, 2.4 * groesse, vec3(0.05, 0.04, 0.035), 8.0, Material::Standard, boden_y);
+        }
+        if am_boden && teppich {
             self.druckwelle(ctx, unten, 5.8, 0.45, 1.5, vec3(1.0, 0.5, 0.15), 2.0, 0.0);
             let (radius, dauer, _) = faehigkeiten::FLAMMEN;
             self.fleck(ctx, terrain, unten, radius * 0.85, vec3(0.05, 0.04, 0.035), 10.0, Material::Standard, boden_y);
@@ -866,7 +1075,7 @@ impl Zauberbild {
         self.glut(ctx, ort, 70, vec3(1.0, 0.48, 0.12), 6.0, 0.38, 0.6, -1.5, 1.6, Vec3::Y * 0.3);
         self.glut(ctx, ort, 30, vec3(1.0, 0.8, 0.4), 3.0, 0.3, 0.35, 0.0, 1.0, Vec3::ZERO);
         self.funken(ctx, ort, 45, vec3(1.0, 0.72, 0.3), 11.0, 0.07, 0.9, 9.0, 4.0);
-        Self::rauch(ctx, ort + Vec3::Y * 0.4, 14, vec3(0.2, 0.19, 0.18), 1.6, 0.42, 2.2, Vec3::Y * 0.8);
+        Self::rauch(ctx, ort + Vec3::Y * 0.4, if teppich { 14 } else { 6 }, vec3(0.2, 0.19, 0.18), 1.6, 0.42 * groesse, 2.2, Vec3::Y * 0.8);
         self.licht(ort + Vec3::Y * 0.8, vec3(9.0, 4.5, 1.5), 16.0, 0.7);
         self.erschuettern(ort, 0.5, 28.0);
         sounds.push(SoundEvent::Zauber { klang: Klang::Explosion, at: ort, laut: 1.0 });
@@ -1022,7 +1231,399 @@ impl Zauberbild {
                 let von = figuren.get(&spieler).map_or(nach, |f| f.spitze);
                 self.lanze(ctx, von, nach, sounds);
             }
+            Spaeter::Klang { klang, at, laut } => sounds.push(SoundEvent::Zauber { klang, at, laut }),
+            Spaeter::Zuendung { ort } => self.explosion(ctx, terrain, ort, 0.75, false, sounds),
+            Spaeter::Himmelskreis { mitte } => self.himmelskreis(ctx, terrain, mitte, sounds),
+            Spaeter::Meteor { ort } => self.meteor(ctx, ort),
+            Spaeter::Ahnenkreis { mitte } => self.ahnenkreis(ctx, terrain, mitte),
+            Spaeter::Ahnenfall { spieler, mitte } => self.ahnenfall(ctx, terrain, figuren, spieler, mitte, sounds),
+            Spaeter::Ahnenschlag { spieler, mitte } => self.ahnenschlag(ctx, terrain, spieler, mitte, sounds),
+            Spaeter::Regenstart { spieler, mitte } => self.regenstart(ctx, terrain, figuren, spieler, mitte, sounds),
+            Spaeter::Regenwelle { mitte } => self.regenwelle(ctx, terrain, mitte, sounds),
         }
+    }
+
+
+    // ---------- Pfeile, Meteore, Ahnenhammer, Pfeilregen ----------
+
+    /// Ein Pfeil fliegt los (nach dem Ausholen) von der Bogenhand zum Ziel.
+    #[allow(clippy::too_many_arguments)]
+    fn pfeil_los(&mut self, ctx: &mut Context, spieler: PlayerId, art: PfeilArt, nach: Vec3, hit: bool, ausholen: f32, tempo: f32) {
+        let f = self.formen(ctx);
+        let holz = self.fest(ctx, f.pfeil, nach, Quat::IDENTITY, Vec3::ZERO, Vec3::ONE, Material::Standard, false);
+        let (farbe, staerke) = match art {
+            PfeilArt::Krit => (vec3(1.0, 0.8, 0.35), 1.4),
+            PfeilArt::Explosiv => (vec3(1.0, 0.45, 0.12), 1.2),
+            PfeilArt::Normal => (vec3(0.75, 0.8, 0.7), 0.45),
+        };
+        let schweif = self.leuchten(ctx, f.kugel, nach, Quat::IDENTITY, Vec3::ZERO, farbe, staerke, 1.0);
+        let glut = (art == PfeilArt::Explosiv).then(|| self.leuchten(ctx, f.kugel, nach, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.4, 0.1), 2.2, 1.0));
+        self.pfeile.push(Pfeil { spieler, art, von: None, pos: nach, nach, hit, alter: 0.0, ausholen, tempo, holz, schweif, glut });
+    }
+
+    fn update_pfeile(&mut self, ctx: &mut Context, terrain: &Terrain, figuren: &HashMap<PlayerId, Figur>, sounds: &mut Vec<SoundEvent>) {
+        let dt = ctx.time.delta;
+        let mut pfeile = std::mem::take(&mut self.pfeile);
+        let mut fertig = Vec::new();
+        for (index, p) in pfeile.iter_mut().enumerate() {
+            p.alter += dt;
+            if p.alter < p.ausholen {
+                continue;
+            }
+            let von = *p.von.get_or_insert_with(|| figuren.get(&p.spieler).map_or(p.pos, |f| f.spitze));
+            let laenge = von.distance(p.nach).max(0.01);
+            let t = ((p.alter - p.ausholen) * p.tempo / laenge).min(1.0);
+            // Flacher Bogen bei weiten Schüssen
+            let bogen = (t * PI).sin() * laenge * 0.025;
+            let pos = von.lerp(p.nach, t) + Vec3::Y * bogen;
+            let richtung = (pos - p.pos).normalize_or((p.nach - von).normalize_or(Vec3::NEG_Z));
+            let vorher = p.pos;
+            p.pos = pos;
+            let drehung = Quat::from_rotation_arc(Vec3::Z, richtung);
+            if let Some(e) = ctx.scene.try_get_mut(p.holz) {
+                e.transform.position = pos;
+                e.transform.rotation = drehung;
+                e.transform.scale = Vec3::ONE;
+            }
+            let lang = if p.art == PfeilArt::Normal { 1.4 } else { 2.0 };
+            if let Some(e) = ctx.scene.try_get_mut(p.schweif) {
+                e.transform.position = pos - richtung * lang * 0.5;
+                e.transform.rotation = drehung;
+                e.transform.scale = vec3(0.07, 0.07, lang);
+            }
+            if let Some(e) = p.glut.and_then(|g| ctx.scene.try_get_mut(g)) {
+                e.transform.position = pos + richtung * 0.4;
+                e.transform.scale = Vec3::splat(0.16);
+            }
+            match p.art {
+                PfeilArt::Krit => {
+                    self.funken(ctx, pos, 1, vec3(1.0, 0.85, 0.4), 0.6, 0.04, 0.3, 0.0, 3.5);
+                    ctx.lights.push(PointLight { position: pos, color: vec3(2.0, 1.6, 0.8), radius: 4.0 });
+                }
+                PfeilArt::Explosiv => {
+                    self.glut(ctx, pos + richtung * 0.4, 1, vec3(1.0, 0.45, 0.1), 0.4, 0.12, 0.3, -1.0, 0.8, Vec3::ZERO);
+                    ctx.lights.push(PointLight { position: pos, color: vec3(3.0, 1.3, 0.4), radius: 5.0 });
+                }
+                PfeilArt::Normal => {
+                    if self.rng.chance(0.3) {
+                        self.funken(ctx, vorher, 1, vec3(0.85, 0.9, 0.8), 0.2, 0.025, 0.2, 0.0, 1.5);
+                    }
+                }
+            }
+            if t < 1.0 {
+                continue;
+            }
+            fertig.push(index);
+            ctx.scene.despawn(p.schweif);
+            let spitze = pos + richtung * 0.4;
+            match p.art {
+                PfeilArt::Explosiv => {
+                    // Bleibt stecken, blinkt immer schneller und explodiert
+                    let tief = pos - richtung * 0.12;
+                    self.teil(p.holz, 0.0, faehigkeiten::ZUENDER, tief, drehung, Vec3::ONE, Art::Fleck { normal: Vec3::ZERO });
+                    if let Some(g) = p.glut {
+                        self.teil(g, 0.0, faehigkeiten::ZUENDER, spitze - richtung * 0.12, Quat::IDENTITY, vec3(1.0, 0.4, 0.1), Art::Blinken);
+                    }
+                    self.funken(ctx, spitze, 10, vec3(1.0, 0.6, 0.25), 3.0, 0.04, 0.35, 5.0, 3.0);
+                    self.termine.push((faehigkeiten::ZUENDER, Spaeter::Zuendung { ort: spitze }));
+                    sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: 0.6 });
+                }
+                _ => {
+                    if let Some(g) = p.glut {
+                        ctx.scene.despawn(g);
+                    }
+                    if p.hit {
+                        // Im Gegner: Splitter und kurzer Blitz, der Pfeil verschwindet
+                        ctx.scene.despawn(p.holz);
+                        let farbe = if p.art == PfeilArt::Krit { vec3(1.0, 0.8, 0.35) } else { vec3(0.95, 0.9, 0.8) };
+                        self.funken(ctx, spitze, if p.art == PfeilArt::Krit { 22 } else { 8 }, farbe, 4.0, 0.035, 0.35, 4.0, 3.0);
+                        if p.art == PfeilArt::Krit {
+                            self.blitz(ctx, spitze, 1.0, vec3(1.0, 0.85, 0.45), vec3(0.5, 0.3, 0.05), 0.2, 1.8);
+                            let f = self.formen(ctx);
+                            let quer = Quat::from_rotation_arc(Vec3::Y, -richtung);
+                            let ring = self.leuchten(ctx, f.ring, spitze, quer, Vec3::ZERO, vec3(1.0, 0.8, 0.35), 2.0, 0.0);
+                            self.teil(ring, 0.0, 0.25, spitze, quer, vec3(1.0, 0.8, 0.35), Art::Ring { von: 0.15, bis: 1.0 });
+                        }
+                        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: if p.art == PfeilArt::Krit { 0.9 } else { 0.6 } });
+                    } else {
+                        // Steckt im Boden oder Baum und zittert nach
+                        let tief = pos - richtung * 0.15;
+                        self.teil(p.holz, 0.0, 4.0, tief, drehung, Vec3::ONE, Art::Fleck { normal: richtung });
+                        let b = boden(terrain, spitze, spitze.y);
+                        if (spitze.y - b).abs() < 0.4 {
+                            Self::kruemel(ctx, spitze, 3, 2.0);
+                        }
+                        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: 0.35 });
+                    }
+                }
+            }
+        }
+        for index in fertig.into_iter().rev() {
+            pfeile.swap_remove(index);
+        }
+        pfeile.append(&mut self.pfeile);
+        self.pfeile = pfeile;
+    }
+
+    /// Etwas stürzt vom Himmel: Meteor, Geisterhammer, Pfeile des Pfeilregens.
+    fn update_faller(&mut self, ctx: &mut Context, terrain: &Terrain, sounds: &mut Vec<SoundEvent>) {
+        let dt = ctx.time.delta;
+        let mut faller = std::mem::take(&mut self.faller);
+        let mut fertig = Vec::new();
+        for (index, f) in faller.iter_mut().enumerate() {
+            f.alter += dt;
+            let t = (f.alter / f.dauer).clamp(0.0, 1.0);
+            // Beschleunigt fallen
+            let pos = f.von.lerp(f.nach, t * t);
+            let richtung = (f.nach - f.von).normalize_or(Vec3::NEG_Y);
+            for &(e, versatz, groesse) in &f.teile {
+                if let Some(entity) = ctx.scene.try_get_mut(e) {
+                    entity.transform.position = pos + richtung * versatz;
+                    entity.transform.rotation = f.drehung;
+                    entity.transform.scale = groesse;
+                }
+            }
+            match f.art {
+                FallArt::Meteor => {
+                    let drehen = Quat::from_scaled_axis(vec3(3.0, 1.0, 2.0) * dt);
+                    f.drehung = drehen * f.drehung;
+                    // Die Streifen zeigen in Flugrichtung, der Stein dreht sich
+                    for &(e, versatz, _) in &f.teile[1..] {
+                        if let Some(entity) = ctx.scene.try_get_mut(e) {
+                            entity.transform.rotation = Quat::from_rotation_arc(Vec3::Z, richtung);
+                            entity.transform.position = pos + richtung * versatz;
+                        }
+                    }
+                    self.glut(ctx, pos, 3, vec3(1.0, 0.45, 0.1), 1.0, 0.45, 0.45, -1.0, 1.4, Vec3::ZERO);
+                    if self.rng.chance(0.6) {
+                        Self::rauch(ctx, pos - richtung * 0.8, 1, vec3(0.16, 0.14, 0.13), 0.5, 0.45, 1.4, Vec3::Y);
+                    }
+                    ctx.lights.push(PointLight { position: pos, color: vec3(5.0, 2.2, 0.6), radius: 12.0 });
+                }
+                FallArt::Hammer => {
+                    self.funken(ctx, pos + Vec3::Y * 1.5, 2, vec3(1.0, 0.85, 0.45), 1.0, 0.08, 0.5, 0.0, 3.0);
+                    ctx.lights.push(PointLight { position: pos, color: vec3(5.0, 4.0, 2.0), radius: 14.0 });
+                }
+                FallArt::Pfeil => {}
+            }
+            if t < 1.0 {
+                continue;
+            }
+            fertig.push(index);
+            match f.art {
+                FallArt::Meteor => {
+                    for &(e, _, _) in &f.teile {
+                        ctx.scene.despawn(e);
+                    }
+                    self.explosion(ctx, terrain, f.nach + Vec3::Y * 0.4, 0.8, false, sounds);
+                    // Glühender Krater mit Gesteinsbrocken
+                    let b = boden(terrain, f.nach, f.nach.y);
+                    self.risse(ctx, terrain, vec3(f.nach.x, b, f.nach.z), 5, 2.0, b);
+                }
+                FallArt::Hammer => {
+                    // Der Hammer steckt im Boden, glüht nach und versinkt; der Schein verblasst
+                    for (k, &(e, versatz, _)) in f.teile.iter().enumerate() {
+                        let ort = f.nach + richtung * versatz;
+                        let farbe = ctx.scene.try_get(e).map_or(Vec3::ONE, |x| x.color.truncate());
+                        let art = if k == 0 { Art::Versinken { tiefe: 4.5 } } else { Art::Gluehen };
+                        self.teil(e, 0.0, if k == 0 { 2.2 } else { 1.0 }, ort, f.drehung, farbe, art);
+                    }
+                }
+                FallArt::Pfeil => {
+                    for &(schweif, _, _) in &f.teile[1..] {
+                        ctx.scene.despawn(schweif);
+                    }
+                    let (e, _, _) = f.teile[0];
+                    self.teil(e, 0.0, 1.8, f.nach, f.drehung, Vec3::ONE, Art::Fleck { normal: richtung });
+                    if self.rng.chance(0.5) {
+                        Self::kruemel(ctx, f.nach, 2, 1.5);
+                    }
+                    if self.rng.chance(0.25) {
+                        Self::rauch(ctx, f.nach, 1, vec3(0.4, 0.35, 0.29), 0.6, 0.14, 0.6, Vec3::Y);
+                    }
+                }
+            }
+        }
+        for index in fertig.into_iter().rev() {
+            faller.swap_remove(index);
+        }
+        faller.append(&mut self.faller);
+        self.faller = faller;
+    }
+
+    /// Meteorsturm: ein Feuerkreis öffnet sich hoch über dem Ziel, am Boden glüht der Zielkreis.
+    fn himmelskreis(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let dauer = faehigkeiten::METEOR_DAUER + faehigkeiten::METEOR_FALL + 0.6;
+        let oben = mitte + Vec3::Y * 22.0;
+        let rot = vec3(1.0, 0.3, 0.06);
+        for (r, staerke) in [(7.5, 1.6), (5.5, 1.1), (3.0, 0.8)] {
+            let e = self.leuchten(ctx, f.ring, oben, Quat::IDENTITY, vec3(r, 1.0, r), rot, staerke, 0.0);
+            self.teil(e, 0.0, dauer, oben, Quat::IDENTITY, rot, Art::Drehen { tempo: 0.8 / r * if r > 5.0 { 1.0 } else { -1.0 }, groesse: vec3(r, 1.0, r) });
+        }
+        let schein = self.leuchten(ctx, f.scheibe, oben, Quat::IDENTITY, vec3(8.5, 1.0, 8.5), vec3(0.8, 0.18, 0.04), 0.9, 0.0);
+        self.teil(schein, 0.0, dauer, oben, Quat::IDENTITY, vec3(0.8, 0.18, 0.04), Art::Drehen { tempo: 0.2, groesse: vec3(8.5, 1.0, 8.5) });
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.08, mitte.z);
+        let radius = match Faehigkeit::Meteorsturm.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 6.0,
+        };
+        let ring = self.leuchten(ctx, f.ring, unten, Quat::IDENTITY, vec3(radius, 1.0, radius), vec3(1.0, 0.35, 0.08), 1.2, 0.0);
+        self.teil(ring, 0.0, dauer, unten, Quat::IDENTITY, vec3(1.0, 0.35, 0.08), Art::Drehen { tempo: -0.3, groesse: vec3(radius, 1.0, radius) });
+        self.licht(oben, vec3(8.0, 2.5, 0.6), 30.0, dauer);
+        self.funken(ctx, oben, 40, rot, 6.0, 0.12, 1.2, -1.0, 3.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Himmel, at: mitte, laut: 1.0 });
+    }
+
+    /// Ein Meteor stürzt schräg vom Feuerkreis auf `ort`.
+    fn meteor(&mut self, ctx: &mut Context, ort: Vec3) {
+        let f = self.formen(ctx);
+        let schraeg = vec3(self.rng.range(-1.0, 1.0), 0.0, self.rng.range(-1.0, 1.0)).normalize_or(Vec3::X) * 7.0;
+        let von = ort + Vec3::Y * 22.0 + schraeg;
+        let groesse = self.rng.range(0.55, 0.8);
+        let stein = self.fest(ctx, f.meteor, von, Quat::IDENTITY, Vec3::splat(groesse), vec3(1.0, 0.55, 0.25), Material::Emissive { glow: 0.9 }, false);
+        let huelle = self.leuchten(ctx, f.kugel, von, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.45, 0.1), 1.3, 1.0);
+        let schweif = self.leuchten(ctx, f.kugel, von, Quat::IDENTITY, Vec3::ZERO, vec3(1.0, 0.35, 0.06), 1.0, 1.0);
+        let teile = vec![(stein, 0.0, Vec3::splat(groesse)), (huelle, 0.0, Vec3::splat(groesse * 2.4)), (schweif, -3.0, vec3(groesse * 1.8, groesse * 1.8, 7.0))];
+        self.faller.push(Faller { teile, von, nach: ort, alter: 0.0, dauer: faehigkeiten::METEOR_FALL, drehung: Quat::IDENTITY, art: FallArt::Meteor });
+    }
+
+    /// Ahnenhammer: Runenkreis am Ziel und eine Lichtsäule vom Himmel.
+    fn ahnenkreis(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3) {
+        let f = self.formen(ctx);
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.08, mitte.z);
+        let gold = vec3(1.0, 0.78, 0.35);
+        let dauer = 0.35 + faehigkeiten::AHNEN_FALL + 0.5;
+        for (r, tempo) in [(6.0, 0.6), (4.2, -0.9), (2.2, 1.4)] {
+            let e = self.leuchten(ctx, f.ring, unten, Quat::IDENTITY, vec3(r, 1.0, r), gold, 1.5, 0.0);
+            self.teil(e, 0.0, dauer, unten, Quat::IDENTITY, gold, Art::Drehen { tempo, groesse: vec3(r, 1.0, r) });
+        }
+        // Runen im Kreis
+        for k in 0..8 {
+            let w = TAU * k as f32 / 8.0;
+            let p = unten + vec3(w.cos(), 0.0, w.sin()) * 5.1;
+            let e = self.leuchten(ctx, f.kugel, p, Quat::IDENTITY, vec3(0.35, 0.08, 0.35), gold, 2.0, 1.0);
+            self.teil(e, k as f32 * 0.03, dauer, p, Quat::IDENTITY, gold, Art::Gluehen);
+        }
+        // Lichtsäule
+        let saeule = self.leuchten(ctx, f.strahl, unten, Quat::IDENTITY, vec3(1.2, 30.0, 1.2), gold * 0.7, 0.8, 1.0);
+        self.teil(saeule, 0.0, dauer, unten, Quat::IDENTITY, gold * 0.7, Art::Strahl { laenge: 30.0, dicke: 1.4 });
+        self.licht(unten + Vec3::Y * 2.0, vec3(5.0, 4.0, 2.0), 14.0, dauer);
+    }
+
+    /// Der Geisterhammer der Ahnen stürzt vom Himmel.
+    fn ahnenfall(&mut self, ctx: &mut Context, terrain: &Terrain, figuren: &HashMap<PlayerId, Figur>, spieler: PlayerId, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let figur = figuren.get(&spieler).copied();
+        let b = boden(terrain, mitte, mitte.y);
+        let groesse = 7.0;
+        let mesh = figur.and_then(|f| crate::characters::waffen_flugmesh(ctx, f.klasse, f.waffe));
+        let mut teile = Vec::new();
+        let gold = vec3(1.0, 0.78, 0.35);
+        // Das Mesh liegt mit dem Stiel entlang Y, der Kopf unten; im Boden steckt der Kopf zur Hälfte
+        let halbe = 0.4 * groesse;
+        let nach = vec3(mitte.x, b + halbe, mitte.z);
+        let von = nach + Vec3::Y * 18.0;
+        let drehung = Quat::from_rotation_y(figur.map_or(0.0, |f| -f.facing));
+        if let Some(mesh) = mesh {
+            // Fester, golden leuchtender Hammer – die Form bleibt erkennbar – und ein Schein darum
+            let e = self.fest(ctx, mesh, von, drehung, Vec3::splat(groesse), vec3(1.0, 0.8, 0.4), Material::Emissive { glow: 0.9 }, true);
+            teile.push((e, 0.0, Vec3::splat(groesse)));
+            let aura = self.leuchten(ctx, mesh, von, drehung, Vec3::splat(groesse * 1.08), gold * 0.5, 0.8, 0.6);
+            teile.push((aura, 0.0, Vec3::splat(groesse * 1.08)));
+        }
+        let f = self.formen(ctx);
+        let schein = self.leuchten(ctx, f.kugel, von, drehung, Vec3::ZERO, gold * 0.5, 0.6, 1.0);
+        teile.push((schein, 0.0, vec3(3.0, 7.0, 3.0)));
+        self.faller.push(Faller { teile, von, nach, alter: 0.0, dauer: faehigkeiten::AHNEN_FALL, drehung, art: FallArt::Hammer });
+        sounds.push(SoundEvent::Zauber { klang: Klang::Himmel, at: mitte, laut: 0.8 });
+    }
+
+    /// Einschlag des Geisterhammers: goldene Druckwellen, Felsdornen, Risse, Brocken.
+    fn ahnenschlag(&mut self, ctx: &mut Context, terrain: &Terrain, spieler: PlayerId, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b, mitte.z);
+        let gold = vec3(1.0, 0.78, 0.35);
+        self.blitz(ctx, unten + Vec3::Y * 1.0, 4.5, vec3(1.0, 0.9, 0.6), vec3(0.6, 0.35, 0.05), 0.35, 1.8);
+        self.druckwelle(ctx, unten, 9.0, 0.45, 2.6, gold, 1.5, 0.0);
+        self.druckwelle(ctx, unten, 6.0, 0.35, 1.4, vec3(1.0, 0.95, 0.8), 1.0, 0.1);
+        for (r, anzahl) in [(2.0, 8), (3.8, 12), (5.6, 16)] {
+            let versatz = self.rng.range(0.0, TAU);
+            for k in 0..anzahl {
+                let w = versatz + TAU * (k as f32 + self.rng.range(-0.3, 0.3)) / anzahl as f32;
+                let aussen = vec3(w.cos(), 0.0, w.sin());
+                let p = unten + aussen * (r + self.rng.range(-0.3, 0.3));
+                let p = vec3(p.x, boden(terrain, p, unten.y) - 0.1, p.z);
+                let (laenge, dicke, neigung) = (self.rng.range(1.2, 2.2) * (1.0 - r / 9.0), self.rng.range(0.7, 1.0), self.rng.range(0.3, 0.6));
+                self.dorn(ctx, p, aussen, neigung, laenge, dicke * laenge.sqrt(), false, r / 22.0, 1.8);
+                Self::kruemel(ctx, p + Vec3::Y * 0.2, 3, 3.5);
+            }
+        }
+        self.risse(ctx, terrain, unten, 10, 6.5, unten.y);
+        for _ in 0..20 {
+            let d = vec3(self.rng.range(-1.0, 1.0), self.rng.range(1.2, 2.2), self.rng.range(-1.0, 1.0));
+            let (g, v) = (self.rng.range(0.15, 0.35), self.rng.range(4.0, 8.0));
+            self.brocken(ctx, unten + Vec3::Y * 0.4, d * v, g, unten.y, vec3(0.42, 0.36, 0.3));
+        }
+        self.funken(ctx, unten + Vec3::Y * 0.5, 60, gold, 9.0, 0.08, 0.9, 8.0, 3.5);
+        Self::kruemel(ctx, unten + Vec3::Y * 0.3, 40, 7.0);
+        self.licht(unten + Vec3::Y * 2.0, vec3(9.0, 7.0, 3.5), 20.0, 0.8);
+        self.erschuettern(unten, 1.0, 40.0);
+        self.stopp.push((spieler, 0.1));
+        sounds.push(SoundEvent::Zauber { klang: Klang::Beben, at: unten, laut: 1.0 });
+        sounds.push(SoundEvent::Zauber { klang: Klang::Hammer, at: unten, laut: 1.0 });
+        sounds.push(SoundEvent::Thunder { volume: 0.5 });
+    }
+
+    /// Pfeilregen: der Schuss in den Himmel und der Zielkreis am Boden.
+    fn regenstart(&mut self, ctx: &mut Context, terrain: &Terrain, figuren: &HashMap<PlayerId, Figur>, spieler: PlayerId, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        if let Some(figur) = figuren.get(&spieler) {
+            // Ein leuchtender Pfeil steigt steil auf und zerplatzt hoch oben
+            let hoch = figur.spitze.lerp(mitte, 0.4) + Vec3::Y * 20.0;
+            self.pfeil_los(ctx, spieler, PfeilArt::Krit, hoch, true, 0.0, 70.0);
+            self.blitz(ctx, figur.spitze, 0.8, vec3(1.0, 0.85, 0.5), vec3(0.4, 0.3, 0.1), 0.2, 1.5);
+        }
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.08, mitte.z);
+        let radius = match Faehigkeit::Pfeilregen.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 6.0,
+        };
+        let dauer = faehigkeiten::REGEN_FLUG + faehigkeiten::REGEN_WELLEN as f32 * faehigkeiten::REGEN_ABSTAND + 0.4;
+        let gold = vec3(1.0, 0.82, 0.4);
+        let ring = self.leuchten(ctx, f.ring, unten, Quat::IDENTITY, vec3(radius, 1.0, radius), gold, 1.2, 0.0);
+        self.teil(ring, 0.0, dauer, unten, Quat::IDENTITY, gold, Art::Drehen { tempo: 0.4, groesse: vec3(radius, 1.0, radius) });
+        let innen = self.leuchten(ctx, f.scheibe, unten, Quat::IDENTITY, vec3(radius, 1.0, radius), gold * 0.35, 0.6, 0.0);
+        self.teil(innen, 0.0, dauer, unten, Quat::IDENTITY, gold * 0.35, Art::Drehen { tempo: 0.0, groesse: vec3(radius, 1.0, radius) });
+        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeilschuss, at: unten, laut: 0.9 });
+    }
+
+    /// Eine Welle des Pfeilregens: Pfeile fallen schräg vom Himmel in den Zielkreis.
+    fn regenwelle(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let radius = match Faehigkeit::Pfeilregen.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 6.0,
+        };
+        let schraeg = vec3(0.35, 0.0, 0.2);
+        for _ in 0..9 {
+            let w = self.rng.range(0.0, TAU);
+            let r = self.rng.range(0.0, 1.0).sqrt() * radius;
+            let p = mitte + vec3(w.cos() * r, 0.0, w.sin() * r);
+            let nach = vec3(p.x, boden(terrain, p, mitte.y) + 0.05, p.z);
+            let von = nach + (Vec3::Y + schraeg) * 14.0;
+            let richtung = (nach - von).normalize();
+            let drehung = Quat::from_rotation_arc(Vec3::Z, richtung);
+            // Größer als ein echter Pfeil und mit hellem Schweif, damit man den Regen sieht
+            let e = self.fest(ctx, f.pfeil, von, drehung, Vec3::splat(1.8), Vec3::ONE, Material::Standard, false);
+            let schweif = self.leuchten(ctx, f.kugel, von, drehung, Vec3::ZERO, vec3(1.0, 0.9, 0.6), 0.7, 1.0);
+            let dauer = 0.45 * self.rng.range(0.9, 1.1);
+            let teile = vec![(e, 0.0, Vec3::splat(1.8)), (schweif, -1.4, vec3(0.08, 0.08, 2.4))];
+            self.faller.push(Faller { teile, von, nach: nach - richtung * 0.45, alter: 0.0, dauer, drehung, art: FallArt::Pfeil });
+        }
+        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: mitte, laut: 0.5 });
     }
 
     /// Arkanlanze: ein gleißender Strahl, Mündungsringe, Funken entlang der Bahn.
@@ -1404,6 +2005,24 @@ impl Zauberbild {
                     } else if t > 0.7 {
                         entity.transform.position.y -= groesse * 1.2 * dt / (teil.dauer * 0.3);
                     }
+                }
+                Art::Versinken { tiefe } => {
+                    let sinken = ((t - 0.6) / 0.4).clamp(0.0, 1.0);
+                    entity.transform.position = teil.ort - Vec3::Y * tiefe * sinken * sinken;
+                    entity.transform.rotation = teil.drehung;
+                }
+                Art::Blinken => {
+                    let takt = 6.0 + 30.0 * t * t;
+                    let an = 0.35 + 0.65 * (teil.alter * takt).sin().abs();
+                    entity.color = (teil.farbe * an).extend(1.0);
+                    entity.transform.scale = Vec3::splat(0.14 + 0.1 * an);
+                }
+                Art::Drehen { tempo, groesse } => {
+                    let ein = (teil.alter / 0.2).min(1.0);
+                    let aus_ = ((1.0 - t) / 0.2).min(1.0);
+                    entity.transform.rotation = teil.drehung * Quat::from_rotation_y(teil.alter * tempo);
+                    entity.transform.scale = groesse * (0.85 + 0.15 * ein);
+                    entity.color = (teil.farbe * ein * aus_ * (0.85 + 0.15 * (teil.alter * 5.0).sin())).extend(1.0);
                 }
                 Art::Strahl { laenge, dicke } => {
                     let auf = (teil.alter / 0.05).min(1.0);

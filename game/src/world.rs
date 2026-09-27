@@ -37,8 +37,8 @@ pub struct Avatar {
     pub facing: f32,
     /// Werkzeug in der Hand (aus der Auswahlleiste).
     pub tool: Tool,
-    /// Takt, ab dem jede der drei Fähigkeiten wieder bereit ist
-    pub abklingen: [u64; 3],
+    /// Takt, ab dem jede der vier Fähigkeiten wieder bereit ist
+    pub abklingen: [u64; 4],
     /// Arkane Ladungen des Magiers (beim Client aus den Schnappschüssen) und der Takt der letzten
     pub ladung: u8,
     pub ladung_tick: u64,
@@ -558,7 +558,7 @@ impl World {
                 character,
                 facing: 0.0,
                 tool: Tool::default(),
-                abklingen: [0; 3],
+                abklingen: [0; 4],
                 ladung: 0,
                 ladung_tick: 0,
                 kombo: None,

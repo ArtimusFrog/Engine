@@ -48,7 +48,7 @@ impl Seltenheit {
 }
 
 pub struct Waffe {
-    /// 1–10 (0 ist die Startwaffe)
+    /// 1–15 (0 ist die Startwaffe)
     pub id: u8,
     pub name: &'static str,
     pub klasse: CharacterClass,
@@ -66,7 +66,7 @@ pub struct Waffe {
 use Faehigkeit::*;
 use Seltenheit::*;
 
-pub const WAFFEN: [Waffe; 10] = [
+pub const WAFFEN: [Waffe; 15] = [
     Waffe { id: 1, name: "Eichenstab", klasse: CharacterClass::Mage, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "stab_eiche",
             beschreibung: "Ein knorriger Eichenstab mit Bernstein. Etwas mehr Kraft in jedem Zauber." },
     Waffe { id: 2, name: "Glutstab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Feuerball, 1.45)), datei: "stab_glut",
@@ -87,6 +87,16 @@ pub const WAFFEN: [Waffe; 10] = [
             beschreibung: "Er grollt bei jedem Schlag. Erdbeben sind stärker und alles ist schneller bereit." },
     Waffe { id: 10, name: "Drachenhammer", klasse: CharacterClass::Zwerg, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Hammerschlag, 1.25)),
             datei: "hammer_drachen", beschreibung: "Aus Drachenschuppe geschmiedet. Mehr Schaden, schnellere Fähigkeiten, wuchtigere Hammerschläge." },
+    Waffe { id: 11, name: "Eibenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "bogen_eibe",
+            beschreibung: "Zäh und biegsam, mit Hornspitzen. Etwas mehr Kraft in jedem Schuss." },
+    Waffe { id: 12, name: "Langbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Pfeilschuss, 1.4)), datei: "bogen_lang",
+            beschreibung: "Mannshoch und kraftvoll. Pfeilschüsse treffen härter." },
+    Waffe { id: 13, name: "Glutbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Explosivpfeil, 1.45)), datei: "bogen_glut",
+            beschreibung: "Die Sehne glimmt wie Kohle. Explosivpfeile zünden heftiger und brennen länger." },
+    Waffe { id: 14, name: "Elfenbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Episch, schaden: 1.15, abklingen: 0.8, bonus: Some((Salve, 1.35)), datei: "bogen_elfen",
+            beschreibung: "Aus hellem Silberholz mit Blattranken. Salven treffen härter, alles ist schneller bereit." },
+    Waffe { id: 15, name: "Sturmbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Pfeilregen, 1.3)),
+            datei: "bogen_sturm", beschreibung: "Blitze knistern in der Sehne. Mehr Schaden, schnellere Fähigkeiten, ein gewaltiger Pfeilregen." },
 ];
 
 pub fn waffe(id: u8) -> Option<&'static Waffe> {
@@ -97,6 +107,7 @@ pub fn waffe(id: u8) -> Option<&'static Waffe> {
 pub fn startwaffe(class: CharacterClass) -> &'static str {
     match class {
         CharacterClass::Zwerg => "Schmiedehammer",
+        CharacterClass::Bogenschuetze => "Jagdbogen",
         _ => "Wanderstab",
     }
 }
@@ -169,7 +180,9 @@ mod tests {
         }
         let mut ids: Vec<u8> = WAFFEN.iter().map(|w| w.id).collect();
         ids.dedup();
-        assert_eq!(ids, (1..=10).collect::<Vec<u8>>());
+        assert_eq!(ids, (1..=WAFFEN.len() as u8).collect::<Vec<u8>>());
+        // Erbeutete Waffen stehen als Bits in einem u16
+        assert!(WAFFEN.len() < 16);
     }
 
     #[test]

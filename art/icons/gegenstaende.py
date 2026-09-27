@@ -586,6 +586,114 @@ def faehigkeit_erdbeben():
         brocken(r, (x, y, z), fels, 30 + i)
 
 
+def _pfeil(mitte, winkel, laenge, holz, stahl, feder, dicke=0.035):
+    """Pfeil in der Bildebene (X nach rechts, Z nach oben), `winkel` in Grad gegen +X, Mitte bei `mitte`."""
+    a = math.radians(winkel)
+    richtung = Vector((math.cos(a), 0, math.sin(a)))
+    drehung = (0, 90 - winkel, 0)
+    mitte = Vector(mitte)
+    bm = zylinder(dicke, laenge, 8)
+    bewegen(bm, mitte, drehung)
+    objekt("Schaft", bm, holz)
+    kegel(dicke * 2.6, laenge * 0.2, mitte + richtung * laenge * 0.48, drehung, stahl, 4, "Spitze")
+    for k in range(3):
+        bm = bmesh.new()
+        seite = Vector((-math.sin(a), 0, math.cos(a))) * (1 if k != 1 else -1)
+        tiefe = Vector((0, 0.06 if k == 2 else 0.0, 0))
+        hinten = mitte - richtung * laenge * 0.5
+        v = [bm.verts.new(hinten), bm.verts.new(hinten + richtung * laenge * 0.22),
+             bm.verts.new(hinten + richtung * 0.02 + (seite * 0.12 if k != 2 else tiefe * 2) + tiefe)]
+        bm.faces.new(v)
+        objekt("Feder", bm, feder)
+    return richtung
+
+
+def _pfeil_mats():
+    return (material("Holz", "#8A5A30", rau=0.7), material("Stahl", "#B8C0CA", rau=0.3, glanz=1.0), material("Feder", "#C8322A", rau=0.8))
+
+
+def faehigkeit_pfeilschuss():
+    """Ein Pfeil schräg nach oben rechts, mit hellen Bewegungsstreifen."""
+    holz, stahl, feder = _pfeil_mats()
+    richtung = _pfeil((0.05, 0, 0.05), 35, 1.9, holz, stahl, feder)
+    streifen = leucht("Streifen", "#FFF2C8", 1.4)
+    for i, (dx, dz, l) in enumerate(((-0.1, 0.18, 0.7), (-0.2, -0.16, 0.55), (-0.35, 0.02, 0.45))):
+        bm = zylinder(0.015, l, 6)
+        bewegen(bm, Vector((dx, 0.1, dz)) - richtung * 0.75, (0, 55, 0))
+        objekt("Streifen", bm, streifen)
+
+
+def faehigkeit_salve():
+    """Fünf Pfeile im Fächer."""
+    holz, stahl, feder = _pfeil_mats()
+    for i, w in enumerate((10, 30, 50, 70, 90)):
+        a = math.radians(w)
+        _pfeil((-0.55 + math.cos(a) * 0.55, -0.05 * i, -0.55 + math.sin(a) * 0.55), w, 1.3, holz, stahl, feder, 0.03)
+
+
+def faehigkeit_explosivpfeil():
+    """Pfeil mit glühender Sprengkugel an der Spitze und Funken."""
+    holz, stahl, feder = _pfeil_mats()
+    richtung = _pfeil((-0.15, 0, -0.15), 40, 1.6, holz, stahl, feder)
+    glut = glimmen("Glut", "#FF6A1A", 1.0)
+    kern = leucht("Kern", "#FFD060", 2.5)
+    spitze = Vector((-0.15, 0, -0.15)) + richtung * 0.72
+    kugel(0.26, spitze, glut)
+    kugel(0.14, spitze + Vector((0.04, -0.12, 0.04)), kern)
+    funke = leucht("Funke", "#FFC040", 2.2)
+    zufall = random.Random(7)
+    for i in range(10):
+        w = math.radians(zufall.uniform(0, 360))
+        kegel(0.02, zufall.uniform(0.15, 0.3), spitze + Vector((math.cos(w) * 0.28, -0.1, math.sin(w) * 0.28)), (0, math.degrees(math.atan2(math.cos(w), math.sin(w))), 0), funke, 4, "Funke")
+
+
+def faehigkeit_pfeilregen():
+    """Viele Pfeile fallen schräg vom Himmel auf einen goldenen Zielkreis."""
+    holz, stahl, feder = _pfeil_mats()
+    zufall = random.Random(11)
+    for i in range(9):
+        x = -0.8 + 0.2 * i + zufall.uniform(-0.05, 0.05)
+        z = zufall.uniform(-0.3, 0.7)
+        _pfeil((x, -0.02 * i, z), -70, 0.8, holz, stahl, feder, 0.022)
+    ring = leucht("Ring", "#FFD24A", 1.8)
+    for k in range(28):
+        w = math.tau * k / 28
+        kugel(0.045, (math.cos(w) * 0.95, 0.2 + math.sin(w) * 0.95, -0.8), ring, "Ring", 1)
+
+
+def faehigkeit_meteorsturm():
+    """Drei glühende Meteore mit Feuerschweifen stürzen schräg herab."""
+    stein = glimmen("Stein", "#8A3A1A", 0.7)
+    flamme = leucht("Flamme", "#FF6A1A", 1.8)
+    kern = leucht("Kern", "#FFD060", 2.2)
+    for i, (x, z, r) in enumerate(((0.35, -0.3, 0.34), (-0.45, 0.25, 0.22), (0.6, 0.55, 0.16))):
+        brocken(r, (x, -0.05 * i, z), stein, 70 + i)
+        kugel(r * 0.55, (x + r * 0.2, -0.05 * i - r * 0.6, z - r * 0.2), kern)
+        for k in range(5):
+            laenge = r * (3.2 - k * 0.35)
+            kegel(r * (0.8 - k * 0.1), laenge, (x + math.cos(math.radians(55 + k * 4)) * r * 0.2, -0.05 * i + 0.02 * k, z + r * 0.2), (0, -145 + k * 6, 0), flamme, 6, "Schweif")
+
+
+def faehigkeit_ahnenhammer():
+    """Ein riesiger goldener Geisterhammer mit Strahlenkranz."""
+    s = 0.7071
+    _aus_magier("Hammer", Matrix(((-s, 0, -s), (0, 1, 0), (s, 0, -s))).to_4x4() @ Matrix.Rotation(math.radians(90), 4, "Z"), figur="zwerg")
+    hammer = bpy.data.objects["Hammer"]
+    hammer.data.transform(Matrix.Scale(2.4, 4))
+    geist = glimmen("Geist", "#FFD060", 1.2)
+    hammer.data.materials.clear()
+    hammer.data.materials.append(geist)
+    strahl = leucht("Strahl", "#FFE9A0", 1.5)
+    for k in range(12):
+        w = math.tau * k / 12
+        kegel(0.05, 0.5, (math.cos(w) * 0.75, 0.3, math.sin(w) * 0.75), (0, math.degrees(math.atan2(math.cos(w), math.sin(w))), 0), strahl, 4, "Strahl")
+
+
+def _bogen_symbol(knoten):
+    # Der Bogen liegt im Modell waagerecht (entlang Y): aufrichten und schräg ins Bild legen
+    return lambda: _aus_magier(knoten, Matrix.Rotation(math.radians(-40), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "X"), figur="bogenschuetze")
+
+
 GEGENSTAENDE = {"gold": gold, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
                 "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab, "runenfragment": runenfragment, "runenstein": runenstein,
                 "faehigkeit_arkangeschoss": faehigkeit_arkangeschoss, "faehigkeit_feuerball": faehigkeit_feuerball,
@@ -606,9 +714,16 @@ for _art in ("stab_eiche", "stab_glut", "stab_frost", "stab_sturm", "stab_sterne
 for _art in ("hammer_eisen", "hammer_runen", "hammer_streit", "hammer_donner", "hammer_drachen"):
     GEGENSTAENDE[_art] = _hammer_symbol(_art)
 GEGENSTAENDE["schmiedehammer"] = _hammer_symbol("Hammer")
+for _art in ("bogen_eibe", "bogen_lang", "bogen_glut", "bogen_elfen", "bogen_sturm"):
+    GEGENSTAENDE[_art] = _bogen_symbol(_art)
+GEGENSTAENDE["jagdbogen"] = _bogen_symbol("Bogen")
+for _name, _bau in (("faehigkeit_meteorsturm", faehigkeit_meteorsturm), ("faehigkeit_ahnenhammer", faehigkeit_ahnenhammer),
+                    ("faehigkeit_pfeilschuss", faehigkeit_pfeilschuss), ("faehigkeit_salve", faehigkeit_salve),
+                    ("faehigkeit_explosivpfeil", faehigkeit_explosivpfeil), ("faehigkeit_pfeilregen", faehigkeit_pfeilregen)):
+    GEGENSTAENDE[_name] = _bau
 
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
-BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_")) or n == "schmiedehammer"}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
+BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_", "bogen_", "faehigkeit_")) or n in ("schmiedehammer", "jagdbogen")}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
          "faehigkeit_arkangeschoss": (0.0, -1.0, 0.2), "faehigkeit_feuerball": (0.0, -1.0, 0.2), "faehigkeit_hammerschlag": (0.0, -1.0, 0.2),
          "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
 

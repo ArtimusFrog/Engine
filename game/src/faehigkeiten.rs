@@ -1,11 +1,14 @@
-//! Fähigkeiten der Spielfiguren: jede Klasse hat drei, auf den Plätzen 3–5 der Auswahlleiste.
+//! Fähigkeiten der Spielfiguren: jede Klasse hat vier, auf den Plätzen 3–6 der Auswahlleiste –
+//! die vierte ist die ultimative Fähigkeit mit langer Abklingzeit.
 //!
 //! Magier: Arkangeschoss (lädt arkane Ladungen, mit dreien wird es zur Arkanlanze), Feuerball
-//! (Explosion, Brand, Flammenteppich), Frostnova (Eiswelle, friert ein). Zwerg: Hammerschlag
-//! (Dreierkombo mit Schmetterschlag), Wurfhammer (prallt ab und kehrt zurück), Erdbeben (Sprung,
-//! Aufschlag in zwei Ringen, Nachbeben). Gefrorene zerschmettern beim nächsten Treffer (+50 %).
-//! Der Server rechnet alles nach; die Werte stehen hier an einer Stelle (Konzept:
-//! `docs/konzept_faehigkeiten.md`).
+//! (Explosion, Brand, Flammenteppich), Frostnova (Eiswelle, friert ein), **Meteorsturm**.
+//! Zwerg: Hammerschlag (Dreierkombo mit Schmetterschlag), Wurfhammer (prallt ab und kehrt
+//! zurück), Erdbeben (Sprung, zwei Ringe, Nachbeben), **Ahnenhammer**.
+//! Bogenschütze: Pfeilschuss (kritische Treffer), Salve (fünf Pfeile im Fächer), Explosivpfeil
+//! (zündet nach kurzer Zeit), **Pfeilregen**.
+//! Gefrorene zerschmettern beim nächsten Treffer (+50 %). Der Server rechnet alles nach; die
+//! Werte stehen hier an einer Stelle (Konzept: `docs/konzept_faehigkeiten.md`).
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +23,13 @@ pub enum Faehigkeit {
     Hammerschlag,
     Wurfhammer,
     Erdbeben,
+    // Ultimative Fähigkeiten und der Bogenschütze (hinten angefügt: ältere Nachrichten bleiben lesbar)
+    Meteorsturm,
+    Ahnenhammer,
+    Pfeilschuss,
+    Salve,
+    Explosivpfeil,
+    Pfeilregen,
 }
 
 /// Wie eine Fähigkeit wirkt.
@@ -31,6 +41,8 @@ pub enum Form {
     Nahkampf { weite: f32, winkel: f32 },
     /// Trifft alles im Umkreis der Figur
     UmSich { radius: f32 },
+    /// Wirkt auf eine Stelle am Boden unter dem Fadenkreuz (bis `reichweite`) im Umkreis `radius`
+    Flaeche { reichweite: f32, radius: f32 },
 }
 
 /// Nachwirkungen eines Treffers.
@@ -77,17 +89,53 @@ pub const BEBEN_INNEN: f32 = 3.0;
 pub const BEBEN_AUSSEN_ANTEIL: f32 = 0.67;
 pub const NACHBEBEN: [(f32, f32, f32); 2] = [(0.7, 5.0, 10.0), (1.4, 5.0, 10.0)];
 
+/// Meteorsturm: so viele Meteore, wie lange sie fallen (s), Radius jedes Einschlags (m),
+/// Fallzeit eines Meteors vom Himmel (s).
+pub const METEORE: usize = 8;
+pub const METEOR_DAUER: f32 = 2.4;
+pub const METEOR_RADIUS: f32 = 2.6;
+pub const METEOR_FALL: f32 = 0.55;
+/// Wann Meteor `i` einschlägt (Sekunden nach dem Einsatz, Ausholen eingerechnet).
+pub fn meteor_zeit(i: usize) -> f32 {
+    Faehigkeit::Meteorsturm.ausholen(0) + METEOR_FALL + i as f32 * METEOR_DAUER / METEORE as f32
+}
+/// Ahnenhammer: innerer Ring (m) und Anteil des Schadens außen; so lange fällt der Hammer (s).
+pub const AHNEN_INNEN: f32 = 3.0;
+pub const AHNEN_AUSSEN_ANTEIL: f32 = 0.65;
+pub const AHNEN_FALL: f32 = 0.35;
+/// Pfeilschuss: Chance auf einen kritischen Treffer (doppelter Schaden).
+pub const KRIT_CHANCE: f32 = 0.2;
+/// Salve: so viele Pfeile, halber Fächer (Grad).
+pub const SALVE_PFEILE: usize = 5;
+pub const SALVE_FAECHER: f32 = 24.0;
+/// Explosivpfeil: zündet so lange nach dem Einschlag (s).
+pub const ZUENDER: f32 = 0.8;
+/// Pfeilregen: so viele Wellen im Abstand von (s), die erste nach dem Ausholen plus Flugzeit (s).
+pub const REGEN_WELLEN: usize = 10;
+pub const REGEN_ABSTAND: f32 = 0.3;
+pub const REGEN_FLUG: f32 = 0.6;
+/// Wann Welle `i` des Pfeilregens trifft (Sekunden nach dem Einsatz).
+pub fn regen_zeit(i: usize) -> f32 {
+    Faehigkeit::Pfeilregen.ausholen(0) + REGEN_FLUG + i as f32 * REGEN_ABSTAND
+}
+
 impl Faehigkeit {
-    /// Die drei Fähigkeiten einer Klasse (Platz 0, 1, 2).
-    pub fn der_klasse(class: CharacterClass) -> [Faehigkeit; 3] {
+    /// Die vier Fähigkeiten einer Klasse (Platz 0–3, Platz 3 ist die ultimative).
+    pub fn der_klasse(class: CharacterClass) -> [Faehigkeit; 4] {
         match class {
-            CharacterClass::Zwerg => [Faehigkeit::Hammerschlag, Faehigkeit::Wurfhammer, Faehigkeit::Erdbeben],
-            _ => [Faehigkeit::Arkangeschoss, Faehigkeit::Feuerball, Faehigkeit::Frostnova],
+            CharacterClass::Zwerg => [Faehigkeit::Hammerschlag, Faehigkeit::Wurfhammer, Faehigkeit::Erdbeben, Faehigkeit::Ahnenhammer],
+            CharacterClass::Bogenschuetze => [Faehigkeit::Pfeilschuss, Faehigkeit::Salve, Faehigkeit::Explosivpfeil, Faehigkeit::Pfeilregen],
+            _ => [Faehigkeit::Arkangeschoss, Faehigkeit::Feuerball, Faehigkeit::Frostnova, Faehigkeit::Meteorsturm],
         }
     }
 
     pub fn von(class: CharacterClass, platz: u8) -> Faehigkeit {
-        Self::der_klasse(class)[(platz as usize).min(2)]
+        Self::der_klasse(class)[(platz as usize).min(3)]
+    }
+
+    /// Die ultimative Fähigkeit (lange Abklingzeit, Platz 6)?
+    pub fn ist_ultimativ(self) -> bool {
+        matches!(self, Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen)
     }
 
     pub fn label(self) -> &'static str {
@@ -98,10 +146,16 @@ impl Faehigkeit {
             Faehigkeit::Hammerschlag => "Hammerschlag",
             Faehigkeit::Wurfhammer => "Wurfhammer",
             Faehigkeit::Erdbeben => "Erdbeben",
+            Faehigkeit::Meteorsturm => "Meteorsturm",
+            Faehigkeit::Ahnenhammer => "Ahnenhammer",
+            Faehigkeit::Pfeilschuss => "Pfeilschuss",
+            Faehigkeit::Salve => "Salve",
+            Faehigkeit::Explosivpfeil => "Explosivpfeil",
+            Faehigkeit::Pfeilregen => "Pfeilregen",
         }
     }
 
-    /// Symbol in `game/assets/icons/` (gerendert von `art/icons/faehigkeiten.py`).
+    /// Symbol in `game/assets/icons/` (gerendert von `art/icons/gegenstaende.py`).
     pub fn icon_file(self) -> &'static str {
         match self {
             Faehigkeit::Arkangeschoss => "faehigkeit_arkangeschoss",
@@ -110,6 +164,12 @@ impl Faehigkeit {
             Faehigkeit::Hammerschlag => "faehigkeit_hammerschlag",
             Faehigkeit::Wurfhammer => "faehigkeit_wurfhammer",
             Faehigkeit::Erdbeben => "faehigkeit_erdbeben",
+            Faehigkeit::Meteorsturm => "faehigkeit_meteorsturm",
+            Faehigkeit::Ahnenhammer => "faehigkeit_ahnenhammer",
+            Faehigkeit::Pfeilschuss => "faehigkeit_pfeilschuss",
+            Faehigkeit::Salve => "faehigkeit_salve",
+            Faehigkeit::Explosivpfeil => "faehigkeit_explosivpfeil",
+            Faehigkeit::Pfeilregen => "faehigkeit_pfeilregen",
         }
     }
 
@@ -121,16 +181,28 @@ impl Faehigkeit {
             Faehigkeit::Hammerschlag => Form::Nahkampf { weite: 3.4, winkel: 65.0 },
             Faehigkeit::Wurfhammer => Form::Geschoss { tempo: 28.0, flaeche: 0.0 },
             Faehigkeit::Erdbeben => Form::UmSich { radius: 6.5 },
+            Faehigkeit::Meteorsturm => Form::Flaeche { reichweite: 35.0, radius: 6.0 },
+            Faehigkeit::Ahnenhammer => Form::Flaeche { reichweite: 22.0, radius: 6.0 },
+            Faehigkeit::Pfeilschuss => Form::Geschoss { tempo: 60.0, flaeche: 0.0 },
+            Faehigkeit::Salve => Form::Geschoss { tempo: 55.0, flaeche: 0.0 },
+            Faehigkeit::Explosivpfeil => Form::Geschoss { tempo: 45.0, flaeche: 3.5 },
+            Faehigkeit::Pfeilregen => Form::Flaeche { reichweite: 32.0, radius: 6.0 },
         }
     }
 
-    /// Wie weit Geschosse fliegen (Meter).
+    /// Wie weit Geschosse fliegen bzw. Flächen gesetzt werden können (Meter).
     pub fn reichweite(self) -> f32 {
-        match self {
-            Faehigkeit::Arkangeschoss => 45.0,
-            Faehigkeit::Feuerball => 40.0,
-            Faehigkeit::Wurfhammer => 32.0,
-            _ => 0.0,
+        match self.form() {
+            Form::Flaeche { reichweite, .. } => reichweite,
+            _ => match self {
+                Faehigkeit::Arkangeschoss => 45.0,
+                Faehigkeit::Feuerball => 40.0,
+                Faehigkeit::Wurfhammer => 32.0,
+                Faehigkeit::Pfeilschuss => 50.0,
+                Faehigkeit::Salve => 35.0,
+                Faehigkeit::Explosivpfeil => 42.0,
+                _ => 0.0,
+            },
         }
     }
 
@@ -146,11 +218,17 @@ impl Faehigkeit {
             (Faehigkeit::Hammerschlag, _) => 30,
             (Faehigkeit::Wurfhammer, _) => 5 * 60,
             (Faehigkeit::Erdbeben, _) => 12 * 60,
+            (Faehigkeit::Meteorsturm, _) => 45 * 60,
+            (Faehigkeit::Ahnenhammer, _) => 40 * 60,
+            (Faehigkeit::Pfeilschuss, _) => 33,
+            (Faehigkeit::Salve, _) => 6 * 60,
+            (Faehigkeit::Explosivpfeil, _) => 9 * 60,
+            (Faehigkeit::Pfeilregen, _) => 40 * 60,
         }
     }
 
     /// Animation (Clip im Figurenmodell), Tempo und das Bild (30 je Sekunde), in dem die
-    /// Fähigkeit wirkt – siehe `art/lib/figuren.py` und `art/lib/zwerg.py`.
+    /// Fähigkeit wirkt – siehe `art/lib/figuren.py`, `zwerg.py` und `bogenschuetze.py`.
     pub fn animation(self, stufe: u8) -> (&'static str, f32, f32) {
         match (self, stufe) {
             (Faehigkeit::Arkangeschoss, 1) => ("Arkan", 0.75, 5.0),
@@ -162,6 +240,12 @@ impl Faehigkeit {
             (Faehigkeit::Hammerschlag, _) => ("Schlag1", 1.0, 7.0),
             (Faehigkeit::Wurfhammer, _) => ("Wurf", 1.0, 9.0),
             (Faehigkeit::Erdbeben, _) => ("Beben", 1.0, 17.0),
+            (Faehigkeit::Meteorsturm, _) => ("Meteor", 1.0, 20.0),
+            (Faehigkeit::Ahnenhammer, _) => ("Ahnenruf", 1.0, 22.0),
+            (Faehigkeit::Pfeilschuss, _) => ("Schuss", 1.0, 8.0),
+            (Faehigkeit::Salve, _) => ("Salve", 1.0, 11.0),
+            (Faehigkeit::Explosivpfeil, _) => ("Sprengschuss", 1.0, 13.0),
+            (Faehigkeit::Pfeilregen, _) => ("Himmelsschuss", 1.0, 16.0),
         }
     }
 
@@ -171,7 +255,8 @@ impl Faehigkeit {
         bild / 30.0 / tempo
     }
 
-    /// Grundschaden (ohne Waffe) in dieser Stufe.
+    /// Grundschaden (ohne Waffe) in dieser Stufe – bei Meteorsturm je Meteor, bei Salve je Pfeil,
+    /// beim Pfeilregen je Welle.
     pub fn schaden(self, stufe: u8) -> f32 {
         match (self, stufe) {
             (Faehigkeit::Arkangeschoss, 1) => 20.0 * LANZE_FAKTOR,
@@ -182,15 +267,24 @@ impl Faehigkeit {
             (Faehigkeit::Hammerschlag, _) => 28.0,
             (Faehigkeit::Wurfhammer, _) => 30.0,
             (Faehigkeit::Erdbeben, _) => 36.0,
+            (Faehigkeit::Meteorsturm, _) => 30.0,
+            (Faehigkeit::Ahnenhammer, _) => 95.0,
+            // Kritischer Pfeilschuss: doppelter Schaden
+            (Faehigkeit::Pfeilschuss, 1) => 36.0,
+            (Faehigkeit::Pfeilschuss, _) => 18.0,
+            (Faehigkeit::Salve, _) => 15.0,
+            (Faehigkeit::Explosivpfeil, _) => 40.0,
+            (Faehigkeit::Pfeilregen, _) => 10.0,
         }
     }
 
     pub fn art(self) -> DamageKind {
         match self {
             Faehigkeit::Arkangeschoss => DamageKind::Arcane,
-            Faehigkeit::Feuerball => DamageKind::Fire,
+            Faehigkeit::Feuerball | Faehigkeit::Meteorsturm | Faehigkeit::Explosivpfeil => DamageKind::Fire,
             Faehigkeit::Frostnova => DamageKind::Frost,
-            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer | Faehigkeit::Erdbeben => DamageKind::Physical,
+            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer | Faehigkeit::Erdbeben | Faehigkeit::Ahnenhammer => DamageKind::Physical,
+            Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Pfeilregen => DamageKind::Pierce,
         }
     }
 
@@ -202,6 +296,10 @@ impl Faehigkeit {
             (Faehigkeit::Hammerschlag, 2) => Wirkung { stun: 0.5, ..Default::default() },
             (Faehigkeit::Wurfhammer, _) => Wirkung { stun: ABPRALL_STUN[0], ..Default::default() },
             (Faehigkeit::Erdbeben, _) => Wirkung { stun: 1.8, ..Default::default() },
+            (Faehigkeit::Meteorsturm, _) => Wirkung { brand: 6.0, dauer: 3.0, ..Default::default() },
+            (Faehigkeit::Ahnenhammer, _) => Wirkung { stun: 2.5, ..Default::default() },
+            (Faehigkeit::Explosivpfeil, _) => Wirkung { stun: 0.8, brand: 5.0, dauer: 2.0, ..Default::default() },
+            (Faehigkeit::Pfeilregen, _) => Wirkung { bremse: 0.45, ..Default::default() },
             _ => Wirkung::default(),
         }
     }
@@ -210,10 +308,12 @@ impl Faehigkeit {
     pub fn farbe(self) -> glam::Vec3 {
         match self {
             Faehigkeit::Arkangeschoss => glam::vec3(0.55, 0.4, 1.0),
-            Faehigkeit::Feuerball => glam::vec3(1.0, 0.45, 0.12),
+            Faehigkeit::Feuerball | Faehigkeit::Meteorsturm => glam::vec3(1.0, 0.45, 0.12),
             Faehigkeit::Frostnova => glam::vec3(0.55, 0.85, 1.0),
-            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer => glam::vec3(1.0, 0.82, 0.5),
+            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer | Faehigkeit::Ahnenhammer => glam::vec3(1.0, 0.82, 0.5),
             Faehigkeit::Erdbeben => glam::vec3(0.75, 0.55, 0.35),
+            Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Pfeilregen => glam::vec3(0.9, 0.95, 0.75),
+            Faehigkeit::Explosivpfeil => glam::vec3(1.0, 0.5, 0.2),
         }
     }
 
@@ -226,6 +326,12 @@ impl Faehigkeit {
             Faehigkeit::Hammerschlag => "Dreierkombo: zwei Schwünge, dann ein Schmetterschlag von oben, der betäubt und eine Druckwelle auslöst.",
             Faehigkeit::Wurfhammer => "Betäubt, prallt auf bis zu zwei weitere Gegner ab und kehrt in die Hand zurück.",
             Faehigkeit::Erdbeben => "Sprung und Aufschlag: innen mehr Schaden und längere Betäubung. Zwei Nachbeben verlangsamen.",
+            Faehigkeit::Meteorsturm => "ULTIMATIV: Ein Feuerkreis öffnet sich am Himmel, acht Meteore stürzen auf das Ziel und setzen alles in Brand.",
+            Faehigkeit::Ahnenhammer => "ULTIMATIV: Die Ahnen schleudern einen riesigen Geisterhammer vom Himmel. Innen gewaltiger Schaden, alle werden lange betäubt.",
+            Faehigkeit::Pfeilschuss => "Schneller, weiter Schuss. Jeder fünfte Pfeil trifft im Schnitt kritisch (doppelter Schaden).",
+            Faehigkeit::Salve => "Fünf Pfeile im Fächer – ideal gegen Gruppen, aus der Nähe treffen mehrere dasselbe Ziel.",
+            Faehigkeit::Explosivpfeil => "Der Pfeil bleibt stecken und explodiert kurz darauf: Flächenschaden, Brand, kurze Betäubung.",
+            Faehigkeit::Pfeilregen => "ULTIMATIV: Ein Schuss in den Himmel – drei Sekunden lang regnen Pfeile auf das Ziel und bremsen alles darin.",
         }
     }
 
@@ -234,6 +340,9 @@ impl Faehigkeit {
         let w = self.wirkung(0);
         let schaden = match self {
             Faehigkeit::Hammerschlag => format!("{:.0}/{:.0}/{:.0} Schaden", self.schaden(0), self.schaden(1), self.schaden(2)),
+            Faehigkeit::Meteorsturm => format!("{METEORE} × {:.0} Schaden", self.schaden(0)),
+            Faehigkeit::Salve => format!("{SALVE_PFEILE} × {:.0} Schaden", self.schaden(0)),
+            Faehigkeit::Pfeilregen => format!("{REGEN_WELLEN} × {:.0} Schaden", self.schaden(0)),
             _ => format!("{:.0} Schaden", self.schaden(0)),
         };
         let mut teile = vec![schaden, format!("{:.1} s Abklingzeit", self.abklingen(0) as f32 / 60.0)];
@@ -241,6 +350,7 @@ impl Faehigkeit {
             Form::Geschoss { flaeche, .. } if flaeche > 0.0 => teile.push(format!("{flaeche:.1} m Umkreis")),
             Form::UmSich { radius } => teile.push(format!("{radius:.1} m um dich")),
             Form::Nahkampf { weite, .. } => teile.push(format!("{weite:.1} m vor dir")),
+            Form::Flaeche { radius, .. } => teile.push(format!("{radius:.0} m Umkreis am Ziel")),
             _ => {}
         }
         if w.frost > 0.0 {
@@ -272,17 +382,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn jede_klasse_hat_drei_verschiedene_faehigkeiten() {
+    fn jede_klasse_hat_vier_verschiedene_faehigkeiten() {
         for class in CharacterClass::ALL {
             let f = Faehigkeit::der_klasse(class);
-            assert!(f[0] != f[1] && f[1] != f[2] && f[0] != f[2], "{class:?}");
-            // Die erste ist der Standardangriff: schnell wieder bereit
+            for i in 0..4 {
+                for j in 0..i {
+                    assert!(f[i] != f[j], "{class:?}: doppelt {:?}", f[i]);
+                }
+            }
+            // Die erste ist der Standardangriff: schnell wieder bereit; die vierte ist ultimativ
             assert!(f[0].abklingen(0) < 60, "{:?} zu langsam", f[0]);
             assert!(f[2].abklingen(0) > f[0].abklingen(0));
+            assert!(f[3].ist_ultimativ() && f[3].abklingen(0) >= 30 * 60, "{:?} ist keine ultimative Fähigkeit", f[3]);
+            assert!(f[..3].iter().all(|a| !a.ist_ultimativ()));
             for art in f {
                 for stufe in 0..3 {
                     let aus = art.ausholen(stufe);
-                    assert!((0.1..0.7).contains(&aus), "{art:?} holt {aus} s aus");
+                    let grenze = if art.ist_ultimativ() { 0.9 } else { 0.7 };
+                    assert!((0.1..grenze).contains(&aus), "{art:?} holt {aus} s aus");
                 }
             }
         }
@@ -295,5 +412,12 @@ mod tests {
         assert_eq!(kombo_stufe(Some((140, 1)), 180), 2);
         assert_eq!(kombo_stufe(Some((180, 2)), 250), 0, "nach dem Schmetterschlag beginnt sie neu");
         assert_eq!(kombo_stufe(Some((100, 0)), 100 + 30 + KOMBO_FENSTER + 1), 0, "zu spät: neu anfangen");
+    }
+
+    #[test]
+    fn meteore_und_pfeilregen_fallen_nacheinander() {
+        assert!(meteor_zeit(0) > Faehigkeit::Meteorsturm.ausholen(0));
+        assert!((meteor_zeit(METEORE - 1) - meteor_zeit(0) - METEOR_DAUER * (METEORE - 1) as f32 / METEORE as f32).abs() < 1e-4);
+        assert!(regen_zeit(REGEN_WELLEN - 1) < 5.0);
     }
 }

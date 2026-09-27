@@ -707,6 +707,71 @@ mod tests {
         assert!(session.world().dorfhalle_von("anna").is_some(), "fremde Siedlung mit zerstört");
     }
 
+    /// Jede Klasse gegen ein Lager: die Fähigkeiten auf Platz `plaetze` nacheinander aus `abstand`
+    /// Metern; danach müssen die Bewohner Lebenspunkte verloren haben. Liefert die Zustände.
+    fn gegen_lager(class: CharacterClass, plaetze: &[u8], abstand: f32) -> Vec<crate::heer::EnemyState> {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Tester".into(), class };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let local = session.local_player().unwrap();
+        let lager = session.world().wildnis.lager[0].mitte;
+        let stand = lager + vec2(abstand, 0.0);
+        let y = session.world().terrain.height_at(stand.x, stand.y) + 1.2;
+        ctx.physics.teleport_character(session.world().players[&local].character, vec3(stand.x, y, stand.y));
+        let lp = |session: &Session| -> u32 {
+            session.world().wildnis.states().iter().filter(|s| vec2(s.position.x, s.position.z).distance(lager) < 30.0).map(|s| s.lp).sum()
+        };
+        let mut zustaende = Vec::new();
+        for &platz in plaetze {
+            let vorher = lp(&session);
+            // Auf den nächsten Bewohner zielen (sie laufen dem Spieler entgegen), sonst auf die Lagermitte
+            let hier = session.world().player_position(&ctx, local).unwrap();
+            let ziel = session
+                .world()
+                .wildnis
+                .states()
+                .iter()
+                .filter(|s| s.lp > 0 && vec2(s.position.x, s.position.z).distance(lager) < 30.0)
+                .map(|s| s.position + Vec3::Y * 0.6)
+                .min_by(|a, b| a.distance(hier).total_cmp(&b.distance(hier)))
+                .unwrap_or(vec3(lager.x, session.world().terrain.height_at(lager.x, lager.y) + 1.0, lager.y));
+            let tool = Tool::Faehigkeit(platz);
+            session.fixed_update(&mut ctx, PlayerInput { tool, cast: Some(ziel), ..Default::default() }).unwrap();
+            let mut wenigste = vorher;
+            for i in 0..300 {
+                ctx.time.tick += 1;
+                session.fixed_update(&mut ctx, PlayerInput { tool, ..Default::default() }).unwrap();
+                wenigste = wenigste.min(lp(&session));
+                // Der Tester bleibt bei Kräften (sonst fällt er, und das Lager zieht sich zurück und heilt)
+                session.world_mut().players.get_mut(&local).unwrap().leben = 999.0;
+                if i == 45 {
+                    zustaende.extend(session.world().wildnis.states());
+                }
+            }
+            let art = crate::faehigkeiten::Faehigkeit::von(class, platz);
+            assert!(wenigste < vorher, "{art:?} trifft niemanden ({vorher} Lebenspunkte vorher)");
+        }
+        zustaende
+    }
+
+    #[test]
+    fn ultimative_faehigkeiten_treffen() {
+        gegen_lager(CharacterClass::Mage, &[3], 12.0);
+        gegen_lager(CharacterClass::Zwerg, &[3], 10.0);
+        gegen_lager(CharacterClass::Bogenschuetze, &[3], 14.0);
+    }
+
+    #[test]
+    fn bogenschuetze_trifft_mit_allen_pfeilen() {
+        gegen_lager(CharacterClass::Bogenschuetze, &[0, 1, 2], 9.0);
+    }
+
+    #[test]
+    fn frostnova_friert_lagerbewohner_ein() {
+        let zustaende = gegen_lager(CharacterClass::Mage, &[2], 3.0);
+        assert!(zustaende.iter().any(|s| s.flags & crate::heer::zustand::GEFROREN != 0), "niemand eingefroren");
+    }
+
     #[test]
     fn wildnis_greift_an_und_der_zwerg_wehrt_sich() {
         let mut ctx = Context::headless();

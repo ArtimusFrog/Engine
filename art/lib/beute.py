@@ -8,7 +8,7 @@ Aufruf über die Modell-Skripte in art/modelle/gegenstaende/ (je eine Zeile: mod
 import math
 
 import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 from lager import einfarbig, holzfarbe, stammfarbe
 from tuerme import Werk
@@ -76,6 +76,8 @@ def _waffe_liegend(art):
     ohne = lambda co: {}
     if art in waffen.STAEBE:
         waffen.stab(f, art, 0.0, 0.0, ohne)
+    elif art in waffen.BOEGEN:
+        waffen.bogen(f, art, Vector((0.0, 0.0, 0.0)), ohne)
     else:
         waffen.hammer(f, art, 0.0, 0.0, ohne, 0.6)
     bpy.ops.object.select_all(action="DESELECT")
@@ -101,8 +103,12 @@ def _waffe_liegend(art):
     obj.data.materials.append(mat)
     # Hinlegen: die Längsachse (Z) wird zur X-Achse, dann mittig auf den Boden
     mesh = obj.data
-    skala = 0.8 if art in waffen.STAEBE else 1.0
-    mesh.transform(Matrix.Scale(skala, 4) @ Matrix.Rotation(math.radians(90), 4, "Y"))
+    if art in waffen.BOEGEN:
+        # Der Bogen liegt schon längs (Y) und krümmt sich in Z: flach auf die Seite legen
+        mesh.transform(Matrix.Scale(0.8, 4) @ Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Rotation(math.radians(90), 4, "Y"))
+    else:
+        skala = 0.8 if art in waffen.STAEBE else 1.0
+        mesh.transform(Matrix.Scale(skala, 4) @ Matrix.Rotation(math.radians(90), 4, "Y"))
     xs = [v.co.x for v in mesh.vertices]
     ys = [v.co.y for v in mesh.vertices]
     zs = [v.co.z for v in mesh.vertices]

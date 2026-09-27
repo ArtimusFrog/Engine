@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001B;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001C;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -84,13 +84,13 @@ pub enum Tool {
     Pickaxe,
     /// Fällt Bäume.
     Axe,
-    /// Fähigkeit 0, 1 oder 2 der Klasse (siehe `faehigkeiten.rs`)
+    /// Fähigkeit 0–3 der Klasse (3 = ultimativ, siehe `faehigkeiten.rs`)
     Faehigkeit(u8),
 }
 
 impl Tool {
     /// Belegung der Auswahlleiste (Platz 1, 2, …).
-    pub const HOTBAR: [Tool; 5] = [Tool::Pickaxe, Tool::Axe, Tool::Faehigkeit(0), Tool::Faehigkeit(1), Tool::Faehigkeit(2)];
+    pub const HOTBAR: [Tool; 6] = [Tool::Pickaxe, Tool::Axe, Tool::Faehigkeit(0), Tool::Faehigkeit(1), Tool::Faehigkeit(2), Tool::Faehigkeit(3)];
     /// Der Standardangriff (Taste 3)
     pub const ANGRIFF: Tool = Tool::Faehigkeit(0);
 
@@ -468,11 +468,12 @@ pub enum CharacterClass {
     Mage,
     Rogue,
     Zwerg,
+    Bogenschuetze,
 }
 
 impl CharacterClass {
     /// Wählbare Figuren.
-    pub const ALL: [CharacterClass; 2] = [CharacterClass::Mage, CharacterClass::Zwerg];
+    pub const ALL: [CharacterClass; 3] = [CharacterClass::Mage, CharacterClass::Zwerg, CharacterClass::Bogenschuetze];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -481,6 +482,7 @@ impl CharacterClass {
             CharacterClass::Mage => "Magier",
             CharacterClass::Rogue => "Schurkin",
             CharacterClass::Zwerg => "Zwerg",
+            CharacterClass::Bogenschuetze => "Bogenschütze",
         }
     }
 
@@ -488,6 +490,7 @@ impl CharacterClass {
     pub fn max_leben(self) -> u16 {
         match self {
             CharacterClass::Zwerg => 150,
+            CharacterClass::Bogenschuetze => 110,
             _ => 100,
         }
     }
@@ -495,8 +498,9 @@ impl CharacterClass {
     /// Kurze Beschreibung für die Figurenwahl.
     pub fn beschreibung(self) -> &'static str {
         match self {
-            CharacterClass::Zwerg => "Zäh und stark im Nahkampf: Hammerschlag, Wurfhammer und Erdbeben. 150 Leben.",
-            _ => "Kämpft aus der Ferne: Arkangeschoss, Feuerball und Frostnova. 100 Leben.",
+            CharacterClass::Zwerg => "Zäh und stark im Nahkampf: Hammerschlag, Wurfhammer, Erdbeben – und der Ahnenhammer. 150 Leben.",
+            CharacterClass::Bogenschuetze => "Flink und treffsicher auf große Entfernung: Pfeilschuss, Salve, Explosivpfeil – und der Pfeilregen. 110 Leben.",
+            _ => "Kämpft aus der Ferne mit Magie: Arkangeschoss, Feuerball, Frostnova – und der Meteorsturm. 100 Leben.",
         }
     }
 }

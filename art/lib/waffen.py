@@ -197,3 +197,104 @@ def hammer(f, art, x, y, gewicht, griff_z=0.6):
         f.kugel("Drachenauge", kopf + X * 0.088, (0.012, 0.03, 0.03), farbe("#FFB020"), gewicht, 10, 6, glatt=False)
         f.loft("Goldband", [(kopf - Z * 0.087, X, Y, 0.03, 0.03), (kopf + Z * 0.087, X, Y, 0.03, 0.03)], 10, lambda i, k, p: gold_dunkel * 1.2, gewicht,
                oben_zu=True, unten_zu=True)
+
+
+# ---------------------------------------------------------------------------
+# Bögen des Bogenschützen (bogenschuetze.py): liegen in der linken Faust, der Griff bei `griff`.
+# In Ruhehaltung (Arm hängt) liegt der Bogen waagerecht entlang Y; beugt die Figur den Unterarm
+# nach vorne, steht er senkrecht. Der Bauch des Bogens zeigt nach -Z (später zum Ziel), die Sehne
+# spannt sich auf der +Z-Seite (zur Figur hin).
+# ---------------------------------------------------------------------------
+BOEGEN = ["bogen_eibe", "bogen_lang", "bogen_glut", "bogen_elfen", "bogen_sturm"]
+
+# Länge, Standhöhe (Abstand Griff–Sehne), Recurve (wie stark sich die Enden zurückbiegen),
+# Breite der Wurfarme, Holzfarbe, zweite Farbe
+_BOGEN_ART = {
+    "Bogen": (1.36, 0.15, 0.0, 0.03, "#7A5230", "#5E3C20"),
+    "bogen_eibe": (1.46, 0.15, 0.0, 0.032, "#C98A4A", "#8A4E28"),
+    "bogen_lang": (1.72, 0.16, 0.0, 0.034, "#5A3A22", "#C8B48A"),
+    "bogen_glut": (1.4, 0.15, 0.05, 0.034, "#2A2224", "#FF7A2A"),
+    "bogen_elfen": (1.48, 0.15, 0.06, 0.03, "#E6DFCB", "#5EA85A"),
+    "bogen_sturm": (1.52, 0.16, 0.07, 0.036, "#3C4A62", "#FFD24A"),
+}
+
+
+def _bogen_linie(y, laenge, stand, recurve):
+    """Mittellinie des Bogens: z-Versatz an der Stelle y (Griff bei y = 0)."""
+    s = min(1.0, abs(y) / (laenge / 2))
+    z = stand * s ** 1.7
+    if recurve > 0.0 and s > 0.8:
+        z -= recurve * ((s - 0.8) / 0.2) ** 2
+    return z
+
+
+def bogen(f, art, griff, gewicht):
+    """Einer der Bögen (`art` aus BOEGEN oder der Jagdbogen „Bogen“), gegriffen bei `griff`."""
+    laenge, stand, recurve, breite, holz_hex, zweit_hex = _BOGEN_ART[art]
+    holz, zweit = farbe(holz_hex), farbe(zweit_hex)
+    leder = farbe("#43291A")
+    gold, horn = farbe("#D8AE4A"), farbe("#EDE3CB")
+    sehne = farbe("#E8E0CC") if art != "bogen_sturm" else farbe("#BFE6FF")
+    n = 26
+    ringe = []
+    for i in range(n):
+        y = (i / (n - 1) - 0.5) * laenge
+        z = _bogen_linie(y, laenge, stand, recurve)
+        dz = (_bogen_linie(y + 0.01, laenge, stand, recurve) - _bogen_linie(y - 0.01, laenge, stand, recurve)) / 0.02
+        tangente = Vector((0, 1, dz)).normalized()
+        quer = tangente.cross(X).normalized()
+        s = abs(y) / (laenge / 2)
+        griffstueck = abs(y) < 0.07
+        b = breite * (1.25 if griffstueck else (1.0 - 0.6 * s))
+        d = breite * (0.85 if griffstueck else (0.55 - 0.3 * s))
+        ringe.append((griff + Vector((0, y, z)), X, quer, b, d))
+
+    def bogen_farbe(i, k, p):
+        y = p.center.y - griff.y
+        s = abs(y) / (laenge / 2)
+        if abs(y) < 0.07:
+            return leder * (0.75 if int(y * 90) % 2 else 1.0)                  # Ledergriff
+        if s > 0.93:
+            return gold if art in ("bogen_elfen", "bogen_sturm") else horn       # Spitzen
+        if art == "bogen_eibe":
+            return holz if k in (0, 1, 2, 7, 8, 9) else zweit                    # helles Splintholz, dunkles Kernholz
+        if art == "bogen_lang":
+            return zweit if int(s * 12) % 4 == 0 else holz                        # Sehnenwicklungen
+        if art == "bogen_glut":
+            return zweit if (k + int(s * 20)) % 7 == 0 else holz * (0.9 + 0.2 * (k % 2))   # glimmende Risse
+        if art == "bogen_elfen":
+            return holz * (0.95 + 0.05 * (k % 2))
+        if art == "bogen_sturm":
+            return zweit if abs(((s * 10) % 1.0) - 0.5) < 0.08 else holz          # Blitzbänder
+        return holz * (0.88 + 0.12 * ((k + int(s * 8)) % 3) / 2)
+
+    f.loft("Bogen" + art, ringe, 10, bogen_farbe, gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    # Sehne von Spitze zu Spitze
+    oben = griff + Vector((0, laenge / 2, _bogen_linie(laenge / 2, laenge, stand, recurve)))
+    unten = griff + Vector((0, -laenge / 2, _bogen_linie(-laenge / 2, laenge, stand, recurve)))
+    f.loft("Sehne", [(unten, X, Z, 0.0028, 0.0028), (oben, X, Z, 0.0028, 0.0028)], 6, lambda i, k, p: sehne, gewicht, oben_zu=True, unten_zu=True)
+    for spitze in (oben, unten):
+        f.kugel("Nocke", spitze, (0.012, 0.014, 0.012), gold if art in ("bogen_elfen", "bogen_sturm") else horn, gewicht, 8, 4, glatt=False)
+    # Pfeilauflage und Verzierungen
+    f.kiste("Auflage", griff + Vector((breite * 1.1, 0.075, -0.004)), (0.01, 0.02, 0.02), leder * 1.2, gewicht)
+    if art == "bogen_glut":
+        f.kugel("Glutstein", griff + Vector((0, 0.0, -0.035)), (0.022, 0.03, 0.02), farbe("#FF8A2A"), gewicht, 10, 6, glatt=False)
+    elif art == "bogen_elfen":
+        for i in range(10):
+            y = (i / 9 - 0.5) * laenge * 0.8
+            if abs(y) < 0.1:
+                continue
+            z = _bogen_linie(y, laenge, stand, recurve)
+            seite = 1 if i % 2 else -1
+            f.kugel("Blatt", griff + Vector((seite * breite * 0.9, y, z - 0.004)), (0.018, 0.03, 0.006), zweit, gewicht, 8, 4, glatt=False)
+        f.kugel("Mondstein", griff + Vector((0, 0.0, -0.034)), (0.018, 0.025, 0.016), farbe("#CFF4FF"), gewicht, 10, 6, glatt=False)
+    elif art == "bogen_sturm":
+        f.kugel("Sturmstein", griff + Vector((0, 0.0, -0.038)), (0.024, 0.032, 0.02), farbe("#6FD8FF"), gewicht, 10, 6, glatt=False)
+        for spitze in (oben, unten):
+            f.stern("Blitz", spitze + Vector((breite * 0.5, 0, 0)), X, 0.03, zweit, gewicht, zacken=4)
+            f.stern("Blitz", spitze - Vector((breite * 0.5, 0, 0)), -X, 0.03, zweit, gewicht, zacken=4)
+    elif art == "bogen_lang":
+        for y in (-0.5, 0.5):
+            p = griff + Vector((0, y * laenge * 0.5, _bogen_linie(y * laenge * 0.5, laenge, stand, recurve)))
+            f.loft("Wicklung", [(p - Y * 0.02, X, Z, breite * 0.9, breite * 0.6), (p + Y * 0.02, X, Z, breite * 0.9, breite * 0.6)], 10,
+                   lambda i, k, p: zweit, gewicht, oben_zu=True, unten_zu=True)

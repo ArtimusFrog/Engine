@@ -470,7 +470,7 @@ def _zwerg_animationen(armatur):
     from figuren import _magier_animationen
     _magier_animationen(armatur)
     # Die folgenden ersetzen die des Magiers (sonst gäbe es „Idle“ und „Idle.001“)
-    for alt in ("Idle", "Laufen", "Rennen", "Zaubern", "Arkan", "Feuerball", "Frostnova"):
+    for alt in ("Idle", "Laufen", "Rennen", "Zaubern", "Arkan", "Feuerball", "Frostnova", "Meteor"):
         aktion = bpy.data.actions.get(alt)
         if aktion:
             bpy.data.actions.remove(aktion)
@@ -597,3 +597,14 @@ def _zwerg_faehigkeiten(armatur):
     halten = _mit(aufschlag, Brust=(36, 0, 0))
     halten["Becken.pos"] = (0, 0, -0.17)
     _clip(armatur, "Beben", 36, [(0, ruhe), (5, hocke), (10, sprung), (14, fall), (17, aufschlag), (23, halten), (36, ruhe)])
+
+    # Ahnenruf (ultimativ): den Hammer zum Himmel recken, die Linke zur Faust geballt, die Ahnen
+    # rufen – dann mit aller Kraft vor sich in den Boden schmettern (Bild 22), der Geisterhammer
+    # fällt im selben Augenblick
+    ruf = {"Oberarm.R": (-178, 0, -4), "Unterarm.R": (-5, 0, 0), "Oberarm.L": (-150, 0, 20), "Unterarm.L": (-60, 0, 0),
+           "Brust": (-18, 0, 0), "Bauch": (-6, 0, 0), "Kopf": (-25, 0, 0),
+           "Oberschenkel.L": (-6, 0, 8), "Unterschenkel.L": (8, 0, 0), "Oberschenkel.R": (4, 0, -8), "Unterschenkel.R": (8, 0, 0),
+           "Becken.pos": (0, 0, 0.02)}
+    ausholen = _mit(ruf, Oberarm_R=(-150, 0, -4), Oberarm_L=(-140, 0, -8), Unterarm_L=(-35, 0, 0), Brust=(-6, 0, 0), Kopf=(-10, 0, 0))
+    _clip(armatur, "Ahnenruf", 36, [(0, ruhe), (7, ruf), (15, _mit(ruf, Oberarm_R=(-175, 0, -4), Brust=(-20, 5, 0))), (19, ausholen),
+                                    (22, schmettern), (28, _mit(schmettern, Brust=(33, 0, 0))), (36, ruhe)])
