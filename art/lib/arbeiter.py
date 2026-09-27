@@ -309,6 +309,21 @@ def _kopf(f, haut, lippe, wange, haar, bart_art, russ=False):
                 punkte = [Vector((0.006 * s, -0.13, 1.692 + DZ - 0.003 * j)), Vector((0.036 * s, -0.128, 1.684 + DZ - 0.004 * j)),
                           Vector((0.056 * s, -0.114, 1.66 + DZ - 0.006 * j)), Vector((0.064 * s, -0.106, 1.632 + DZ - 0.008 * j))]
                 f.straehne("Schnurrbart", punkte, 0.017 - 0.003 * j, 0.004, haar * (1.0 - 0.06 * j), KOPF_GEWICHT, 8, 0.4, 0.75, glatt=True)
+    elif bart_art == "kurz":
+        # Kurzer, gepflegter Bart: unter der Lippe um Kinn und Kiefer, die Lippen bleiben frei,
+        # schmale Koteletten und ein feiner Schnurrbart
+        ringe = []
+        for z, y, rx, ry in ((1.615, -0.035, 0.092, 0.092), (1.595, -0.045, 0.08, 0.08), (1.572, -0.058, 0.052, 0.05), (1.556, -0.064, 0.014, 0.014)):
+            ringe.append((Vector((0, y, z)), X, Y, rx, ry))
+        f.loft("Bart", ringe, 32, lambda i, k, p: haar * (0.88 + 0.12 * (k % 3) / 2), _kopf_und_hals, unten_zu=True, teilung=2, glatt=True)
+        for s in (1, -1):
+            wange = [Vector((0.094 * s, 0.0, 1.705 + DZ)), Vector((0.093 * s, -0.035, 1.665 + DZ)), Vector((0.08 * s, -0.07, 1.635 + DZ)),
+                     Vector((0.05 * s, -0.098, 1.612 + DZ))]
+            f.straehne("Kotelette", wange, 0.016, 0.01, haar * 0.95, KOPF_GEWICHT, 8, 0.2, 0.45, glatt=True)
+            f.straehne("Schnurrbart", [Vector((0.004 * s, -0.126, 1.688 + DZ)), Vector((0.026 * s, -0.122, 1.684 + DZ)),
+                                       Vector((0.046 * s, -0.11, 1.667 + DZ))], 0.008, 0.003, haar, KOPF_GEWICHT, 8, 0.3, 0.6, glatt=True)
+            f.straehne("Kinnbart", [Vector((0.006 * s, -0.102, 1.66 + DZ)), Vector((0.004 * s, -0.104, 1.64 + DZ))], 0.007, 0.004, haar, KOPF_GEWICHT, 6, 0.0, 0.6,
+                       glatt=True)
     else:
         # Kurzer Stoppelbart um Kinn und Mund
         ringe = []

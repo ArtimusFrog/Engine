@@ -67,6 +67,7 @@ fn startwaffe_symbol(class: crate::protocol::CharacterClass) -> &'static str {
     match class {
         crate::protocol::CharacterClass::Zwerg => "schmiedehammer",
         crate::protocol::CharacterClass::Bogenschuetze => "jagdbogen",
+        crate::protocol::CharacterClass::Rogue => "runenklinge",
         _ => "zauberstab",
     }
 }
@@ -230,7 +231,7 @@ impl InventoryUi {
             let grid_top = tabs_top + TABS + 10.0;
             let icons = self.icons.as_ref().expect("Symbole geladen");
             // Waffen: Startwaffe und alle erbeuteten; Klick rüstet aus
-            let waffen: Vec<u8> = std::iter::once(0).chain(crate::waffen::WAFFEN.iter().filter(|w| inventory.waffen & (1u16 << w.id) != 0).map(|w| w.id)).collect();
+            let waffen: Vec<u8> = std::iter::once(0).chain(crate::waffen::WAFFEN.iter().filter(|w| inventory.waffen & (1u32 << w.id) != 0).map(|w| w.id)).collect();
             for slot in 0..COLUMNS * ROWS {
                 if self.tab != Tab::Waffen {
                     break;
@@ -271,6 +272,7 @@ impl InventoryUi {
                             ui.label(egui::RichText::new(format!("{} · {}", w.seltenheit.label(), match w.klasse {
                                 crate::protocol::CharacterClass::Zwerg => "Hammer (Zwerg)",
                                 crate::protocol::CharacterClass::Bogenschuetze => "Bogen (Bogenschütze)",
+                                crate::protocol::CharacterClass::Rogue => "Klinge (Schurke)",
                                 _ => "Stab (Magier)",
                             })).size(13.0).color(GOLD));
                             ui.label(egui::RichText::new(crate::waffen::werte_zeile(w)).size(14.0).color(Color32::WHITE));
@@ -403,10 +405,11 @@ impl InventoryUi {
                         let farbe = match class {
                             crate::protocol::CharacterClass::Zwerg => Color32::from_rgb(255, 205, 110),
                             crate::protocol::CharacterClass::Bogenschuetze => Color32::from_rgb(170, 230, 130),
+                            crate::protocol::CharacterClass::Rogue => Color32::from_rgb(140, 210, 255),
                             _ => Color32::from_rgb(175, 140, 255),
                         };
                         // Voll geladen bzw. als Nächstes kommt der Schmetterschlag
-                        let fertig = voll + (class == crate::protocol::CharacterClass::Zwerg) as u8 >= von;
+                        let fertig = voll + matches!(class, crate::protocol::CharacterClass::Zwerg | crate::protocol::CharacterClass::Rogue) as u8 >= von;
                         for k in 0..von {
                             let p = egui::pos2(slot_rect.center().x + (k as f32 - (von - 1) as f32 * 0.5) * 11.0, slot_rect.bottom() + 5.0);
                             let an = k < voll;

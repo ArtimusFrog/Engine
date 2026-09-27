@@ -383,7 +383,7 @@ impl Playground {
         let (_, _, f_abklingen) = crate::waffen::faktoren(waffe, self.klasse(), art);
         // Stufe wie beim Server: Kombo des Hammerschlags, Arkanlanze mit voller Ladung
         let stufe = self.naechste_stufe(ctx, art);
-        if art == crate::faehigkeiten::Faehigkeit::Hammerschlag {
+        if art.ist_kombo() {
             self.kombo = Some((Self::takt(ctx), stufe));
         }
         let abklingen = (art.abklingen(stufe) as f32 * f_abklingen).round();
@@ -407,9 +407,9 @@ impl Playground {
 
     /// Welche Stufe die Fähigkeit jetzt hätte (Kombo, Arkanlanze).
     fn naechste_stufe(&self, ctx: &Context, art: crate::faehigkeiten::Faehigkeit) -> u8 {
-        use crate::faehigkeiten::{kombo_stufe, Faehigkeit, LADUNG_MAX};
+        use crate::faehigkeiten::{kombo_stufe_von, Faehigkeit, LADUNG_MAX};
         match art {
-            Faehigkeit::Hammerschlag => kombo_stufe(self.kombo, Self::takt(ctx)),
+            Faehigkeit::Hammerschlag | Faehigkeit::Klingenhieb => kombo_stufe_von(art, self.kombo, Self::takt(ctx)),
             Faehigkeit::Arkangeschoss if self.ladung() >= LADUNG_MAX => 1,
             _ => 0,
         }
@@ -421,8 +421,8 @@ impl Playground {
         let mut punkte = [None; 4];
         match Faehigkeit::von(self.klasse(), 0) {
             Faehigkeit::Arkangeschoss => punkte[0] = Some((self.ladung(), LADUNG_MAX)),
-            Faehigkeit::Hammerschlag => {
-                let weiter = self.naechste_stufe(ctx, Faehigkeit::Hammerschlag);
+            art @ (Faehigkeit::Hammerschlag | Faehigkeit::Klingenhieb) => {
+                let weiter = self.naechste_stufe(ctx, art);
                 punkte[0] = Some((weiter, 3));
             }
             _ => {}
@@ -2016,6 +2016,7 @@ impl Game for Playground {
         if let Some(name) = args.iter().position(|a| a == "--figur").and_then(|i| args.get(i + 1)) {
             let name = match name.to_lowercase().as_str() {
                 "bogenschuetze" | "bogen" | "archer" => "Bogenschütze".to_string(),
+                "schurke" | "rogue" => "Schurke".to_string(),
                 _ => name.clone(),
             };
             if let Some(class) = crate::protocol::CharacterClass::ALL.into_iter().find(|c| c.label().eq_ignore_ascii_case(&name)) {
@@ -2397,7 +2398,9 @@ impl Game for Playground {
                 let stand = mitte + blick * 24.0;
                 let character = world.players[&local].character;
                 ctx.physics.teleport_character(character, vec3(stand.x, world.terrain.height_at(stand.x, stand.y) + 1.0, stand.y));
-                self.demo_crystal = Some(Some(vec3(mitte.x, hoehe + 3.0, mitte.y)));
+                // Mit --demo-angriff zielt die Figur auf den freien Platz vor der Halle, sonst auf die Halle
+                let ziel = if self.demo_angriff.is_some() { mitte + blick * 13.0 } else { mitte };
+                self.demo_crystal = Some(Some(vec3(ziel.x, hoehe + if self.demo_angriff.is_some() { 0.6 } else { 3.0 }, ziel.y)));
                 self.demo_yaw_offset = 0.0;
             }
         }
@@ -2470,7 +2473,7 @@ impl Game for Playground {
             if ctx.time.elapsed - self.last_cast > takt {
                 let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
                 let stufe = self.naechste_stufe(ctx, art);
-                if art == crate::faehigkeiten::Faehigkeit::Hammerschlag {
+                if art.ist_kombo() {
                     self.kombo = Some((Self::takt(ctx), stufe));
                 }
                 self.last_cast = ctx.time.elapsed;

@@ -1,4 +1,4 @@
-//! Waffen: je Klasse eine Startwaffe (Wanderstab, Schmiedehammer) und fünf Waffen, die Gegner in
+//! Waffen: je Klasse eine Startwaffe (Wanderstab, Schmiedehammer, Mondbogen, Runenklinge) und fünf Waffen, die Gegner in
 //! der Wildnis fallen lassen – in vier Seltenheiten, mit mehr Schaden, kürzeren Abklingzeiten und
 //! einem Bonus auf eine Fähigkeit. Die Waffe sieht man in der Hand der Figur (Anbauteil im
 //! Figurenmodell) und als kleines Modell am Boden, solange sie dort liegt.
@@ -48,7 +48,7 @@ impl Seltenheit {
 }
 
 pub struct Waffe {
-    /// 1–15 (0 ist die Startwaffe)
+    /// 1–20 (0 ist die Startwaffe)
     pub id: u8,
     pub name: &'static str,
     pub klasse: CharacterClass,
@@ -66,7 +66,7 @@ pub struct Waffe {
 use Faehigkeit::*;
 use Seltenheit::*;
 
-pub const WAFFEN: [Waffe; 15] = [
+pub const WAFFEN: [Waffe; 20] = [
     Waffe { id: 1, name: "Eichenstab", klasse: CharacterClass::Mage, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "stab_eiche",
             beschreibung: "Ein knorriger Eichenstab mit Bernstein. Etwas mehr Kraft in jedem Zauber." },
     Waffe { id: 2, name: "Glutstab", klasse: CharacterClass::Mage, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Feuerball, 1.45)), datei: "stab_glut",
@@ -97,6 +97,16 @@ pub const WAFFEN: [Waffe; 15] = [
             beschreibung: "Aus hellem Silberholz mit Blattranken. Salven treffen härter, alles ist schneller bereit." },
     Waffe { id: 15, name: "Sturmbogen", klasse: CharacterClass::Bogenschuetze, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Pfeilregen, 1.3)),
             datei: "bogen_sturm", beschreibung: "Blitze knistern in der Sehne. Mehr Schaden, schnellere Fähigkeiten, ein gewaltiger Pfeilregen." },
+    Waffe { id: 16, name: "Eisenklinge", klasse: CharacterClass::Rogue, seltenheit: Gewoehnlich, schaden: 1.12, abklingen: 1.0, bonus: None, datei: "klinge_eisen",
+            beschreibung: "Ein schlichtes Kurzschwert aus gutem Eisen. Etwas mehr Schärfe in jedem Hieb." },
+    Waffe { id: 17, name: "Giftzahn", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Wurfdolche, 1.45)), datei: "klinge_gift",
+            beschreibung: "Die Klinge schwitzt grünes Gift. Wurfdolche treffen härter und lähmen länger." },
+    Waffe { id: 18, name: "Rußklinge", klasse: CharacterClass::Rogue, seltenheit: Selten, schaden: 1.1, abklingen: 1.0, bonus: Some((Rauchbombe, 1.45)), datei: "klinge_russ",
+            beschreibung: "Aus rußschwarzem Stahl geschmiedet. Rauchbomben treffen härter und betäuben länger." },
+    Waffe { id: 19, name: "Mondsichel", klasse: CharacterClass::Rogue, seltenheit: Episch, schaden: 1.15, abklingen: 0.8, bonus: Some((Klingenhieb, 1.35)), datei: "klinge_mond",
+            beschreibung: "Eine silberne Krummklinge, leicht wie ein Lufthauch. Hiebe treffen härter, alles ist schneller bereit." },
+    Waffe { id: 20, name: "Schattenzahn", klasse: CharacterClass::Rogue, seltenheit: Legendaer, schaden: 1.35, abklingen: 0.85, bonus: Some((Schattenklingen, 1.3)),
+            datei: "klinge_schatten", beschreibung: "In ihr wohnt ein Schatten. Mehr Schaden, schnellere Fähigkeiten, gewaltigere Schattenklingen." },
 ];
 
 pub fn waffe(id: u8) -> Option<&'static Waffe> {
@@ -108,6 +118,7 @@ pub fn startwaffe(class: CharacterClass) -> &'static str {
     match class {
         CharacterClass::Zwerg => "Schmiedehammer",
         CharacterClass::Bogenschuetze => "Mondbogen",
+        CharacterClass::Rogue => "Runenklinge",
         _ => "Wanderstab",
     }
 }
@@ -181,8 +192,8 @@ mod tests {
         let mut ids: Vec<u8> = WAFFEN.iter().map(|w| w.id).collect();
         ids.dedup();
         assert_eq!(ids, (1..=WAFFEN.len() as u8).collect::<Vec<u8>>());
-        // Erbeutete Waffen stehen als Bits in einem u16
-        assert!(WAFFEN.len() < 16);
+        // Erbeutete Waffen stehen als Bits in einem u32
+        assert!(WAFFEN.len() < 32);
     }
 
     #[test]

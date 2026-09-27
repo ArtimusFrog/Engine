@@ -689,6 +689,97 @@ def faehigkeit_ahnenhammer():
         kegel(0.05, 0.5, (math.cos(w) * 0.75, 0.3, math.sin(w) * 0.75), (0, math.degrees(math.atan2(math.cos(w), math.sin(w))), 0), strahl, 4, "Strahl")
 
 
+# ---------------------------------------------------------------------------
+# Schurke: Klingen aus dem Figurenmodell, Symbole der Fähigkeiten
+# ---------------------------------------------------------------------------
+def _klinge_symbol(knoten):
+    # Die Klinge hängt im Modell nach unten: schräg ins Bild legen, die Spitze nach rechts oben
+    return lambda: _aus_magier(knoten, Matrix.Rotation(math.radians(-135), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "Z"), figur="schurke")
+
+
+def _bogen_linie_leucht(name, farbe, mitte, radius, von, bis, dicke, staerke=2.0):
+    """Leuchtende Sichel in der Bildebene (Winkel in Grad)."""
+    mat = leucht(name, farbe, staerke)
+    for k in range(18):
+        t = k / 17
+        w = math.radians(von + (bis - von) * t)
+        p = Vector(mitte) + Vector((math.cos(w) * radius, -0.2, math.sin(w) * radius))
+        kugel(dicke * (0.3 + math.sin(t * math.pi)), p, mat, name, 2)
+
+
+def faehigkeit_klingenhieb():
+    """Die Runenklinge im Schwung, dahinter eine eisblaue Sichel."""
+    _aus_magier("Klinge", Matrix.Rotation(math.radians(-135), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "Z"), figur="schurke")
+    bpy.data.objects["Klinge"].data.transform(Matrix.Scale(1.8, 4))
+    _bogen_linie_leucht("Sichel", "#8FE0FF", (0.0, 0, -0.1), 0.8, 165, 15, 0.07, 2.2)
+
+
+def _dolch(mitte, winkel, laenge, stahl, griff):
+    a = math.radians(winkel)
+    richtung = Vector((math.cos(a), 0, math.sin(a)))
+    drehung = (0, 90 - winkel, 0)
+    mitte = Vector(mitte)
+    klinge = kegel(0.07, laenge * 0.62, mitte, drehung, stahl, 4, "Klinge")
+    klinge.data.transform(Matrix.Translation(-mitte) @ Matrix.Scale(1, 4) )
+    klinge.data.transform(Matrix.Translation(mitte))
+    bm = zylinder(0.03, laenge * 0.3, 8)
+    bewegen(bm, mitte - richtung * laenge * 0.15, drehung)
+    objekt("Griff", bm, griff)
+    bm = zylinder(0.012, 0.22, 6)
+    bewegen(bm, mitte, (0, -winkel, 0))
+    objekt("Parier", bm, griff)
+    return richtung
+
+
+def faehigkeit_wurfdolche():
+    """Drei Dolche im Fächer mit grünen Giftspuren."""
+    stahl = material("Stahl", "#C8CED6", rau=0.25, glanz=1.0)
+    griff = material("Griff", "#4A3222", rau=0.8)
+    spur = leucht("Gift", "#6CFF4A", 1.8)
+    for i, w in enumerate((20, 40, 60)):
+        a = math.radians(w)
+        mitte = (-0.35 + math.cos(a) * 0.5, -0.05 * i, -0.35 + math.sin(a) * 0.5)
+        richtung = _dolch(mitte, w, 0.9, stahl, griff)
+        for k in range(5):
+            p = Vector(mitte) - richtung * (0.45 + 0.12 * k)
+            kugel(0.05 - 0.008 * k, p, spur, "Spur", 1)
+
+
+def faehigkeit_rauchbombe():
+    """Eine schwarze Bombe mit glimmender Lunte, dahinter Rauchwolken."""
+    bombe = material("Bombe", "#2A2830", rau=0.4, glanz=0.4)
+    rauch = material("Rauch", "#9A94A8", rau=1.0)
+    kugel(0.42, (0.1, 0, -0.15), bombe, "Bombe")
+    bm = zylinder(0.12, 0.12, 12)
+    bewegen(bm, (0.32, 0, 0.18), (0, 35, 0))
+    objekt("Hals", bm, material("Messing", "#B08A3A", rau=0.4, glanz=0.8))
+    funke = leucht("Funke", "#FFB040", 2.5)
+    kugel(0.08, (0.45, -0.05, 0.36), funke, "Funke")
+    zufall = random.Random(5)
+    for i in range(7):
+        w = math.radians(zufall.uniform(0, 360))
+        kegel(0.018, zufall.uniform(0.1, 0.2), (0.45 + math.cos(w) * 0.08, -0.06, 0.36 + math.sin(w) * 0.08),
+              (0, math.degrees(math.atan2(math.cos(w), math.sin(w))), 0), funke, 4, "Funke")
+    for i, (x, z, r) in enumerate(((-0.55, 0.3, 0.3), (-0.3, 0.6, 0.24), (-0.7, -0.1, 0.26), (0.05, 0.62, 0.2), (-0.5, 0.65, 0.18))):
+        kugel(r, (x, 0.25 + 0.03 * i, z), rauch, "Rauch")
+
+
+def faehigkeit_schattenklingen():
+    """Ein violetter Kranz aus Schattenklingen um ein leuchtendes Zentrum."""
+    klinge = leucht("Klinge", "#B488FF", 1.8)
+    kern = leucht("Kern", "#F0E0FF", 3.0)
+    ring = leucht("Ring", "#8A4AFF", 1.4)
+    for k in range(6):
+        w = math.tau * k / 6
+        mitte = (math.cos(w) * 0.55, 0, math.sin(w) * 0.55)
+        # Klinge tangential, leicht nach außen gebogen
+        kegel(0.09, 0.62, mitte, (0, math.degrees(-w), 0), klinge, 4, "Klinge")
+    kugel(0.2, (0, -0.1, 0), kern, "Kern")
+    for k in range(32):
+        w = math.tau * k / 32
+        kugel(0.03, (math.cos(w) * 0.95, 0.1, math.sin(w) * 0.95), ring, "Ring", 1)
+
+
 def _bogen_symbol(knoten):
     # Der Bogen liegt im Modell waagerecht (entlang Y): aufrichten und schräg ins Bild legen
     return lambda: _aus_magier(knoten, Matrix.Rotation(math.radians(-40), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "X"), figur="bogenschuetze")
@@ -717,13 +808,19 @@ GEGENSTAENDE["schmiedehammer"] = _hammer_symbol("Hammer")
 for _art in ("bogen_eibe", "bogen_lang", "bogen_glut", "bogen_elfen", "bogen_sturm"):
     GEGENSTAENDE[_art] = _bogen_symbol(_art)
 GEGENSTAENDE["jagdbogen"] = _bogen_symbol("Bogen")
+for _art in ("klinge_eisen", "klinge_gift", "klinge_russ", "klinge_mond", "klinge_schatten"):
+    GEGENSTAENDE[_art] = _klinge_symbol(_art)
+GEGENSTAENDE["runenklinge"] = _klinge_symbol("Klinge")
+for _name, _bau in (("faehigkeit_klingenhieb", faehigkeit_klingenhieb), ("faehigkeit_wurfdolche", faehigkeit_wurfdolche),
+                    ("faehigkeit_rauchbombe", faehigkeit_rauchbombe), ("faehigkeit_schattenklingen", faehigkeit_schattenklingen)):
+    GEGENSTAENDE[_name] = _bau
 for _name, _bau in (("faehigkeit_meteorsturm", faehigkeit_meteorsturm), ("faehigkeit_ahnenhammer", faehigkeit_ahnenhammer),
                     ("faehigkeit_pfeilschuss", faehigkeit_pfeilschuss), ("faehigkeit_salve", faehigkeit_salve),
                     ("faehigkeit_explosivpfeil", faehigkeit_explosivpfeil), ("faehigkeit_pfeilregen", faehigkeit_pfeilregen)):
     GEGENSTAENDE[_name] = _bau
 
 # Werkzeuge von vorne ansehen (liegen flach im Bild), Gegenstände schräg von oben
-BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_", "bogen_", "faehigkeit_")) or n in ("schmiedehammer", "jagdbogen")}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
+BLICK = {**{n: (0.0, -1.0, 0.25) for n in GEGENSTAENDE if n.startswith(("stab_", "hammer_", "bogen_", "klinge_", "faehigkeit_")) or n in ("schmiedehammer", "jagdbogen", "runenklinge")}, "spitzhacke": (0.0, -1.0, 0.25), "axt": (0.0, -1.0, 0.25), "zauberstab": (0.0, -1.0, 0.25),
          "faehigkeit_arkangeschoss": (0.0, -1.0, 0.2), "faehigkeit_feuerball": (0.0, -1.0, 0.2), "faehigkeit_hammerschlag": (0.0, -1.0, 0.2),
          "faehigkeit_wurfhammer": (0.0, -1.0, 0.2), "faehigkeit_frostnova": (0.3, -1.0, 0.9), "faehigkeit_erdbeben": (0.4, -1.0, 0.8)}
 

@@ -767,6 +767,13 @@ mod tests {
         gegen_lager(CharacterClass::Mage, &[3], 12.0);
         gegen_lager(CharacterClass::Zwerg, &[3], 10.0);
         gegen_lager(CharacterClass::Bogenschuetze, &[3], 14.0);
+        gegen_lager(CharacterClass::Rogue, &[3], 12.0);
+    }
+
+    #[test]
+    fn schurke_trifft_mit_klinge_dolchen_und_rauch() {
+        gegen_lager(CharacterClass::Rogue, &[1], 9.0);
+        gegen_lager(CharacterClass::Rogue, &[0, 2], 2.5);
     }
 
     #[test]

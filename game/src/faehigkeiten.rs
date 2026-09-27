@@ -7,6 +7,8 @@
 //! zurück), Erdbeben (Sprung, zwei Ringe, Nachbeben), **Ahnenhammer**.
 //! Bogenschütze: Pfeilschuss (kritische Treffer), Salve (fünf Pfeile im Fächer), Explosivpfeil
 //! (zündet nach kurzer Zeit), **Pfeilregen**.
+//! Schurke: Klingenhieb (Dreierkombo: zwei Hiebe, dann ein Stich), Wurfdolche (drei
+//! Giftdolche im Fächer), Rauchbombe (betäubt alles um ihn), **Schattenklingen**.
 //! Gefrorene zerschmettern beim nächsten Treffer (+50 %). Der Server rechnet alles nach; die
 //! Werte stehen hier an einer Stelle (Konzept: `docs/konzept_faehigkeiten.md`).
 
@@ -30,6 +32,11 @@ pub enum Faehigkeit {
     Salve,
     Explosivpfeil,
     Pfeilregen,
+    // Schurke
+    Klingenhieb,
+    Wurfdolche,
+    Rauchbombe,
+    Schattenklingen,
 }
 
 /// Wie eine Fähigkeit wirkt.
@@ -115,6 +122,24 @@ pub const REGEN_WELLEN: usize = 10;
 pub const REGEN_ABSTAND: f32 = 0.3;
 pub const REGEN_FLUG: f32 = 0.6;
 /// Wann Welle `i` des Pfeilregens trifft (Sekunden nach dem Einsatz).
+/// Wurfdolche: so viele im Fächer (Grad zwischen den äußeren und der Mitte)
+pub const DOLCHE: usize = 3;
+pub const DOLCH_FAECHER: f32 = 13.0;
+/// Schattenklingen: so viele Klingenwellen am Ziel, Abstand (s), danach der Schlussschlag
+pub const KLINGEN_WELLEN: usize = 7;
+pub const KLINGEN_ABSTAND: f32 = 0.28;
+pub const KLINGEN_SCHLUSS: f32 = 2.5;
+
+/// Wann die i-te Klingenwelle trifft (Sekunden nach dem Auslösen).
+pub fn klingen_zeit(i: usize) -> f32 {
+    Faehigkeit::Schattenklingen.ausholen(0) + 0.25 + i as f32 * KLINGEN_ABSTAND
+}
+
+/// Wann der Schlussschlag der Schattenklingen trifft.
+pub fn klingen_schluss() -> f32 {
+    klingen_zeit(KLINGEN_WELLEN - 1) + 0.45
+}
+
 pub fn regen_zeit(i: usize) -> f32 {
     Faehigkeit::Pfeilregen.ausholen(0) + REGEN_FLUG + i as f32 * REGEN_ABSTAND
 }
@@ -125,6 +150,7 @@ impl Faehigkeit {
         match class {
             CharacterClass::Zwerg => [Faehigkeit::Hammerschlag, Faehigkeit::Wurfhammer, Faehigkeit::Erdbeben, Faehigkeit::Ahnenhammer],
             CharacterClass::Bogenschuetze => [Faehigkeit::Pfeilschuss, Faehigkeit::Salve, Faehigkeit::Explosivpfeil, Faehigkeit::Pfeilregen],
+            CharacterClass::Rogue => [Faehigkeit::Klingenhieb, Faehigkeit::Wurfdolche, Faehigkeit::Rauchbombe, Faehigkeit::Schattenklingen],
             _ => [Faehigkeit::Arkangeschoss, Faehigkeit::Feuerball, Faehigkeit::Frostnova, Faehigkeit::Meteorsturm],
         }
     }
@@ -135,7 +161,7 @@ impl Faehigkeit {
 
     /// Die ultimative Fähigkeit (lange Abklingzeit, Platz 6)?
     pub fn ist_ultimativ(self) -> bool {
-        matches!(self, Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen)
+        matches!(self, Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen | Faehigkeit::Schattenklingen)
     }
 
     pub fn label(self) -> &'static str {
@@ -152,6 +178,10 @@ impl Faehigkeit {
             Faehigkeit::Salve => "Salve",
             Faehigkeit::Explosivpfeil => "Explosivpfeil",
             Faehigkeit::Pfeilregen => "Pfeilregen",
+            Faehigkeit::Klingenhieb => "Klingenhieb",
+            Faehigkeit::Wurfdolche => "Wurfdolche",
+            Faehigkeit::Rauchbombe => "Rauchbombe",
+            Faehigkeit::Schattenklingen => "Schattenklingen",
         }
     }
 
@@ -170,6 +200,10 @@ impl Faehigkeit {
             Faehigkeit::Salve => "faehigkeit_salve",
             Faehigkeit::Explosivpfeil => "faehigkeit_explosivpfeil",
             Faehigkeit::Pfeilregen => "faehigkeit_pfeilregen",
+            Faehigkeit::Klingenhieb => "faehigkeit_klingenhieb",
+            Faehigkeit::Wurfdolche => "faehigkeit_wurfdolche",
+            Faehigkeit::Rauchbombe => "faehigkeit_rauchbombe",
+            Faehigkeit::Schattenklingen => "faehigkeit_schattenklingen",
         }
     }
 
@@ -187,6 +221,10 @@ impl Faehigkeit {
             Faehigkeit::Salve => Form::Geschoss { tempo: 55.0, flaeche: 0.0 },
             Faehigkeit::Explosivpfeil => Form::Geschoss { tempo: 45.0, flaeche: 3.5 },
             Faehigkeit::Pfeilregen => Form::Flaeche { reichweite: 32.0, radius: 6.0 },
+            Faehigkeit::Klingenhieb => Form::Nahkampf { weite: 3.1, winkel: 70.0 },
+            Faehigkeit::Wurfdolche => Form::Geschoss { tempo: 42.0, flaeche: 0.0 },
+            Faehigkeit::Rauchbombe => Form::UmSich { radius: 5.5 },
+            Faehigkeit::Schattenklingen => Form::Flaeche { reichweite: 26.0, radius: 5.5 },
         }
     }
 
@@ -201,6 +239,7 @@ impl Faehigkeit {
                 Faehigkeit::Pfeilschuss => 50.0,
                 Faehigkeit::Salve => 35.0,
                 Faehigkeit::Explosivpfeil => 42.0,
+                Faehigkeit::Wurfdolche => 28.0,
                 _ => 0.0,
             },
         }
@@ -224,6 +263,11 @@ impl Faehigkeit {
             (Faehigkeit::Salve, _) => 6 * 60,
             (Faehigkeit::Explosivpfeil, _) => 9 * 60,
             (Faehigkeit::Pfeilregen, _) => 40 * 60,
+            (Faehigkeit::Klingenhieb, 2) => 44,
+            (Faehigkeit::Klingenhieb, _) => 26,
+            (Faehigkeit::Wurfdolche, _) => 5 * 60,
+            (Faehigkeit::Rauchbombe, _) => 11 * 60,
+            (Faehigkeit::Schattenklingen, _) => 40 * 60,
         }
     }
 
@@ -246,6 +290,12 @@ impl Faehigkeit {
             (Faehigkeit::Salve, _) => ("Salve", 1.0, 11.0),
             (Faehigkeit::Explosivpfeil, _) => ("Sprengschuss", 1.0, 13.0),
             (Faehigkeit::Pfeilregen, _) => ("Himmelsschuss", 1.0, 16.0),
+            (Faehigkeit::Klingenhieb, 1) => ("Hieb2", 1.0, 6.0),
+            (Faehigkeit::Klingenhieb, 2) => ("Stich", 1.0, 8.0),
+            (Faehigkeit::Klingenhieb, _) => ("Hieb1", 1.0, 6.0),
+            (Faehigkeit::Wurfdolche, _) => ("Dolchwurf", 1.0, 9.0),
+            (Faehigkeit::Rauchbombe, _) => ("Rauchwurf", 1.0, 10.0),
+            (Faehigkeit::Schattenklingen, _) => ("Schattenruf", 1.0, 18.0),
         }
     }
 
@@ -275,6 +325,11 @@ impl Faehigkeit {
             (Faehigkeit::Salve, _) => 15.0,
             (Faehigkeit::Explosivpfeil, _) => 40.0,
             (Faehigkeit::Pfeilregen, _) => 10.0,
+            (Faehigkeit::Klingenhieb, 2) => 50.0,
+            (Faehigkeit::Klingenhieb, _) => 24.0,
+            (Faehigkeit::Wurfdolche, _) => 16.0,
+            (Faehigkeit::Rauchbombe, _) => 20.0,
+            (Faehigkeit::Schattenklingen, _) => 14.0,
         }
     }
 
@@ -283,8 +338,11 @@ impl Faehigkeit {
             Faehigkeit::Arkangeschoss => DamageKind::Arcane,
             Faehigkeit::Feuerball | Faehigkeit::Meteorsturm | Faehigkeit::Explosivpfeil => DamageKind::Fire,
             Faehigkeit::Frostnova => DamageKind::Frost,
-            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer | Faehigkeit::Erdbeben | Faehigkeit::Ahnenhammer => DamageKind::Physical,
-            Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Pfeilregen => DamageKind::Pierce,
+            Faehigkeit::Hammerschlag | Faehigkeit::Wurfhammer | Faehigkeit::Erdbeben | Faehigkeit::Ahnenhammer | Faehigkeit::Klingenhieb | Faehigkeit::Rauchbombe => {
+                DamageKind::Physical
+            }
+            Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Pfeilregen | Faehigkeit::Wurfdolche => DamageKind::Pierce,
+            Faehigkeit::Schattenklingen => DamageKind::Arcane,
         }
     }
 
@@ -300,6 +358,9 @@ impl Faehigkeit {
             (Faehigkeit::Ahnenhammer, _) => Wirkung { stun: 2.5, ..Default::default() },
             (Faehigkeit::Explosivpfeil, _) => Wirkung { stun: 0.8, brand: 5.0, dauer: 2.0, ..Default::default() },
             (Faehigkeit::Pfeilregen, _) => Wirkung { bremse: 0.45, ..Default::default() },
+            (Faehigkeit::Wurfdolche, _) => Wirkung { bremse: 0.35, ..Default::default() },
+            (Faehigkeit::Rauchbombe, _) => Wirkung { stun: 1.8, ..Default::default() },
+            (Faehigkeit::Schattenklingen, _) => Wirkung { bremse: 0.4, ..Default::default() },
             _ => Wirkung::default(),
         }
     }
@@ -314,6 +375,10 @@ impl Faehigkeit {
             Faehigkeit::Erdbeben => glam::vec3(0.75, 0.55, 0.35),
             Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Pfeilregen => glam::vec3(0.9, 0.95, 0.75),
             Faehigkeit::Explosivpfeil => glam::vec3(1.0, 0.5, 0.2),
+            Faehigkeit::Klingenhieb => glam::vec3(0.55, 0.85, 1.0),
+            Faehigkeit::Wurfdolche => glam::vec3(0.45, 0.95, 0.35),
+            Faehigkeit::Rauchbombe => glam::vec3(0.5, 0.45, 0.55),
+            Faehigkeit::Schattenklingen => glam::vec3(0.6, 0.35, 1.0),
         }
     }
 
@@ -332,6 +397,10 @@ impl Faehigkeit {
             Faehigkeit::Salve => "Fünf Pfeile im Fächer – ideal gegen Gruppen, aus der Nähe treffen mehrere dasselbe Ziel.",
             Faehigkeit::Explosivpfeil => "Der Pfeil bleibt stecken und explodiert kurz darauf: Flächenschaden, Brand, kurze Betäubung.",
             Faehigkeit::Pfeilregen => "ULTIMATIV: Ein Schuss in den Himmel – drei Sekunden lang regnen Pfeile auf das Ziel und bremsen alles darin.",
+            Faehigkeit::Klingenhieb => "Dreierkombo mit der Runenklinge: zwei schnelle Hiebe, dann ein Stich mit doppeltem Schaden.",
+            Faehigkeit::Wurfdolche => "Drei vergiftete Dolche im Fächer. Das Gift verlangsamt jeden Getroffenen.",
+            Faehigkeit::Rauchbombe => "Eine Rauchbombe zu deinen Füßen: Alles im Rauch wird getroffen und betäubt.",
+            Faehigkeit::Schattenklingen => "ULTIMATIV: Ein Wirbel aus Schattenklingen zerschneidet alles am Ziel und bremst es. Zum Schluss explodiert er und betäubt.",
         }
     }
 
@@ -343,6 +412,9 @@ impl Faehigkeit {
             Faehigkeit::Meteorsturm => format!("{METEORE} × {:.0} Schaden", self.schaden(0)),
             Faehigkeit::Salve => format!("{SALVE_PFEILE} × {:.0} Schaden", self.schaden(0)),
             Faehigkeit::Pfeilregen => format!("{REGEN_WELLEN} × {:.0} Schaden", self.schaden(0)),
+            Faehigkeit::Klingenhieb => format!("{:.0} Schaden, Stich {:.0}", self.schaden(0), self.schaden(2)),
+            Faehigkeit::Wurfdolche => format!("{DOLCHE} × {:.0} Schaden", self.schaden(0)),
+            Faehigkeit::Schattenklingen => format!("{KLINGEN_WELLEN} × {:.0} + {:.0} Schaden", self.schaden(0), self.schaden(0) * KLINGEN_SCHLUSS),
             _ => format!("{:.0} Schaden", self.schaden(0)),
         };
         let mut teile = vec![schaden, format!("{:.1} s Abklingzeit", self.abklingen(0) as f32 / 60.0)];
@@ -371,9 +443,21 @@ impl Faehigkeit {
 /// Hammerschlag: welche Stufe der nächste Schlag hat. `letzter` = Takt des letzten Schlags und
 /// seine Stufe, `jetzt` = aktueller Takt.
 pub fn kombo_stufe(letzter: Option<(u64, u8)>, jetzt: u64) -> u8 {
+    kombo_stufe_von(Faehigkeit::Hammerschlag, letzter, jetzt)
+}
+
+/// Dreierkombo einer Fähigkeit (Hammerschlag, Klingenhieb).
+pub fn kombo_stufe_von(art: Faehigkeit, letzter: Option<(u64, u8)>, jetzt: u64) -> u8 {
     match letzter {
-        Some((tick, stufe)) if jetzt <= tick + Faehigkeit::Hammerschlag.abklingen(stufe) + KOMBO_FENSTER => (stufe + 1) % 3,
+        Some((tick, stufe)) if jetzt <= tick + art.abklingen(stufe) + KOMBO_FENSTER => (stufe + 1) % 3,
         _ => 0,
+    }
+}
+
+impl Faehigkeit {
+    /// Hat die Fähigkeit eine Dreierkombo?
+    pub fn ist_kombo(self) -> bool {
+        matches!(self, Faehigkeit::Hammerschlag | Faehigkeit::Klingenhieb)
     }
 }
 
@@ -419,5 +503,6 @@ mod tests {
         assert!(meteor_zeit(0) > Faehigkeit::Meteorsturm.ausholen(0));
         assert!((meteor_zeit(METEORE - 1) - meteor_zeit(0) - METEOR_DAUER * (METEORE - 1) as f32 / METEORE as f32).abs() < 1e-4);
         assert!(regen_zeit(REGEN_WELLEN - 1) < 5.0);
+        assert!(klingen_zeit(0) > Faehigkeit::Schattenklingen.ausholen(0) && klingen_schluss() < 4.0);
     }
 }

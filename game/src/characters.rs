@@ -22,6 +22,7 @@ fn datei(class: CharacterClass) -> &'static str {
     match class {
         CharacterClass::Zwerg => "zwerg",
         CharacterClass::Bogenschuetze => "bogenschuetze",
+        CharacterClass::Rogue => "schurke",
         _ => "magier",
     }
 }
@@ -237,6 +238,7 @@ impl Puppet {
         self.waffe.unwrap_or(match self.class {
             CharacterClass::Zwerg => "Hammer",
             CharacterClass::Bogenschuetze => "Bogen",
+            CharacterClass::Rogue => "Klinge",
             _ => "Stab",
         })
     }
@@ -248,7 +250,8 @@ impl Puppet {
 
     fn spitze_berechnen(&mut self) {
         let oben = match self.class {
-            CharacterClass::Zwerg => Some(false),
+            // Hammerkopf und Schwertspitze hängen unten aus der Faust
+            CharacterClass::Zwerg | CharacterClass::Rogue => Some(false),
             CharacterClass::Bogenschuetze => None,
             _ => Some(true),
         };
@@ -290,7 +293,7 @@ impl Puppet {
         if !animator.play_overlay(clip, speed, 0.06, 0.22) {
             let ersatz = match self.class {
                 CharacterClass::Zwerg => "Hieb",
-                CharacterClass::Bogenschuetze => "Werfen",
+                CharacterClass::Bogenschuetze | CharacterClass::Rogue => "Werfen",
                 _ => "Zaubern",
             };
             animator.play_overlay(ersatz, speed * 1.3, 0.06, 0.22);
@@ -301,7 +304,7 @@ impl Puppet {
         let Some(tool) = self.tool else { return };
         let Some(animator) = &mut self.animator else { return };
         let kampf = matches!(tool, Tool::Faehigkeit(_)) && !self.hand_leer;
-        for start in ["Stab", "Hammer", "Bogen"] {
+        for start in ["Stab", "Hammer", "Bogen", "Klinge"] {
             animator.set_visible(start, kampf && self.waffe.is_none());
         }
         for w in &crate::waffen::WAFFEN {

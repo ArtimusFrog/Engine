@@ -80,6 +80,9 @@ struct Formen {
     /// Pfeil entlang +Z (Mitte im Ursprung) und ein kantiger Meteor
     pfeil: MeshId,
     meteor: MeshId,
+    /// Wurfdolch entlang +Z (Mitte im Ursprung) und ein Kranz aus sechs Klingen (Radius 1, in XZ)
+    dolch: MeshId,
+    klingen: MeshId,
 }
 
 fn formen(ctx: &mut Context) -> Formen {
@@ -96,6 +99,8 @@ fn formen(ctx: &mut Context) -> Formen {
         strahl: a.named_mesh("zauber_strahl", strahl_mesh),
         pfeil: a.named_mesh("zauber_pfeil", pfeil_mesh),
         meteor: a.named_mesh("zauber_meteor", meteor_mesh),
+        dolch: a.named_mesh("zauber_dolch", dolch_mesh),
+        klingen: a.named_mesh("zauber_klingen", klingen_mesh),
     }
 }
 
@@ -266,6 +271,83 @@ fn pfeil_mesh() -> MeshData {
     m
 }
 
+/// Wurfdolch: rautenförmige Klinge nach +Z, kleine Parierstange, umwickelter Griff.
+fn dolch_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    let stahl = vec3(0.72, 0.76, 0.82);
+    let gift = vec3(0.35, 0.75, 0.3);
+    let leder = vec3(0.3, 0.2, 0.13);
+    // Klinge: Querschnitt Raute (Breite X, Dicke Y), vorne spitz
+    let klinge = [(0.0f32, 0.03f32), (0.08, 0.034), (0.2, 0.02), (0.28, 0.0)];
+    for w in klinge.windows(2) {
+        let ((z0, b0), (z1, b1)) = (w[0], w[1]);
+        let d0 = b0 * 0.25;
+        let d1 = b1 * 0.25;
+        let ecken0 = [vec3(b0, 0.0, z0), vec3(0.0, d0, z0), vec3(-b0, 0.0, z0), vec3(0.0, -d0, z0)];
+        let ecken1 = [vec3(b1, 0.0, z1), vec3(0.0, d1, z1), vec3(-b1, 0.0, z1), vec3(0.0, -d1, z1)];
+        for k in 0..4 {
+            let n = (k + 1) % 4;
+            let farbe = if k % 2 == 0 { stahl } else { stahl * 0.8 };
+            // Das Gift glänzt grün auf der Schneide
+            let farbe = if z0 > 0.1 { farbe.lerp(gift, 0.35) } else { farbe };
+            m.push_triangle(ecken0[k], ecken1[k], ecken1[n], farbe);
+            m.push_triangle(ecken0[k], ecken1[n], ecken0[n], farbe * 0.92);
+        }
+    }
+    // Parierstange und Griff als flache Kästchen
+    let kasten = |m: &mut MeshData, mitte: Vec3, halb: Vec3, farbe: Vec3| {
+        let p = |x: f32, y: f32, z: f32| mitte + vec3(x * halb.x, y * halb.y, z * halb.z);
+        let seiten = [
+            [p(-1., -1., 1.), p(1., -1., 1.), p(1., 1., 1.), p(-1., 1., 1.)],
+            [p(1., -1., -1.), p(-1., -1., -1.), p(-1., 1., -1.), p(1., 1., -1.)],
+            [p(-1., 1., -1.), p(-1., 1., 1.), p(1., 1., 1.), p(1., 1., -1.)],
+            [p(-1., -1., 1.), p(-1., -1., -1.), p(1., -1., -1.), p(1., -1., 1.)],
+            [p(1., -1., 1.), p(1., -1., -1.), p(1., 1., -1.), p(1., 1., 1.)],
+            [p(-1., -1., -1.), p(-1., -1., 1.), p(-1., 1., 1.), p(-1., 1., -1.)],
+        ];
+        for (i, s) in seiten.iter().enumerate() {
+            let f = farbe * (0.8 + 0.04 * i as f32);
+            m.push_triangle(s[0], s[1], s[2], f);
+            m.push_triangle(s[0], s[2], s[3], f);
+        }
+    };
+    kasten(&mut m, vec3(0.0, 0.0, -0.005), vec3(0.055, 0.012, 0.008), vec3(0.62, 0.52, 0.3));
+    kasten(&mut m, vec3(0.0, 0.0, -0.06), vec3(0.013, 0.013, 0.05), leder);
+    kasten(&mut m, vec3(0.0, 0.0, -0.115), vec3(0.02, 0.018, 0.012), vec3(0.62, 0.52, 0.3));
+    m
+}
+
+/// Kranz aus sechs sichelförmigen Klingen (flach in XZ, Radius etwa 1), innen dunkel, zur Spitze hell.
+fn klingen_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    let n = 6;
+    let schritte = 8;
+    for k in 0..n {
+        let basis = TAU * k as f32 / n as f32;
+        let punkt = |t: f32, seite: f32| {
+            // Von innen (r 0,35) nach außen (r 1,0), dabei nach vorne gebogen
+            let w = basis + t * 0.9;
+            let r = 0.35 + 0.65 * t;
+            let breite = 0.14 * (t * PI).sin().powf(0.7) * (1.0 - 0.4 * t);
+            let quer = vec3(-w.sin(), 0.0, w.cos());
+            vec3(w.cos() * r, 0.0, w.sin() * r) + quer * breite * seite
+        };
+        for s in 0..schritte {
+            let (t0, t1) = (s as f32 / schritte as f32, (s + 1) as f32 / schritte as f32);
+            let hell0 = Vec3::splat(0.25 + 0.75 * t0);
+            let hell1 = Vec3::splat(0.25 + 0.75 * t1);
+            let (a, b, c, d) = (punkt(t0, 1.0), punkt(t1, 1.0), punkt(t1, -1.0), punkt(t0, -1.0));
+            let farbe = (hell0 + hell1) * 0.5;
+            // beidseitig sichtbar
+            m.push_triangle(a, b, c, farbe);
+            m.push_triangle(a, c, d, farbe);
+            m.push_triangle(a, c, b, farbe);
+            m.push_triangle(a, d, c, farbe);
+        }
+    }
+    m
+}
+
 /// Kantiger Meteor (Durchmesser etwa 1), die Farbe kommt vom Objekt.
 fn meteor_mesh() -> MeshData {
     let mut m = MeshData::icosphere(1, Vec3::ONE);
@@ -312,6 +394,8 @@ enum PfeilArt {
     /// Kritischer Treffer: goldener Schweif
     Krit,
     Explosiv,
+    /// Giftdolch des Schurken (aus der linken Hand geworfen)
+    Dolch,
 }
 
 /// Ein fliegender Pfeil (Pfeilschuss, Salve, Explosivpfeil).
@@ -417,6 +501,12 @@ enum Spaeter {
     Ahnenschlag { spieler: PlayerId, mitte: Vec3 },
     Regenstart { spieler: PlayerId, mitte: Vec3 },
     Regenwelle { mitte: Vec3 },
+    Klinge { spieler: PlayerId, stufe: u8, richtung: Vec3 },
+    Rauchbombe { mitte: Vec3 },
+    Rauchnach { mitte: Vec3 },
+    Klingenkreis { mitte: Vec3 },
+    Klingenwelle { mitte: Vec3 },
+    Klingenschluss { spieler: PlayerId, mitte: Vec3 },
 }
 
 /// Die Figur holt aus: Magie sammelt sich an Stab und Händen.
@@ -723,7 +813,7 @@ impl Zauberbild {
                 self.haemmer.push(Hammerflug { spieler, punkte, hit, naechster: 0, pos: origin, alter: 0.0, ausholen, losgeflogen: false, hammer: None, aura, schweif, drehung: 0.0 });
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
             }
-            (Faehigkeit::Pfeilschuss | Faehigkeit::Explosivpfeil | Faehigkeit::Salve, _) => {
+            (Faehigkeit::Pfeilschuss | Faehigkeit::Explosivpfeil | Faehigkeit::Salve | Faehigkeit::Wurfdolche, _) => {
                 let tempo = match art.form() {
                     faehigkeiten::Form::Geschoss { tempo, .. } => tempo,
                     _ => 50.0,
@@ -731,13 +821,43 @@ impl Zauberbild {
                 let pfeil_art = match (art, stufe) {
                     (Faehigkeit::Explosivpfeil, _) => PfeilArt::Explosiv,
                     (Faehigkeit::Pfeilschuss, 1) => PfeilArt::Krit,
+                    (Faehigkeit::Wurfdolche, _) => PfeilArt::Dolch,
                     _ => PfeilArt::Normal,
                 };
-                for ziel in std::iter::once(target).chain(if art == Faehigkeit::Salve { kette.iter().copied() } else { [].iter().copied() }) {
-                    self.pfeil_los(ctx, spieler, pfeil_art, ziel, hit, ausholen, tempo);
+                let faecher = matches!(art, Faehigkeit::Salve | Faehigkeit::Wurfdolche);
+                for (k, ziel) in std::iter::once(target).chain(if faecher { kette.iter().copied() } else { [].iter().copied() }).enumerate() {
+                    // Die Dolche verlassen die Hand kurz nacheinander
+                    let versatz = if pfeil_art == PfeilArt::Dolch { k as f32 * 0.035 } else { 0.0 };
+                    self.pfeil_los(ctx, spieler, pfeil_art, ziel, hit, ausholen + versatz, tempo);
                 }
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
-                self.termine.push((ausholen, Spaeter::Klang { klang: Klang::Pfeilschuss, at: origin, laut: if art == Faehigkeit::Pfeilschuss { 0.6 } else { 0.9 } }));
+                let (klang, laut) = match art {
+                    Faehigkeit::Wurfdolche => (Klang::Wurf, 0.7),
+                    Faehigkeit::Pfeilschuss => (Klang::Pfeilschuss, 0.6),
+                    _ => (Klang::Pfeilschuss, 0.9),
+                };
+                self.termine.push((ausholen, Spaeter::Klang { klang, at: origin, laut }));
+            }
+            (Faehigkeit::Klingenhieb, _) => {
+                let richtung = (target - origin).with_y(0.0).normalize_or(figur.map_or(Vec3::NEG_Z, |f| f.vorne()));
+                self.termine.push((ausholen, Spaeter::Klinge { spieler, stufe, richtung }));
+                sounds.push(klang(Klang::Schwung, origin, if stufe == 2 { 0.75 } else { 0.5 }));
+            }
+            (Faehigkeit::Rauchbombe, _) => {
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                self.termine.push((ausholen, Spaeter::Rauchbombe { mitte: target }));
+                for k in 1..=5 {
+                    self.termine.push((ausholen + k as f32 * 0.35, Spaeter::Rauchnach { mitte: target }));
+                }
+            }
+            (Faehigkeit::Schattenklingen, _) => {
+                self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
+                self.termine.push((ausholen, Spaeter::Klingenkreis { mitte: target }));
+                for i in 0..faehigkeiten::KLINGEN_WELLEN {
+                    self.termine.push((faehigkeiten::klingen_zeit(i) - 0.08, Spaeter::Klingenwelle { mitte: target }));
+                }
+                self.termine.push((faehigkeiten::klingen_schluss() - 0.05, Spaeter::Klingenschluss { spieler, mitte: target }));
+                sounds.push(SoundEvent::Cast { player: spieler });
             }
             (Faehigkeit::Pfeilregen, _) => {
                 self.sammeln.push(Sammeln { spieler, art, stufe, alter: 0.0, dauer: ausholen, kugel: None });
@@ -885,7 +1005,25 @@ impl Zauberbild {
                         self.funken(ctx, figur.spitze, 1, vec3(1.0, 0.85, 0.45), 0.8, 0.05, 0.3, 0.0, 3.0);
                     }
                 }
-                Faehigkeit::Hammerschlag => {}
+                Faehigkeit::Hammerschlag | Faehigkeit::Klingenhieb | Faehigkeit::Wurfdolche => {}
+                Faehigkeit::Rauchbombe => {
+                    // Die Lunte zischt in der linken Hand
+                    self.funken(ctx, figur.hand_l, 2, vec3(1.0, 0.6, 0.25), 1.2, 0.03, 0.25, 1.0, 3.0);
+                    ctx.lights.push(PointLight { position: figur.hand_l, color: vec3(2.0, 1.1, 0.4) * t, radius: 2.5 });
+                }
+                Faehigkeit::Schattenklingen => {
+                    // Schattenkraft sammelt sich an der Klinge, violette Funken ziehen zur Spitze
+                    let farbe = vec3(0.6, 0.35, 1.0);
+                    let kugel = *s.kugel.get_or_insert_with(|| self.leuchten(ctx, f.kugel, figur.spitze, Quat::IDENTITY, Vec3::ZERO, farbe, 1.8, 1.0));
+                    if let Some(e) = ctx.scene.try_get_mut(kugel) {
+                        e.transform.position = figur.spitze;
+                        e.transform.scale = Vec3::splat(0.12 + 0.3 * t * (1.0 + (s.alter * 31.0).sin() * 0.08));
+                    }
+                    let aussen = figur.spitze + vec3(self.rng.range(-1.0, 1.0), self.rng.range(-0.5, 1.0), self.rng.range(-1.0, 1.0)) * 0.9;
+                    self.glut(ctx, aussen, 1, farbe, 0.4, 0.06, 0.35, 0.0, 0.0, (figur.spitze - aussen) * 2.5);
+                    ctx.lights.push(PointLight { position: figur.spitze, color: vec3(1.8, 1.0, 3.0) * t, radius: 4.0 });
+                    let _ = fuesse;
+                }
                 Faehigkeit::Pfeilschuss | Faehigkeit::Salve | Faehigkeit::Explosivpfeil | Faehigkeit::Pfeilregen => {
                     // Aufgelegter Pfeil: Nocke an der Zughand, die Spitze ragt über den Bogen hinaus
                     let nocke = figur.hand_r;
@@ -1240,6 +1378,28 @@ impl Zauberbild {
             Spaeter::Ahnenschlag { spieler, mitte } => self.ahnenschlag(ctx, terrain, spieler, mitte, sounds),
             Spaeter::Regenstart { spieler, mitte } => self.regenstart(ctx, terrain, figuren, spieler, mitte, sounds),
             Spaeter::Regenwelle { mitte } => self.regenwelle(ctx, terrain, mitte, sounds),
+            Spaeter::Klinge { spieler, stufe, richtung } => {
+                if let Some(figur) = figuren.get(&spieler).copied() {
+                    self.klingenhieb(ctx, spieler, figur, stufe, richtung, sounds);
+                }
+            }
+            Spaeter::Rauchbombe { mitte } => self.rauchbombe(ctx, terrain, mitte, sounds),
+            Spaeter::Rauchnach { mitte } => {
+                // Der Rauch quillt noch eine Weile nach
+                let radius = match Faehigkeit::Rauchbombe.form() {
+                    faehigkeiten::Form::UmSich { radius } => radius,
+                    _ => 5.0,
+                };
+                for _ in 0..3 {
+                    let w = self.rng.range(0.0, TAU);
+                    let r = self.rng.range(0.2, 1.0) * radius * 0.7;
+                    let p = mitte + vec3(w.cos() * r, 0.3, w.sin() * r);
+                    Self::rauch(ctx, p, 3, vec3(0.6, 0.56, 0.66), 0.7, 0.26, 1.3, Vec3::Y * 0.3);
+                }
+            }
+            Spaeter::Klingenkreis { mitte } => self.klingenkreis(ctx, terrain, mitte, sounds),
+            Spaeter::Klingenwelle { mitte } => self.klingenwelle(ctx, terrain, mitte, sounds),
+            Spaeter::Klingenschluss { spieler, mitte } => self.klingenschluss(ctx, terrain, spieler, mitte, sounds),
         }
     }
 
@@ -1250,10 +1410,12 @@ impl Zauberbild {
     #[allow(clippy::too_many_arguments)]
     fn pfeil_los(&mut self, ctx: &mut Context, spieler: PlayerId, art: PfeilArt, nach: Vec3, hit: bool, ausholen: f32, tempo: f32) {
         let f = self.formen(ctx);
-        let holz = self.fest(ctx, f.pfeil, nach, Quat::IDENTITY, Vec3::ZERO, Vec3::ONE, Material::Standard, false);
+        let mesh = if art == PfeilArt::Dolch { f.dolch } else { f.pfeil };
+        let holz = self.fest(ctx, mesh, nach, Quat::IDENTITY, Vec3::ZERO, Vec3::ONE, Material::Standard, false);
         let (farbe, staerke) = match art {
             PfeilArt::Krit => (vec3(1.0, 0.8, 0.35), 1.4),
             PfeilArt::Explosiv => (vec3(1.0, 0.45, 0.12), 1.2),
+            PfeilArt::Dolch => (vec3(0.45, 0.95, 0.35), 1.0),
             PfeilArt::Normal => (vec3(0.75, 0.8, 0.7), 0.45),
         };
         let schweif = self.leuchten(ctx, f.kugel, nach, Quat::IDENTITY, Vec3::ZERO, farbe, staerke, 1.0);
@@ -1270,7 +1432,8 @@ impl Zauberbild {
             if p.alter < p.ausholen {
                 continue;
             }
-            let von = *p.von.get_or_insert_with(|| figuren.get(&p.spieler).map_or(p.pos, |f| f.spitze));
+            let dolch = p.art == PfeilArt::Dolch;
+            let von = *p.von.get_or_insert_with(|| figuren.get(&p.spieler).map_or(p.pos, |f| if dolch { f.hand_l } else { f.spitze }));
             let laenge = von.distance(p.nach).max(0.01);
             let t = ((p.alter - p.ausholen) * p.tempo / laenge).min(1.0);
             // Flacher Bogen bei weiten Schüssen
@@ -1285,11 +1448,23 @@ impl Zauberbild {
                 e.transform.rotation = drehung;
                 e.transform.scale = Vec3::ONE;
             }
-            let lang = if p.art == PfeilArt::Normal { 1.4 } else { 2.0 };
+            let lang = match p.art {
+                PfeilArt::Normal => 1.4,
+                PfeilArt::Dolch => 1.1,
+                _ => 2.0,
+            };
+            let dicke = if dolch { 0.05 } else { 0.07 };
             if let Some(e) = ctx.scene.try_get_mut(p.schweif) {
                 e.transform.position = pos - richtung * lang * 0.5;
                 e.transform.rotation = drehung;
-                e.transform.scale = vec3(0.07, 0.07, lang);
+                e.transform.scale = vec3(dicke, dicke, lang);
+            }
+            if dolch {
+                // Der Dolch dreht sich um seine Längsachse, damit die Klinge im Licht blitzt
+                if let Some(e) = ctx.scene.try_get_mut(p.holz) {
+                    e.transform.rotation = drehung * Quat::from_rotation_z(p.alter * 18.0);
+                    e.transform.scale = Vec3::splat(1.3);
+                }
             }
             if let Some(e) = p.glut.and_then(|g| ctx.scene.try_get_mut(g)) {
                 e.transform.position = pos + richtung * 0.4;
@@ -1308,6 +1483,13 @@ impl Zauberbild {
                     if self.rng.chance(0.3) {
                         self.funken(ctx, vorher, 1, vec3(0.85, 0.9, 0.8), 0.2, 0.025, 0.2, 0.0, 1.5);
                     }
+                }
+                PfeilArt::Dolch => {
+                    // Gifttropfen hinter dem Dolch
+                    if self.rng.chance(0.6) {
+                        self.glut(ctx, vorher, 1, vec3(0.4, 0.95, 0.3), 0.3, 0.05, 0.35, 3.0, 0.2, Vec3::ZERO);
+                    }
+                    ctx.lights.push(PointLight { position: pos, color: vec3(0.6, 1.6, 0.5), radius: 2.5 });
                 }
             }
             if t < 1.0 {
@@ -1332,7 +1514,14 @@ impl Zauberbild {
                     if let Some(g) = p.glut {
                         ctx.scene.despawn(g);
                     }
-                    if p.hit {
+                    if p.hit && dolch {
+                        // Giftspritzer: grüne Tropfen und eine kleine Wolke
+                        ctx.scene.despawn(p.holz);
+                        self.funken(ctx, spitze, 14, vec3(0.45, 1.0, 0.35), 3.0, 0.04, 0.4, 5.0, 2.5);
+                        Self::rauch(ctx, spitze, 4, vec3(0.35, 0.6, 0.3), 0.6, 0.25, 0.9, Vec3::Y * 0.3);
+                        self.blitz(ctx, spitze, 0.5, vec3(0.5, 1.0, 0.4), vec3(0.1, 0.3, 0.05), 0.18, 1.2);
+                        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: 0.6 });
+                    } else if p.hit {
                         // Im Gegner: Splitter und kurzer Blitz, der Pfeil verschwindet
                         ctx.scene.despawn(p.holz);
                         let farbe = if p.art == PfeilArt::Krit { vec3(1.0, 0.8, 0.35) } else { vec3(0.95, 0.9, 0.8) };
@@ -1722,6 +1911,167 @@ impl Zauberbild {
 
     /// Hammerschlag: leuchtende Sichel der Schwungbahn; der Schmetterschlag bricht den Boden auf.
     #[allow(clippy::too_many_arguments)]
+/// Klingenhieb des Schurken: eine eisblaue Runensichel (Stufe 0 von rechts, 1 von links) bzw. beim
+    /// Stich ein gleißender Stoß nach vorne mit Ring an der Spitze.
+    fn klingenhieb(&mut self, ctx: &mut Context, spieler: PlayerId, figur: Figur, stufe: u8, richtung: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let quer = richtung.cross(Vec3::Y).normalize_or(Vec3::X);
+        let blau = vec3(0.55, 0.85, 1.0);
+        let brust = figur.mitte + Vec3::Y * 0.1;
+        if stufe == 2 {
+            let von = brust + richtung * 0.4;
+            let nach = brust + richtung * 3.1;
+            let drehung = Quat::from_rotation_arc(Vec3::Z, richtung);
+            for k in 0..9 {
+                let t = k as f32 / 8.0;
+                let p = von.lerp(nach, t);
+                let dicke = 0.05 + 0.12 * (1.0 - t);
+                let e = self.leuchten(ctx, f.kugel, p, drehung, vec3(dicke, dicke, 0.5), blau.lerp(Vec3::ONE, t * 0.5), 2.2, 1.0);
+                self.teil(e, t * 0.04, 0.22, p, drehung, blau, Art::Gluehen);
+            }
+            let quer_ring = Quat::from_rotation_arc(Vec3::Y, richtung);
+            let ring = self.leuchten(ctx, f.ring, nach, quer_ring, Vec3::ZERO, blau, 2.4, 0.0);
+            self.teil(ring, 0.04, 0.28, nach, quer_ring, blau, Art::Ring { von: 0.2, bis: 1.3 });
+            self.blitz(ctx, nach, 0.9, vec3(0.8, 0.95, 1.0), vec3(0.1, 0.3, 0.6), 0.2, 2.0);
+            self.funken(ctx, nach, 18, blau, 5.0, 0.035, 0.35, 3.0, 3.5);
+            self.licht(nach, vec3(1.5, 2.5, 3.5), 5.0, 0.3);
+            self.erschuettern(nach, 0.18, 12.0);
+            self.stopp.push((spieler, 0.06));
+            sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: nach, laut: 0.8 });
+            return;
+        }
+        let seite = if stufe == 1 { -1.0 } else { 1.0 };
+        for k in 0..13 {
+            let t = k as f32 / 12.0;
+            let w = (t - 0.5) * 2.0 * 1.2 * seite;
+            // leicht schräg: von oben rechts nach unten links bzw. umgekehrt
+            let p = brust + Vec3::Y * (0.25 * seite * (0.5 - t)) + (richtung * w.cos() + quer * w.sin()) * 1.5;
+            let tangente = (quer * w.cos() - richtung * w.sin()).normalize() * -seite;
+            let drehung = Quat::from_rotation_arc(Vec3::Z, tangente);
+            let breite = (t * PI).sin();
+            let aussen = self.leuchten(ctx, f.kugel, p, drehung, vec3(0.05 + 0.13 * breite, 0.02 + 0.05 * breite, 0.45), blau, 1.9, 1.0);
+            self.teil(aussen, t * 0.035, 0.18, p, drehung, blau, Art::Gluehen);
+            let kern = self.leuchten(ctx, f.kugel, p, drehung, vec3(0.02 + 0.04 * breite, 0.01 + 0.02 * breite, 0.4), Vec3::ONE, 2.2, 1.0);
+            self.teil(kern, t * 0.035, 0.12, p, drehung, Vec3::ONE, Art::Gluehen);
+        }
+        let ende = brust + (richtung * (1.2f32).cos() - quer * (1.2f32).sin() * seite) * 1.5;
+        self.funken(ctx, ende, 8, blau, 2.5, 0.03, 0.25, 2.0, 3.0);
+        self.erschuettern(figur.mitte, 0.05, 10.0);
+    }
+
+    /// Rauchbombe: ein Knall, eine dichte violettgraue Wolke, Funken und ein dunkler Ring.
+    fn rauchbombe(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let radius = match Faehigkeit::Rauchbombe.form() {
+            faehigkeiten::Form::UmSich { radius } => radius,
+            _ => 5.0,
+        };
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.1, mitte.z);
+        self.blitz(ctx, unten + Vec3::Y * 0.3, 1.2, vec3(1.0, 0.85, 0.6), vec3(0.3, 0.2, 0.35), 0.18, 1.8);
+        self.druckwelle(ctx, unten, radius, 0.4, 1.2, vec3(0.55, 0.45, 0.7), 1.0, 0.0);
+        for k in 0..14 {
+            let w = TAU * k as f32 / 14.0 + self.rng.range(-0.2, 0.2);
+            let r = self.rng.range(0.3, 1.0) * radius * 0.8;
+            let p = unten + vec3(w.cos() * r, 0.2, w.sin() * r);
+            Self::rauch(ctx, p, 4, vec3(0.6, 0.56, 0.66), 1.4, 0.3, 1.5, (p - unten).normalize_or(Vec3::Y) * 0.6 + Vec3::Y * 0.4);
+        }
+        Self::rauch(ctx, unten + Vec3::Y * 0.4, 20, vec3(0.62, 0.58, 0.7), 2.8, 0.32, 1.6, Vec3::Y * 0.6);
+        // Violetter Dunst: weich leuchtende Wolken über dem Rauch
+        let f = self.formen(ctx);
+        for k in 0..7 {
+            let w = TAU * k as f32 / 7.0;
+            let p = unten + vec3(w.cos() * radius * 0.45, 0.7, w.sin() * radius * 0.45);
+            let groesse = Vec3::splat(radius * 0.45);
+            let wolke = self.leuchten(ctx, f.kugel, p, Quat::IDENTITY, groesse, vec3(0.35, 0.25, 0.5), 0.5, 1.0);
+            self.teil(wolke, 0.0, 2.2, p, Quat::IDENTITY, vec3(0.35, 0.25, 0.5), Art::Blitz { groesse, ende: vec3(0.1, 0.05, 0.2) });
+        }
+        self.funken(ctx, unten + Vec3::Y * 0.3, 26, vec3(1.0, 0.75, 0.4), 6.0, 0.04, 0.45, 6.0, 3.0);
+        // Sterne über den Betäubten: weiße Blitze im Rauch
+        for _ in 0..6 {
+            let w = self.rng.range(0.0, TAU);
+            let r = self.rng.range(0.5, radius * 0.8);
+            let p = unten + vec3(w.cos() * r, self.rng.range(1.2, 1.9), w.sin() * r);
+            self.funken(ctx, p, 3, vec3(1.0, 1.0, 0.8), 0.8, 0.05, 0.6, -0.5, 3.0);
+        }
+        self.licht(unten + Vec3::Y * 0.8, vec3(3.0, 2.2, 1.4), 7.0, 0.3);
+        self.erschuettern(unten, 0.3, 16.0);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Explosion, at: unten, laut: 0.55 });
+    }
+
+    /// Schattenklingen, Beginn: ein violetter Bannkreis und zwei gegenläufig kreisende Klingenkränze.
+    fn klingenkreis(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let radius = match Faehigkeit::Schattenklingen.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 5.5,
+        };
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.08, mitte.z);
+        let violett = vec3(0.6, 0.35, 1.0);
+        let dauer = faehigkeiten::klingen_schluss() - Faehigkeit::Schattenklingen.ausholen(0) + 0.2;
+        let ring = self.leuchten(ctx, f.ring, unten, Quat::IDENTITY, vec3(radius, 1.0, radius), violett, 1.5, 0.0);
+        self.teil(ring, 0.0, dauer, unten, Quat::IDENTITY, violett, Art::Drehen { tempo: 0.6, groesse: vec3(radius, 1.0, radius) });
+        let innen = self.leuchten(ctx, f.scheibe, unten, Quat::IDENTITY, vec3(radius, 1.0, radius), violett * 0.3, 0.7, 0.0);
+        self.teil(innen, 0.0, dauer, unten, Quat::IDENTITY, violett * 0.3, Art::Drehen { tempo: 0.0, groesse: vec3(radius, 1.0, radius) });
+        for (hoehe, tempo, groesse, neigung) in [(0.7, 7.0, 0.85, 0.12), (1.5, -5.5, 0.6, -0.18)] {
+            let p = unten + Vec3::Y * hoehe;
+            let drehung = Quat::from_rotation_x(neigung);
+            let kranz = self.leuchten(ctx, f.klingen, p, drehung, Vec3::splat(radius * groesse), violett.lerp(Vec3::ONE, 0.35), 3.2, 0.2);
+            self.teil(kranz, 0.0, dauer, p, drehung, violett.lerp(Vec3::ONE, 0.25), Art::Drehen { tempo, groesse: Vec3::splat(radius * groesse) });
+        }
+        self.licht(unten + Vec3::Y, vec3(2.0, 1.1, 3.5), radius * 2.0, dauer);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Himmel, at: unten, laut: 0.7 });
+    }
+
+    /// Eine Klingenwelle: zwei Schnitte quer durch den Kreis, Funken, ein Aufblitzen am Boden.
+    fn klingenwelle(&mut self, ctx: &mut Context, terrain: &Terrain, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let f = self.formen(ctx);
+        let radius = match Faehigkeit::Schattenklingen.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 5.5,
+        };
+        let b = boden(terrain, mitte, mitte.y);
+        let violett = vec3(0.6, 0.35, 1.0);
+        for _ in 0..2 {
+            let w = self.rng.range(0.0, TAU);
+            let hoehe = b + self.rng.range(0.5, 1.6);
+            let richtung = vec3(w.cos(), self.rng.range(-0.25, 0.25), w.sin()).normalize();
+            let versatz = vec3(-w.sin(), 0.0, w.cos()) * self.rng.range(-0.4, 0.4) * radius;
+            let von = vec3(mitte.x, hoehe, mitte.z) + versatz - richtung * radius * 0.85;
+            let drehung = Quat::from_rotation_arc(Vec3::Z, richtung);
+            for k in 0..10 {
+                let t = k as f32 / 9.0;
+                let p = von + richtung * radius * 1.7 * t;
+                let breite = (t * PI).sin();
+                let e = self.leuchten(ctx, f.kugel, p, drehung, vec3(0.04 + 0.1 * breite, 0.02 + 0.04 * breite, 0.6), violett.lerp(Vec3::ONE, 0.4 * breite), 2.0, 1.0);
+                self.teil(e, t * 0.05, 0.2, p, drehung, violett, Art::Gluehen);
+            }
+            let ende = von + richtung * radius * 1.7;
+            self.funken(ctx, ende, 6, violett, 2.0, 0.035, 0.3, 1.0, 3.0);
+        }
+        self.glut(ctx, vec3(mitte.x, b + 0.3, mitte.z), 8, violett, 2.5, 0.08, 0.5, -1.0, 0.3, Vec3::Y * 0.5);
+        sounds.push(SoundEvent::Zauber { klang: Klang::Schwung, at: mitte, laut: 0.45 });
+    }
+
+    /// Schlussschlag der Schattenklingen: die Kränze zerspringen in einer violetten Explosion.
+    fn klingenschluss(&mut self, ctx: &mut Context, terrain: &Terrain, spieler: PlayerId, mitte: Vec3, sounds: &mut Vec<SoundEvent>) {
+        let radius = match Faehigkeit::Schattenklingen.form() {
+            faehigkeiten::Form::Flaeche { radius, .. } => radius,
+            _ => 5.5,
+        };
+        let b = boden(terrain, mitte, mitte.y);
+        let unten = vec3(mitte.x, b + 0.1, mitte.z);
+        let violett = vec3(0.6, 0.35, 1.0);
+        self.druckwelle(ctx, unten, radius + 1.0, 0.45, 1.8, violett, 2.0, 0.0);
+        self.blitz(ctx, unten + Vec3::Y * 0.8, 2.6, vec3(0.9, 0.8, 1.0), vec3(0.3, 0.1, 0.6), 0.3, 2.4);
+        self.funken(ctx, unten + Vec3::Y * 0.8, 50, violett.lerp(Vec3::ONE, 0.3), 9.0, 0.05, 0.6, 5.0, 3.5);
+        Self::rauch(ctx, unten + Vec3::Y * 0.3, 12, vec3(0.26, 0.2, 0.34), 2.5, 0.26, 1.2, Vec3::Y * 0.5);
+        self.licht(unten + Vec3::Y, vec3(4.0, 2.5, 6.0), radius * 2.5, 0.45);
+        self.erschuettern(unten, 0.6, 26.0);
+        self.stopp.push((spieler, 0.08));
+        sounds.push(SoundEvent::Zauber { klang: Klang::Explosion, at: unten, laut: 0.9 });
+    }
+
     fn hieb(&mut self, ctx: &mut Context, terrain: &Terrain, spieler: PlayerId, figur: Figur, stufe: u8, richtung: Vec3, sounds: &mut Vec<SoundEvent>) {
         let f = self.formen(ctx);
         let quer = richtung.cross(Vec3::Y).normalize_or(Vec3::X);

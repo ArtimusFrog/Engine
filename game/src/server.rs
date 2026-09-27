@@ -365,9 +365,10 @@ impl Authority {
             Faehigkeit::Arkangeschoss if avatar.ladung >= LADUNG_MAX => 1,
             // Pfeilschuss: kritischer Treffer
             Faehigkeit::Pfeilschuss if self.rng.chance(KRIT_CHANCE) => 1,
+            Faehigkeit::Klingenhieb => kombo_stufe_von(art, avatar.kombo, tick),
             _ => 0,
         };
-        if art == Faehigkeit::Hammerschlag {
+        if matches!(art, Faehigkeit::Hammerschlag | Faehigkeit::Klingenhieb) {
             avatar.kombo = Some((tick, stufe));
         }
         if art == Faehigkeit::Arkangeschoss && stufe == 1 {
@@ -460,16 +461,17 @@ impl Authority {
                 }
                 (origin, point, ziel.is_some())
             }
-            (Faehigkeit::Salve, _) => {
-                // Fünf Pfeile im Fächer, jeder mit eigenem Ziel
+            (Faehigkeit::Salve | Faehigkeit::Wurfdolche, _) => {
+                // Pfeile bzw. Dolche im Fächer, jeder mit eigenem Ziel
                 let Form::Geschoss { tempo, .. } = art.form() else { return };
                 let Some(origin) = world.cast_origin(ctx, player, target) else { return };
                 let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
-                let mitte = SALVE_PFEILE / 2;
+                let (anzahl, faecher) = if art == Faehigkeit::Salve { (SALVE_PFEILE, SALVE_FAECHER) } else { (DOLCHE, DOLCH_FAECHER) };
+                let mitte = anzahl / 2;
                 let mut mitte_punkt = origin;
                 let mut getroffen = false;
-                for k in 0..SALVE_PFEILE {
-                    let winkel = (k as f32 - mitte as f32) / mitte.max(1) as f32 * SALVE_FAECHER;
+                for k in 0..anzahl {
+                    let winkel = (k as f32 - mitte as f32) / mitte.max(1) as f32 * faecher;
                     let r = Quat::from_rotation_y(winkel.to_radians()) * richtung;
                     let (punkt, ziel) = strahl_ziel(ctx, world, player, origin, r, art.reichweite());
                     if let Some(ziel) = ziel {
@@ -485,7 +487,7 @@ impl Authority {
                 }
                 (origin, mitte_punkt, getroffen)
             }
-            (Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen, _) => {
+            (Faehigkeit::Meteorsturm | Faehigkeit::Ahnenhammer | Faehigkeit::Pfeilregen | Faehigkeit::Schattenklingen, _) => {
                 // Eine Stelle am Boden unter dem Fadenkreuz
                 let Form::Flaeche { reichweite, radius } = art.form() else { return };
                 let Some(origin) = world.cast_origin(ctx, player, target) else { return };
@@ -516,6 +518,14 @@ impl Authority {
                         let aussen = Wirkung { stun: 1.5, ..Default::default() };
                         hits.push(schlag(ausholen, mitte + Vec3::Y * 5.0, Vec3::NEG_Y, ziel, Bereich::Ring(AHNEN_INNEN, radius), schaden * AHNEN_AUSSEN_ANTEIL, wirkung(aussen)));
                     }
+                    Faehigkeit::Schattenklingen => {
+                        // Klingenwellen, dann der Schlussschlag, der betäubt
+                        for i in 0..KLINGEN_WELLEN {
+                            hits.push(schlag(tick + takte(klingen_zeit(i)), mitte + Vec3::Y * 2.0, Vec3::NEG_Y, ziel, Bereich::Kreis(radius), schaden, wirkung(art.wirkung(stufe))));
+                        }
+                        let w = Wirkung { stun: 1.5, ..Default::default() };
+                        hits.push(schlag(tick + takte(klingen_schluss()), mitte + Vec3::Y * 2.0, Vec3::NEG_Y, ziel, Bereich::Kreis(radius), schaden * KLINGEN_SCHLUSS, wirkung(w)));
+                    }
                     _ => {
                         for i in 0..REGEN_WELLEN {
                             hits.push(schlag(tick + takte(regen_zeit(i)), mitte + Vec3::Y * 8.0, Vec3::NEG_Y, ziel, Bereich::Kreis(radius), schaden, wirkung(art.wirkung(stufe))));
@@ -538,6 +548,19 @@ impl Authority {
                 }
                 hits.push(h);
                 (center, einschlag, false)
+            }
+            (Faehigkeit::Klingenhieb, _) => {
+                let richtung = flach(target - center);
+                // Stich: schmal und weit; Hiebe: breiter Bogen vor dem Schurken
+                let (weite, winkel) = if stufe == 2 { (3.6, 28.0f32) } else { (3.1, 70.0) };
+                let einschlag = center - Vec3::Y * 0.2 + richtung * 1.6;
+                hits.push(schlag(ausholen, center, richtung, einschlag, Bereich::Kegel(weite, winkel.to_radians().cos()), schaden, wirkung(art.wirkung(stufe))));
+                (center, einschlag, false)
+            }
+            (Faehigkeit::Rauchbombe, _) => {
+                let Form::UmSich { radius } = art.form() else { return };
+                hits.push(schlag(ausholen, center, Vec3::NEG_Z, fuesse, Bereich::Kreis(radius), schaden, wirkung(art.wirkung(stufe))));
+                (center, fuesse, false)
             }
             (Faehigkeit::Frostnova, _) => {
                 // Die Eiswelle läuft nach außen: wer weiter weg steht, wird später getroffen
@@ -825,7 +848,7 @@ impl Authority {
             crate::beute::Fund::Gegenstand(item, n) => inventory.add_item(item, n),
             crate::beute::Fund::Waffe(waffe) => {
                 let Some(w) = crate::waffen::waffe(waffe) else { return Ok(()) };
-                let bit = 1u16 << w.id;
+                let bit = 1u32 << w.id;
                 if inventory.waffen & bit != 0 {
                     inventory.gold += w.seltenheit.gold_fuer_doppelte();
                     meldung = Some((format!("{} hast du schon – eingeschmolzen für {} Gold.", w.name, w.seltenheit.gold_fuer_doppelte()), false));
@@ -861,13 +884,14 @@ impl Authority {
         let inventory = world.inventories.entry(player).or_default();
         if waffe != 0 {
             let w = crate::waffen::waffe(waffe).ok_or("Diese Waffe gibt es nicht")?;
-            if inventory.waffen & (1u16 << w.id) == 0 {
+            if inventory.waffen & (1u32 << w.id) == 0 {
                 return Err("Diese Waffe hast du nicht".into());
             }
             if w.klasse != class {
                 return Err(format!("{} kann nur {} führen", w.name, match w.klasse {
                     CharacterClass::Zwerg => "ein Zwerg",
                     CharacterClass::Bogenschuetze => "ein Bogenschütze",
+                    CharacterClass::Rogue => "ein Schurke",
                     _ => "ein Magier",
                 }));
             }

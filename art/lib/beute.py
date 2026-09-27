@@ -78,6 +78,8 @@ def _waffe_liegend(art):
         waffen.stab(f, art, 0.0, 0.0, ohne)
     elif art in waffen.BOEGEN:
         waffen.bogen(f, art, Vector((0.0, 0.0, 0.0)), ohne)
+    elif art in waffen.KLINGEN:
+        waffen.klinge(f, art, 0.0, 0.0, ohne)
     else:
         waffen.hammer(f, art, 0.0, 0.0, ohne, 0.6)
     bpy.ops.object.select_all(action="DESELECT")

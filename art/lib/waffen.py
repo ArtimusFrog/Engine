@@ -349,3 +349,84 @@ def bogen(f, art, griff, gewicht):
             p = griff + Vector((0, y * laenge * 0.5, _bogen_linie(y * laenge * 0.5, laenge, stand, recurve)))
             f.loft("Wicklung", [(p - Y * 0.02, X, Z, breite * 0.9, breite * 0.6), (p + Y * 0.02, X, Z, breite * 0.9, breite * 0.6)], 10,
                    lambda i, k, p: zweit, gewicht, oben_zu=True, unten_zu=True)
+
+
+# ---------------------------------------------------------------------------
+# Klingen des Schurken (schurke.py): hängen aus der rechten Faust (Griff bei `griff_z`), die
+# Klinge zeigt nach unten, ihre Schneiden nach vorne (-Y) und hinten, die flache Seite zur Seite.
+# „Klinge“ ist die Startwaffe (Runenklinge mit leuchtenden Runen).
+# ---------------------------------------------------------------------------
+KLINGEN = ["klinge_eisen", "klinge_gift", "klinge_russ", "klinge_mond", "klinge_schatten"]
+
+# Länge, größte halbe Breite, Stelle der größten Breite (0 = Parierstange, 1 = Spitze), Krümmung nach vorne,
+# Stahl, Schneide/Runen, Griff, Parierstange/Knauf
+_KLINGEN_ART = {
+    "Klinge": (0.66, 0.036, 0.55, 0.0, "#A8A29A", "#8FE0FF", "#5A3A26", "#8C7A62"),
+    "klinge_eisen": (0.62, 0.03, 0.35, 0.0, "#8E949C", "#C8CED6", "#4A3222", "#6E6A66"),
+    "klinge_gift": (0.64, 0.033, 0.5, 0.0, "#5E6E52", "#7CFF5A", "#2E3A24", "#7A8A3A"),
+    "klinge_russ": (0.66, 0.034, 0.45, 0.0, "#2A2828", "#FF8A3A", "#1E1A1A", "#3A3434"),
+    "klinge_mond": (0.72, 0.03, 0.6, 0.16, "#D8DEE8", "#A8D8FF", "#E8E4F0", "#B8C4DA"),
+    "klinge_schatten": (0.74, 0.038, 0.5, 0.05, "#2A2238", "#B070FF", "#1A1424", "#5A3A8A"),
+}
+
+
+def klinge(f, art, x, y, gewicht, griff_z=0.915):
+    """Eine Klinge (`art` aus KLINGEN oder die Runenklinge „Klinge“), gegriffen bei (x, y, griff_z)."""
+    laenge, breite, bauch, kruemmung, c_stahl, c_zier, c_griff, c_messing = _KLINGEN_ART[art]
+    stahl, zier, griff_farbe, messing = farbe(c_stahl), farbe(c_zier), farbe(c_griff), farbe(c_messing)
+    stahl_hell = stahl.lerp(Vector((1, 1, 1)), 0.35)
+    wache_z = griff_z - 0.065
+    raute = lambda w: 1.0 / (abs(math.cos(w)) + abs(math.sin(w))) ** 0.9
+
+    def mitte(t):
+        # Mittellinie der Klinge: nach unten, bei gekrümmten Klingen nach vorne (-Y) gebogen
+        return Vector((x, y - kruemmung * laenge * t * t, wache_z - 0.01 - laenge * t))
+
+    ringe = []
+    n = 16
+    for i in range(n + 1):
+        t = i / n
+        if t <= bauch:
+            b = breite * (0.82 + 0.18 * math.sin(t / bauch * math.pi / 2))
+        else:
+            u = (t - bauch) / (1 - bauch)
+            b = breite * (1 - u ** 1.6) + 0.0015
+        a = mitte(min(t + 0.02, 1.0)) - mitte(max(t - 0.02, 0.0))
+        quer = a.normalized().cross(X).normalized()
+        ringe.append((mitte(t), X, quer, b * 0.24, b, raute))
+
+    def blatt(i, k, p):
+        t = i / n
+        c = p.center
+        seitlich = abs(c.x - x)
+        schneide = seitlich < 0.004
+        if schneide:
+            return stahl_hell if art != "klinge_russ" else zier * 0.9
+        # Runen bzw. Zier auf der flachen Seite, eine Hohlkehle in der Mitte
+        mittig = abs((c - mitte(t)).dot(ringe[min(int(i), n)][2])) < breite * 0.3
+        if art in ("Klinge", "klinge_schatten") and 0.1 < t < 0.8 and mittig and int(t * 34) % 3 != 1:
+            return zier * 1.2
+        if art == "klinge_gift" and mittig and 0.15 < t < 0.9:
+            return zier * 0.55
+        if mittig:
+            return stahl * 0.78
+        return stahl * (0.95 + 0.05 * math.sin(t * 20))
+    f.loft("Blatt", ringe, 8, blatt, gewicht, unten_zu=False, oben_zu=True, teilung=1)
+    # Parierstange (quer, entlang Y – über die Schneiden hinaus), Griff mit Wicklung, Knauf
+    parier = 0.075 if art != "klinge_schatten" else 0.1
+    stange = [(Vector((x, y - parier, wache_z)), X, Z, 0.014, 0.012), (Vector((x, y, wache_z)), X, Z, 0.02, 0.016),
+              (Vector((x, y + parier, wache_z)), X, Z, 0.014, 0.012)]
+    f.loft("Parierstange", stange, 10, lambda i, k, p: messing * (1.1 if k % 3 == 0 else 0.95), gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    if art == "klinge_schatten":
+        for s in (1, -1):
+            f.straehne("Dorn", [Vector((x, y + s * parier, wache_z)), Vector((x, y + s * (parier + 0.02), wache_z + 0.04)),
+                                Vector((x, y + s * (parier + 0.015), wache_z + 0.08))], 0.012, 0.002, messing, gewicht, 6, 0.0)
+    griff = [(Vector((x, y, wache_z + 0.005 + 0.13 * t)), X, Y, 0.017 - 0.002 * math.sin(t * math.pi), 0.016) for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    f.loft("Griff", griff, 10, lambda i, k, p: griff_farbe * (0.7 if int(p.center.z * 120) % 2 else 1.0), gewicht, oben_zu=True, unten_zu=True, teilung=2)
+    knauf = Vector((x, y, wache_z + 0.155))
+    f.kugel("Knauf", knauf, (0.024, 0.024, 0.02), messing, gewicht, 12, 8)
+    if art in ("Klinge", "klinge_gift", "klinge_schatten", "klinge_mond"):
+        f.kugel("Knaufstein", knauf + Vector((0.021, 0, 0)), (0.006, 0.011, 0.011), zier * 1.2, gewicht, 8, 6)
+        f.kugel("Knaufstein", knauf - Vector((0.021, 0, 0)), (0.006, 0.011, 0.011), zier * 1.2, gewicht, 8, 6)
+    # Ein Stein in der Parierstange
+    f.kugel("Stein", Vector((x, y, wache_z)), (0.023, 0.011, 0.011), zier if art != "klinge_eisen" else messing * 0.8, gewicht, 10, 6)

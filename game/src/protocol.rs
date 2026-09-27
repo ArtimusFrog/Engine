@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001D;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_001E;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -308,7 +308,7 @@ pub struct Inventory {
     pub runensteine: u32,
     /// Erbeutete Waffen (Bit n = Waffe n aus `waffen.rs`) und die ausgerüstete (0 = Startwaffe)
     #[serde(default)]
-    pub waffen: u16,
+    pub waffen: u32,
     #[serde(default)]
     pub waffe: u8,
 }
@@ -463,7 +463,7 @@ impl Inventory {
 /// Welche Figur ein Spieler spielt.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CharacterClass {
-    // Ritter, Barbar und Schurkin gibt es zurzeit nicht (nur noch für alte Spielstände lesbar).
+    // Ritter und Barbar gibt es zurzeit nicht (nur noch für alte Spielstände lesbar).
     Knight,
     Barbarian,
     #[default]
@@ -475,14 +475,14 @@ pub enum CharacterClass {
 
 impl CharacterClass {
     /// Wählbare Figuren.
-    pub const ALL: [CharacterClass; 3] = [CharacterClass::Mage, CharacterClass::Zwerg, CharacterClass::Bogenschuetze];
+    pub const ALL: [CharacterClass; 4] = [CharacterClass::Mage, CharacterClass::Zwerg, CharacterClass::Bogenschuetze, CharacterClass::Rogue];
 
     pub fn label(self) -> &'static str {
         match self {
             CharacterClass::Knight => "Ritter",
             CharacterClass::Barbarian => "Barbar",
             CharacterClass::Mage => "Magier",
-            CharacterClass::Rogue => "Schurkin",
+            CharacterClass::Rogue => "Schurke",
             CharacterClass::Zwerg => "Zwerg",
             CharacterClass::Bogenschuetze => "Bogenschütze",
         }
@@ -493,6 +493,7 @@ impl CharacterClass {
         match self {
             CharacterClass::Zwerg => 150,
             CharacterClass::Bogenschuetze => 110,
+            CharacterClass::Rogue => 120,
             _ => 100,
         }
     }
@@ -502,6 +503,7 @@ impl CharacterClass {
         match self {
             CharacterClass::Zwerg => "Zäh und stark im Nahkampf: Hammerschlag, Wurfhammer, Erdbeben – und der Ahnenhammer. 150 Leben.",
             CharacterClass::Bogenschuetze => "Flink und treffsicher auf große Entfernung: Pfeilschuss, Salve, Explosivpfeil – und der Pfeilregen. 110 Leben.",
+            CharacterClass::Rogue => "Schnell und gerissen mit der Runenklinge: Klingenhieb, Wurfdolche, Rauchbombe – und die Schattenklingen. 120 Leben.",
             _ => "Kämpft aus der Ferne mit Magie: Arkangeschoss, Feuerball, Frostnova – und der Meteorsturm. 100 Leben.",
         }
     }
