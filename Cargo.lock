@@ -1356,6 +1356,7 @@ dependencies = [
  "rapier3d",
  "renet",
  "renet_netcode",
+ "symphonia",
  "wgpu",
  "winit",
 ]
@@ -4185,6 +4186,7 @@ checksum = "a7edef6a96b696d4e0cab5ee9ebb7ca155ed95f30a6b45bbb8b97d2727f02424"
 dependencies = [
  "lazy_static",
  "symphonia-bundle-flac",
+ "symphonia-codec-pcm",
  "symphonia-codec-vorbis",
  "symphonia-core",
  "symphonia-format-ogg",
@@ -4202,6 +4204,16 @@ dependencies = [
  "symphonia-common",
  "symphonia-core",
  "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-codec-pcm"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e04ba75686acbe43542fdd374571195f0530c0b7785ca25cc6840e9c6c4b6eea"
+dependencies = [
+ "log",
+ "symphonia-core",
 ]
 
 [[package]]

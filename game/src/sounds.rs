@@ -11,21 +11,21 @@ use crate::island::ResourceKind;
 use crate::world::{SoundEvent, World};
 
 pub struct Sounds {
-    chop: SoundId,
-    stone: SoundId,
-    ore: SoundId,
-    tree_falls: SoundId,
-    rock_breaks: SoundId,
-    crackle: SoundId,
-    thunder: SoundId,
+    chop: Varianten,
+    stone: Varianten,
+    ore: Varianten,
+    tree_falls: Varianten,
+    rock_breaks: Varianten,
+    crackle: Varianten,
+    thunder: Varianten,
     rain: LoopId,
     /// Musik für die Nacht und den Zauberwald (die Tagesmusik ist `music`)
     music_night: LoopId,
     music_magic: LoopId,
     /// Aktuelle Anteile der drei Musikstücke (weich überblendet)
     music_mix: [f32; 3],
-    gull: SoundId,
-    howl: SoundId,
+    gull: Varianten,
+    howl: Varianten,
     /// Musik im Hauptmenü (game/assets/sounds/menue.ogg), wird im Hintergrund geladen
     menu_music: Option<LoopId>,
     menu_loading: Option<std::sync::mpsc::Receiver<Result<DecodedSound, String>>>,
@@ -34,15 +34,15 @@ pub struct Sounds {
     /// Zeit bis zum nächsten Möwenruf bzw. Wolfsgeheul
     next_gull: f32,
     next_howl: f32,
-    cast: SoundId,
-    impact: SoundId,
-    pickup: SoundId,
+    cast: Varianten,
+    impact: Varianten,
+    pickup: Varianten,
     wind: LoopId,
     music: LoopId,
     rng: Rng,
     last_items: Option<u32>,
     /// Klänge der Fähigkeiten (in der Reihenfolge von `zauber_klang`)
-    zauber: Vec<SoundId>,
+    zauber: Vec<Varianten>,
 }
 
 /// Index eines Fähigkeits-Klangs in `Sounds::zauber`.
@@ -64,6 +64,8 @@ fn zauber_klang(klang: crate::zauberbild::Klang) -> usize {
         Pfeilschuss => 12,
         Pfeiltreffer => 13,
         Himmel => 14,
+        Blitz => 15,
+        Klinge => 16,
     }
 }
 
@@ -77,29 +79,49 @@ fn start_menu_music() -> Option<std::sync::mpsc::Receiver<Result<DecodedSound, S
     Some(receiver)
 }
 
-/// Aufnahme aus `game/assets/sounds/`, sonst der selbst erzeugte Klang.
-fn sound(audio: &mut Audio, name: &str, build: impl FnOnce() -> SoundBuffer) -> SoundId {
-    let file = asset_files::asset_dir().and_then(|dir| {
-        ["ogg", "wav", "flac"].iter().map(|ext| dir.join("sounds").join(format!("{name}.{ext}"))).find(|p| p.is_file())
-    });
-    if let Some(path) = file {
-        match audio.load_file(name, &path) {
-            Ok(id) => return id,
-            Err(message) => log::warn!("{message} – nehme den erzeugten Klang"),
+/// Ein Klang in einer oder mehreren Varianten – beim Abspielen wird zufällig eine gewählt,
+/// damit sich häufige Geräusche (Treffer, Hiebe) nicht wiederholen.
+pub struct Varianten(Vec<SoundId>);
+
+impl Varianten {
+    fn wahl(&self, rng: &mut Rng) -> SoundId {
+        self.0[(rng.next_u32() as usize) % self.0.len()]
+    }
+
+    fn erste(&self) -> SoundId {
+        self.0[0]
+    }
+}
+
+/// Aufnahmen aus `game/assets/sounds/` (`<name>.ogg` oder `<name>_1.ogg`, `<name>_2.ogg` … bzw.
+/// .wav/.flac), sonst der selbst erzeugte Klang.
+fn sound(audio: &mut Audio, name: &str, build: impl FnOnce() -> SoundBuffer) -> Varianten {
+    let finde = |stamm: &str| {
+        asset_files::asset_dir().and_then(|dir| ["ogg", "wav", "flac"].iter().map(|ext| dir.join("sounds").join(format!("{stamm}.{ext}"))).find(|p| p.is_file()))
+    };
+    let dateien: Vec<_> = std::iter::once(finde(name)).chain((1..=9).map(|n| finde(&format!("{name}_{n}")))).flatten().collect();
+    let mut ids = Vec::new();
+    for (n, path) in dateien.iter().enumerate() {
+        match audio.load_file(&format!("{name}#{n}"), path) {
+            Ok(id) => ids.push(id),
+            Err(message) => log::warn!("{message} – Variante übersprungen"),
         }
     }
-    audio.add_sound(name, || {
-        let mut buffer = build();
-        normalize(&mut buffer, 0.9);
-        buffer
-    })
+    if ids.is_empty() {
+        ids.push(audio.add_sound(name, || {
+            let mut buffer = build();
+            normalize(&mut buffer, 0.9);
+            buffer
+        }));
+    }
+    Varianten(ids)
 }
 
 impl Sounds {
     pub fn new(ctx: &mut Context) -> Sounds {
         let a = &mut ctx.audio;
-        let wind = sound(a, "wind", wind);
-        let music = sound(a, "musik", music);
+        let wind = sound(a, "wind", wind).erste();
+        let music = sound(a, "musik", music).erste();
         Sounds {
             chop: sound(a, "hacken", chop),
             stone: sound(a, "stein", stone),
@@ -109,11 +131,11 @@ impl Sounds {
             crackle: sound(a, "knistern", crackle),
             thunder: sound(a, "donner", thunder),
             music_night: {
-                let s = sound(a, "musik_nacht", music_night);
+                let s = sound(a, "musik_nacht", music_night).erste();
                 a.start_loop(s, Bus::Music)
             },
             music_magic: {
-                let s = sound(a, "musik_zauberwald", music_magic);
+                let s = sound(a, "musik_zauberwald", music_magic).erste();
                 a.start_loop(s, Bus::Music)
             },
             music_mix: [1.0, 0.0, 0.0],
@@ -125,7 +147,7 @@ impl Sounds {
             next_gull: 4.0,
             next_howl: 20.0,
             rain: {
-                let rain = sound(a, "regen", rain);
+                let rain = sound(a, "regen", rain).erste();
                 a.start_loop(rain, Bus::Ambient)
             },
             cast: sound(a, "zauber", cast),
@@ -151,6 +173,8 @@ impl Sounds {
                 sound(a, "bogensehne", bogensehne),
                 sound(a, "pfeiltreffer", pfeiltreffer),
                 sound(a, "himmel", himmel),
+                sound(a, "blitz", lanze),
+                sound(a, "klinge", pfeiltreffer),
             ],
         }
     }
@@ -193,9 +217,9 @@ impl Sounds {
             match event {
                 SoundEvent::Hit { kind, at, finished } => {
                     let (hit, done) = match kind {
-                        ResourceKind::Wood => (self.chop, self.tree_falls),
-                        ResourceKind::Stone => (self.stone, self.rock_breaks),
-                        ResourceKind::Ore => (self.ore, self.rock_breaks),
+                        ResourceKind::Wood => (self.chop.wahl(&mut self.rng), self.tree_falls.wahl(&mut self.rng)),
+                        ResourceKind::Stone => (self.stone.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
+                        ResourceKind::Ore => (self.ore.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
                     };
                     ctx.audio.play(hit, Play { at: Some(at + Vec3::Y), pitch, range: 45.0, ..Default::default() });
                     if finished {
@@ -203,24 +227,24 @@ impl Sounds {
                     }
                 }
                 SoundEvent::Thunder { volume } => {
-                    ctx.audio.play(self.thunder, Play { volume: volume.clamp(0.2, 1.0), pitch: self.rng.range(0.85, 1.1), ..Default::default() });
+                    ctx.audio.play(self.thunder.wahl(&mut self.rng), Play { volume: volume.clamp(0.2, 1.0), pitch: self.rng.range(0.85, 1.1), ..Default::default() });
                 }
                 SoundEvent::Built { at, done } => {
                     if done {
-                        ctx.audio.play(self.pickup, Play { at: Some(at + Vec3::Y * 2.0), volume: 0.9, pitch: 0.7, range: 60.0, ..Default::default() });
-                        ctx.audio.play(self.rock_breaks, Play { at: Some(at), volume: 0.5, pitch: 1.2, range: 60.0, ..Default::default() });
+                        ctx.audio.play(self.pickup.wahl(&mut self.rng), Play { at: Some(at + Vec3::Y * 2.0), volume: 0.9, pitch: 0.7, range: 60.0, ..Default::default() });
+                        ctx.audio.play(self.rock_breaks.wahl(&mut self.rng), Play { at: Some(at), volume: 0.5, pitch: 1.2, range: 60.0, ..Default::default() });
                     } else {
                         let pitch = self.rng.range(0.72, 0.95);
-                        ctx.audio.play(self.stone, Play { at: Some(at), volume: 0.45, pitch, range: 40.0, ..Default::default() });
+                        ctx.audio.play(self.stone.wahl(&mut self.rng), Play { at: Some(at), volume: 0.45, pitch, range: 40.0, ..Default::default() });
                     }
                 }
                 SoundEvent::Crackle { at } => {
                     let volume = self.rng.range(0.25, 0.5);
-                    ctx.audio.play(self.crackle, Play { at: Some(at), volume, pitch: self.rng.range(0.8, 1.3), range: 22.0, ..Default::default() });
+                    ctx.audio.play(self.crackle.wahl(&mut self.rng), Play { at: Some(at), volume, pitch: self.rng.range(0.8, 1.3), range: 22.0, ..Default::default() });
                 }
                 SoundEvent::Cast { player } => {
                     let at = world.player_position(ctx, player);
-                    ctx.audio.play(self.cast, Play { at, volume: 0.6, pitch, range: 35.0, ..Default::default() });
+                    ctx.audio.play(self.cast.wahl(&mut self.rng), Play { at, volume: 0.6, pitch, range: 35.0, ..Default::default() });
                 }
                 SoundEvent::Zauber { klang, at, laut } => {
                     // Schwere Klänge tragen weiter
@@ -228,7 +252,7 @@ impl Sounds {
                         crate::zauberbild::Klang::Explosion | crate::zauberbild::Klang::Beben | crate::zauberbild::Klang::Lanze | crate::zauberbild::Klang::Himmel => 90.0,
                         _ => 45.0,
                     };
-                    let id = self.zauber[zauber_klang(klang)];
+                    let id = self.zauber[zauber_klang(klang)].wahl(&mut self.rng);
                     ctx.audio.play(id, Play { at: Some(at), volume: laut.clamp(0.0, 1.0), pitch, range, ..Default::default() });
                 }
                 SoundEvent::Impact { at, animal, killed } => {
@@ -238,7 +262,7 @@ impl Sounds {
                         (true, false) => (0.7, pitch),
                         (false, _) => (0.35, pitch * 1.25),
                     };
-                    ctx.audio.play(self.impact, Play { at: Some(at), volume, pitch, range: 40.0, ..Default::default() });
+                    ctx.audio.play(self.impact.wahl(&mut self.rng), Play { at: Some(at), volume, pitch, range: 40.0, ..Default::default() });
                 }
             }
         }
@@ -246,7 +270,7 @@ impl Sounds {
         // Mehr im Inventar als vorher: kurzes, helles „Pling“.
         if let (Some(before), Some(now)) = (self.last_items, items) {
             if now > before {
-                ctx.audio.play(self.pickup, Play { volume: 0.35, pitch: self.rng.range(0.97, 1.05), ..Default::default() });
+                ctx.audio.play(self.pickup.wahl(&mut self.rng), Play { volume: 0.35, pitch: self.rng.range(0.97, 1.05), ..Default::default() });
             }
         }
         self.last_items = items;
@@ -285,7 +309,7 @@ impl Sounds {
             self.next_gull = self.rng.range(4.0, 11.0);
             if let (Some(at), true) = (shore_at, daylight > 0.3 && rain < 0.5) {
                 let pos = at + vec3(self.rng.range(-15.0, 15.0), self.rng.range(8.0, 14.0), self.rng.range(-15.0, 15.0));
-                ctx.audio.play(self.gull, Play { at: Some(pos), volume: 0.45, pitch: self.rng.range(0.9, 1.15), range: 90.0, ..Default::default() });
+                ctx.audio.play(self.gull.wahl(&mut self.rng), Play { at: Some(pos), volume: 0.45, pitch: self.rng.range(0.9, 1.15), range: 90.0, ..Default::default() });
             }
         }
         // Wölfe heulen nachts aus den Bergen (vom nächsten Wolf aus)
@@ -300,7 +324,7 @@ impl Sounds {
                     .map(|a| a.position)
                     .min_by(|a, b| a.distance(camera).total_cmp(&b.distance(camera)));
                 if let Some(at) = wolf.filter(|w| w.distance(camera) < 180.0) {
-                    ctx.audio.play(self.howl, Play { at: Some(at + Vec3::Y), volume: 0.8, pitch: self.rng.range(0.9, 1.1), range: 200.0, ..Default::default() });
+                    ctx.audio.play(self.howl.wahl(&mut self.rng), Play { at: Some(at + Vec3::Y), volume: 0.8, pitch: self.rng.range(0.9, 1.1), range: 200.0, ..Default::default() });
                 }
             }
         }
@@ -658,6 +682,22 @@ fn wav_mono_16bit(buffer: &SoundBuffer) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aufnahmen_sind_lesbar() {
+        // Jede Aufnahme in game/assets/sounds muss sich dekodieren lassen (sonst fällt das Spiel still
+        // auf den erzeugten Klang zurück)
+        let dir = asset_files::asset_dir().expect("Assets").join("sounds");
+        let mut anzahl = 0;
+        for eintrag in std::fs::read_dir(&dir).unwrap().flatten() {
+            let pfad = eintrag.path();
+            if pfad.extension().is_some_and(|e| e == "wav" || e == "ogg") && pfad.file_stem().is_some_and(|s| s != "menue") {
+                Audio::decode_file(&pfad).unwrap_or_else(|e| panic!("{e}"));
+                anzahl += 1;
+            }
+        }
+        assert!(anzahl >= 30, "nur {anzahl} Aufnahmen");
+    }
 
     #[test]
     fn klaenge_sind_hoerbar_und_uebersteuern_nicht() {

@@ -35,6 +35,10 @@ pub enum Klang {
     Pfeiltreffer,
     /// Feuerkreis am Himmel, Geisterhammer: tiefes Dröhnen
     Himmel,
+    /// Elektrisches Knistern (Blitzturm)
+    Blitz,
+    /// Klinge schneidet (Stich, Wurfdolche)
+    Klinge,
 }
 
 /// Was die Effekte von einer Spielfigur wissen müssen (jedes Bild neu, aus `World`).
@@ -1552,7 +1556,7 @@ impl Zauberbild {
                         self.funken(ctx, spitze, 14, vec3(0.45, 1.0, 0.35), 3.0, 0.04, 0.4, 5.0, 2.5);
                         Self::rauch(ctx, spitze, 4, vec3(0.35, 0.6, 0.3), 0.6, 0.25, 0.9, Vec3::Y * 0.3);
                         self.blitz(ctx, spitze, 0.5, vec3(0.5, 1.0, 0.4), vec3(0.1, 0.3, 0.05), 0.18, 1.2);
-                        sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: spitze, laut: 0.6 });
+                        sounds.push(SoundEvent::Zauber { klang: Klang::Klinge, at: spitze, laut: 0.6 });
                     } else if p.hit && p.art == PfeilArt::Bolzen {
                         // Der Bolzen schlägt durch: Druckwelle, Splitter, Staub
                         ctx.scene.despawn(p.holz);
@@ -1981,7 +1985,7 @@ impl Zauberbild {
             self.licht(nach, vec3(1.5, 2.5, 3.5), 5.0, 0.3);
             self.erschuettern(nach, 0.18, 12.0);
             self.stopp.push((spieler, 0.06));
-            sounds.push(SoundEvent::Zauber { klang: Klang::Pfeiltreffer, at: nach, laut: 0.8 });
+            sounds.push(SoundEvent::Zauber { klang: Klang::Klinge, at: nach, laut: 0.8 });
             return;
         }
         let seite = if stufe == 1 { -1.0 } else { 1.0 };
@@ -2730,7 +2734,7 @@ impl Zauberbild {
         self.licht(nach, vec3(4.0, 6.0, 9.0), 12.0 * groesse, 0.2);
         self.licht(von, vec3(3.0, 4.0, 6.0), 8.0, 0.15);
         self.erschuettern(nach, 0.1, 16.0);
-        sounds.push(SoundEvent::Zauber { klang: Klang::Lanze, at: nach, laut: 0.45 });
+        sounds.push(SoundEvent::Zauber { klang: Klang::Blitz, at: nach, laut: 0.7 });
     }
 
     /// Sonnenturm: ein gleißender goldener Strahl mit Brennfleck.

@@ -13,6 +13,8 @@ glam = "0.33.9"
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 kira = { version = "0.12.4", default-features = false, features = ["cpal", "ogg", "vorbis", "wav", "flac"] }
+# WAV-Aufnahmen (16-Bit-PCM) dekodieren – kira bindet nur den Container ein
+symphonia = { version = "0.6.1", default-features = false, features = ["pcm"] }
 log = "0.4.34"
 pollster = "1.0.1"
 rapier3d = "0.35.3"
