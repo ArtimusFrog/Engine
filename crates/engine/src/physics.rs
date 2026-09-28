@@ -356,6 +356,13 @@ impl Physics {
         body.set_next_kinematic_translation(position);
     }
 
+    /// Stößt eine Spielfigur weg (Rückstoß): sie verliert den Boden und fliegt mit `velocity`.
+    pub fn stossen(&mut self, id: CharacterId, velocity: Vec3) {
+        let character = self.characters[id.0].as_mut().expect("Spielfigur wurde entfernt");
+        character.state.velocity = velocity;
+        character.state.grounded = false;
+    }
+
     /// Setzt eine Spielfigur sofort an eine neue Position, ohne Übergang (z. B. Respawn).
     pub fn teleport_character(&mut self, id: CharacterId, position: Vec3) {
         self.set_character_state(id, position, CharacterState::default());

@@ -254,6 +254,12 @@ pub enum Ereignis {
     Auffliegen(Vec3),
     /// Ein Pilzling platzt in einer Sporenwolke
     Sporenexplosion(Vec3),
+    /// Keiler/Minotaurus scharrt und stürmt los
+    Ansturm(Vec3),
+    /// Waldschrat: hier brechen gleich Wurzeln hervor (Warnring)
+    Wurzelwarnung(Vec3),
+    /// … und jetzt
+    Wurzeln(Vec3),
 }
 
 /// Befehle der Spieler zur Verteidigung.

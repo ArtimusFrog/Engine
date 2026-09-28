@@ -11,6 +11,7 @@ Koordinaten: Z oben, die Figur schaut nach -Y, Füße im Ursprung, links (L) ist
 import math
 
 import bmesh
+import bpy
 from mathutils import Matrix, Vector, noise
 
 import bildhauer as bh
@@ -328,62 +329,6 @@ def schatten_gesicht(p, n, h):
 
 
 # ---------------------------------------------------------------------------
-# Dunkler Ritter: geschwärzter Plattenpanzer, Hörnerhelm mit glühendem Sehschlitz,
-# violetter Waffenrock, zerschlissener Umhang, Schwert und Wappenschild
-# ---------------------------------------------------------------------------
-def dunkler_ritter(seed=101):
-    f = Figur("DunklerRitter", seed)
-    b, formen = mensch(f, breite=1.08, muskel=0.12)
-
-    def ketten(p, c):
-        return c * (0.8 if (int(p.z * 90) + int(p.x * 90)) % 2 else 1.0)
-    k = koerper(f, b, formen, kleidung(b, farbe("#6A5A50"), STAHL_DUNKEL, VIOLETT_DUNKEL, STAHL_SCHWARZ, hand=STAHL_SCHWARZ, streifen=ketten,
-                                       gesicht=lambda p, n, h: bh.schmutz(ketten(p, STAHL_DUNKEL), h, 0.5, 0.1)), ziel=9000)
-
-    def kanten(zs):
-        def rand(p, n, c):
-            for z in zs:
-                if abs(p.z - z) < 0.012:
-                    return STAHL * 0.9
-            return c
-        return rand
-
-    def brust_rand(p, n, c):
-        if (p - Vector((0, -0.19, 1.33))).length < 0.035 and p.y < -0.12:
-            return GLUT * 1.5
-        if abs(p.z - 1.02) < 0.015 or (abs(p.x) < 0.006 and p.y < 0):
-            return STAHL * 0.9
-        return c
-    huelle(f, b, k, "Brustpanzer", lambda p, n: 1.0 < p.z < 1.56 and abs(p.x) < 0.2 + 0.03 * weich(1.4, 1.5, p.z), 0.024, STAHL_SCHWARZ, rand=brust_rand,
-           relief=lambda p, n: 0.006 * weich(0.03, 0.0, abs(p.x) - 0.01) * (1 if p.y < 0 else 0))
-
-    def helm_rand(p, n, c):
-        if abs(p.z - 1.755) < 0.009 and p.y < -0.07:
-            return GLUT * 2.0
-        if abs(p.x) < 0.012 and p.z > 1.8:
-            return STAHL * 0.9
-        return c
-    huelle(f, b, k, "Helm", lambda p, n: p.z > 1.6 and abs(p.x) < 0.16, 0.026, STAHL_SCHWARZ, rand=helm_rand, ziel=1200,
-           relief=lambda p, n: 0.01 * weich(0.03, 0.0, abs(p.x)) * weich(1.78, 1.86, p.z))
-    for s in (1, -1):
-        punkte = [Vector((0.1 * s, 0.0, 1.84)), Vector((0.2 * s, -0.02, 1.9)), Vector((0.27 * s, -0.06, 2.0)), Vector((0.28 * s, -0.1, 2.12))]
-        obj = f.straehne("Horn", punkte, 0.035, 0.004, KNOCHEN, KOPF, 12, 0.0, 1.0, teilung=4, glatt=True)
-        bh.glatt_einfaerben(obj, lambda p, n, h, a=punkte[0]: farbe("#6A5A48").lerp(KNOCHEN, weich(0.04, 0.2, (p - a).length)))
-        huelle(f, b, k, "Armschiene", lambda p, n, s=s: p.x * s > 0.22 and b.p("hand", s).z + 0.02 < p.z < b.p("ellbogen", s).z + 0.02, 0.016, STAHL_SCHWARZ,
-               rand=kanten([b.p("ellbogen", s).z - 0.02]), ziel=700)
-        huelle(f, b, k, "Beinschiene", lambda p, n, s=s: p.x * s > 0.02 and 0.14 < p.z < 0.62 and abs(p.x) < 0.2, 0.017, STAHL_SCHWARZ,
-               rand=kanten([0.5, 0.56]), ziel=800)
-        huelle(f, b, k, "Eisenschuh", lambda p, n, s=s: p.x * s > 0.02 and p.z < 0.15 and abs(p.x) < 0.2, 0.012, STAHL_SCHWARZ, ziel=600)
-    schulterplatten(f, b, STAHL_SCHWARZ)
-    rock(f, b, k, "Waffenrock", 1.02, 0.52, VIOLETT, fransen=0.1, saum=farbe("#7E2227"))
-    guertel(f, b, k, 1.04, LEDER * 0.7, STAHL)
-    umhang(f, b, VIOLETT_DUNKEL, laenge=1.15, rand=farbe("#1A0E22"))
-    schwert(b, 0.88)
-    schild(b, STAHL_SCHWARZ, STAHL_DUNKEL, zeichen=GLUT * 0.8)
-    return f.fertig(_animationen(_angriff_hieb, arme_ruhe=((-20, -60), (-10, -25))))
-
-
-# ---------------------------------------------------------------------------
 # Soldat der Kaserne (verbündet): blanker Stahl, blauer Waffenrock mit Gold, offener Helm mit
 # Nasenschutz und Federbusch, Speer mit Wimpel und Wappenschild
 # ---------------------------------------------------------------------------
@@ -611,47 +556,6 @@ def aermel(f, b, s, c, saum=None, weite=0.1, fetzen=0.0):
     bh.glatt_einfaerben(obj, lambda p, n, hh: bh.schmutz((saum if saum is not None and (p - h).dot(ax) > -0.02 else c) * (0.85 + 0.2 * bh.rausch(p, 18.0)), hh, 0.4, 0.1))
 
 
-def dunkelmagier(seed=105):
-    f = Figur("Dunkelmagier", seed)
-    b, formen = mensch(f, breite=0.95)
-    k = koerper(f, b, formen, kleidung(b, farbe("#9C8FA8"), VIOLETT, VIOLETT_DUNKEL, farbe("#16121A"), hand=farbe("#8C7F98"), gesicht=schatten_gesicht))
-    augen_paar(b, GLUT * 1.6, leuchten=True)
-    kapuze(f, b, k, VIOLETT_DUNKEL, spitz=1.0)
-
-    def robe_saum(p, n, c):
-        return c
-    obj, _ = rock(f, b, k, "Robe", 1.02, 0.03, VIOLETT, fransen=0.0, weite=0.16, falten=0.08, saum=GOLD * 0.8)
-    # Runen am Saum
-    my, rx, ry = rumpf_breite(k, 1.02)
-    for j in range(8):
-        w = math.tau * j / 8
-        f.stern("Rune", Vector((math.sin(w) * (rx + 0.13), my - math.cos(w) * (ry + 0.1), 0.18)), Vector((math.sin(w), -math.cos(w), 0)), 0.035, GLUT, b.rock, zacken=3)
-    obj = f.loft("Schaerpe", [(Vector((0, my, 1.0)), X, Y, rx + 0.02, ry + 0.02), (Vector((0, my, 1.06)), X, Y, rx + 0.022, ry + 0.022)], 36,
-                 lambda i, kk, p: GLUT * 0.7, b.rumpf, glatt=True)
-    for s in (1, -1):
-        aermel(f, b, s, VIOLETT_DUNKEL, saum=VIOLETT_HELL, weite=0.1)
-    # Runen, die um die Brust kreisen (hängen an der Brust)
-    for j in range(3):
-        w = math.tau * j / 3
-        f.stern("Schwebrune", Vector((math.cos(w) * 0.32, math.sin(w) * 0.32 - 0.05, 1.25)), Vector((math.cos(w), math.sin(w), 0)), 0.045, GLUT,
-                lambda co: {"Brust": 1.0}, zacken=3)
-
-    def stab():
-        g_ = b.griff(-1)
-        unten, oben = Vector((g_.x, g_.y, 0.05)), Vector((g_.x, g_.y, 2.0))
-        punkte = [unten.lerp(oben, t) + Vector((0.012 * math.sin(t * 9), 0.01 * math.cos(t * 7), 0)) for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
-        obj = f.straehne("Stab", punkte, 0.022, 0.018, farbe("#8A7A68"), b.hand(-1), 10, 0.0, 1.0, teilung=4, glatt=True)
-        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz(farbe("#8A7A68") * (0.7 + 0.4 * bh.rausch(Vector((p.x * 40, p.y * 40, p.z * 5)), 1.0)), h, 0.5, 0.2))
-        for i in range(4):
-            w = math.tau * i / 4
-            punkte = [oben, oben + Vector((math.cos(w) * 0.07, math.sin(w) * 0.07, 0.08)), oben + Vector((math.cos(w) * 0.045, math.sin(w) * 0.045, 0.22))]
-            f.straehne("Klaue", punkte, 0.015, 0.003, KNOCHEN, b.hand(-1), 8, 0.0, 1.0, glatt=True)
-        f.loft("Kristall", [(oben + Z * 0.05, X, Y, 0.001, 0.001), (oben + Z * 0.15, X, Y, 0.055, 0.055), (oben + Z * 0.28, X, Y, 0.001, 0.001)], 6,
-               lambda i, kk, p: GLUT * 1.4, b.hand(-1), teilung=1)
-    b.starr("Stab", "Hand.R", stab)
-    return f.fertig(_animationen(_angriff_zauber, arme_ruhe=((-5, -20), (0, -8)), gehen=(22, 34, 12, 0.02, 4, 12)))
-
-
 # ---------------------------------------------------------------------------
 # Gespenst: schwebende, zerfetzte Robe ohne Beine, fahl leuchtend, Kapuze mit grünen Augen,
 # Ketten um die Brust, Sense
@@ -753,60 +657,7 @@ def skalieren(f, faktor):
     f.knochen = [(n, tuple(Vector(a) * faktor), tuple(Vector(e) * faktor), p, o) for n, a, e, p, o in f.knochen]
 
 
-def steingolem(seed=106):
-    f = Figur("Steingolem", seed)
-    r = f.rng
-    b = Bau(f, **MENSCH)
-    b.skelett()
-    fels, fels_dunkel, moos = farbe("#6A6570"), farbe("#3E3A44"), farbe("#4E6E3A")
-    formen = []
 
-    def brocken(mitte, groesse):
-        mitte = Vector(mitte)
-        formen.append((mitte, tuple(g * r.uniform(0.9, 1.1) for g in groesse)))
-        for _ in range(2):
-            formen.append((mitte + Vector((r.uniform(-1, 1) * groesse[0] * 0.5, r.uniform(-1, 1) * groesse[1] * 0.5, r.uniform(-1, 1) * groesse[2] * 0.4)),
-                           tuple(g * r.uniform(0.5, 0.7) for g in groesse)))
-    for s in (1, -1):
-        hu, kn, ks = b.p("huefte", s), b.p("knie", s), b.p("knoechel", s)
-        brocken(hu.lerp(kn, 0.45) + Vector((0.02 * s, 0, 0)), (0.13, 0.13, 0.22))
-        brocken(kn + Vector((0, -0.03, 0)), (0.1, 0.1, 0.09))
-        brocken(kn.lerp(ks, 0.5), (0.11, 0.11, 0.2))
-        brocken(Vector((ks.x, -0.05, 0.08)), (0.13, 0.18, 0.09))
-        sh, el, ha = b.p("schulter", s), b.p("ellbogen", s), b.p("hand", s)
-        brocken(sh + Vector((0.05 * s, 0, 0.04)), (0.14, 0.13, 0.12))
-        brocken(sh.lerp(el, 0.5), (0.1, 0.1, 0.17))
-        brocken(el, (0.085, 0.085, 0.08))
-        brocken(el.lerp(ha, 0.5), (0.11, 0.11, 0.16))
-        brocken(b.griff(s) + Vector((0, -0.01, 0.02)), (0.12, 0.12, 0.12))
-    brocken((0, 0, 0.98), (0.22, 0.16, 0.13))
-    brocken((0, 0, 1.15), (0.2, 0.15, 0.15))
-    brocken((0, 0.0, 1.38), (0.29, 0.2, 0.19))
-    brocken((0, 0.06, 1.55), (0.16, 0.13, 0.1))
-    brocken((0, -0.04, 1.66), (0.1, 0.1, 0.09))
-
-    def risse(p, n):
-        z = bh.zellen(p, 7.0)
-        return -0.012 * weich(0.07, 0.0, z) + 0.01 * bh.rausch(p, 5.0) + 0.003 * bh.rausch(p, 22.0)
-
-    def fels_farbe(p, n, h):
-        z = bh.zellen(p, 7.0)
-        c = fels.lerp(fels_dunkel, 0.3 + 0.3 * bh.rausch(p, 4.0)) * (0.9 + 0.15 * bh.rausch(p, 25.0))
-        c = c.lerp(moos, weich(0.55, 0.85, n.z) * weich(-0.1, 0.3, bh.rausch(p, 3.0)) * 0.9)
-        if z < 0.04 and bh.rausch(p + Vector((3, 3, 3)), 2.5) > 0.05:
-            return GLUT * (1.2 + bh.rausch(p, 40.0) * 0.4)                  # glühende Adern in den Rissen
-        return bh.schmutz(c, h, 0.6, 0.25)
-    bh.teil(f, "Fels", formen, 0.009, 16000, fels_farbe, versatz=risse, knochen=f.knochen, naechster_knochen=True, inseln=False)
-    for s in (1, -1):
-        b.f.kugel("Glutauge", Vector((0.037 * s, -0.135, 1.68)), (0.02, 0.01, 0.014), GLUT * 1.6, KOPF, 12, 8)
-    for i in range(6):
-        basis = Vector((r.uniform(-0.16, 0.16), 0.17, r.uniform(1.3, 1.58)))
-        richtung = Vector((basis.x * 2, 1.0, 0.9)).normalized()
-        obj = f.loft("Kristall", [(basis, X, Y, 0.04, 0.035), (basis + richtung * 0.1, X, Y, 0.045, 0.04), (basis + richtung * r.uniform(0.2, 0.28), X, Y, 0.001, 0.001)],
-                     6, lambda ii, kk, p: GLUT, lambda co: {"Brust": 1.0}, oben_zu=True, unten_zu=True)
-        bh.glatt_einfaerben(obj, lambda p, n, h: GLUT * (0.8 + 0.6 * max(0.0, n.z)))
-    skalieren(f, 1.7)
-    return f.fertig(_animationen(_angriff_stampfen, arme_ruhe=((-5, -20), (-5, -20)), gehen=(18, 25, 10, 0.02, 6, 20)))
 
 OHNE = lambda co: {}
 
@@ -1424,3 +1275,528 @@ def gargoyle(seed=109):
         bh.glatt_einfaerben(obj, lambda p, n, h, m=mitte: farbe("#4A3E4E").lerp(farbe("#7A5A6A"), weich(0.4, 0.0, (p - m).length) * 0.4) *
                             (0.8 + 0.25 * bh.rausch(p, 14.0)))
     return f.fertig(_harpyie_animationen)
+
+
+# ---------------------------------------------------------------------------
+# Steingolem: ein Körper aus schwebenden, behauenen Felsbrocken, die von violetter Magie
+# zusammengehalten werden – zwischen den Steinen Lücken mit glühenden Energiefäden, in der Brust
+# ein Runenkern, eingeritzte Runen, Moos auf den Oberseiten, Kristalle auf dem Rücken
+# ---------------------------------------------------------------------------
+def _fels(name, mitte, groesse, drehung, rng, saat, ziel=650):
+    """Ein kantiger Felsbrocken: konvexe Hülle aus zufälligen Punkten auf einem Ellipsoid – große,
+    flache Bruchflächen wie behauener Stein, darauf kleine Abplatzer."""
+    bm = bmesh.new()
+    punkte = []
+    for _ in range(26):
+        v = Vector((rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 1))).normalized()
+        punkte.append(bm.verts.new(v * rng.uniform(0.82, 1.0)))
+    bmesh.ops.convex_hull(bm, input=punkte)
+    lose = [v for v in bm.verts if not v.link_faces]
+    bmesh.ops.delete(bm, geom=lose, context="VERTS")
+    bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=1, use_grid_fill=True)
+    bmesh.ops.triangulate(bm, faces=list(bm.faces))
+    versatz = Vector((saat, saat * 1.7, saat * 0.3))
+    for v in bm.verts:
+        p = v.co.copy()
+        v.co = p * (1.0 + 0.03 * noise.noise(p * 6.0 + versatz))
+        v.co = Vector((v.co.x * groesse[0], v.co.y * groesse[1], v.co.z * groesse[2]))
+        v.co = drehung @ v.co + Vector(mitte)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    for poly in obj.data.polygons:
+        poly.use_smooth = False
+    return obj
+
+
+def steingolem(seed=106):
+    import bpy as _bpy  # noqa: F401
+    f = Figur("Steingolem", seed)
+    r = f.rng
+    b = Bau(f, **MENSCH)
+    b.skelett()
+    fels, fels_hell, fels_dunkel = farbe("#6E6A76"), farbe("#9C98A4"), farbe("#3E3A46")
+    moos, moos_hell = farbe("#3E5A2A"), farbe("#5E7A36")
+    steine = []            # (Objekt, Knochen)
+
+    def stein(knochen, mitte, groesse, kipp=0.3, drehen=True):
+        dreh = (Matrix.Rotation(r.uniform(-kipp, kipp), 3, "X") @ Matrix.Rotation(r.uniform(-kipp, kipp), 3, "Y") @
+                Matrix.Rotation(r.uniform(-0.6, 0.6) if drehen else 0.0, 3, "Z"))
+        obj = _fels("Stein", mitte, tuple(g * 0.9 for g in groesse), dreh, r, r.uniform(0, 100))
+        steine.append((obj, knochen, Vector(mitte)))
+        return obj
+
+    for s, sn in ((1, "L"), (-1, "R")):
+        hu, kn, ks = b.p("huefte", s), b.p("knie", s), b.p("knoechel", s)
+        stein(f"Oberschenkel.{sn}", hu.lerp(kn, 0.45) + Vector((0.02 * s, 0, 0)), (0.14, 0.14, 0.25))
+        stein(f"Unterschenkel.{sn}", kn + Vector((0, -0.035, 0)), (0.095, 0.09, 0.08))
+        stein(f"Unterschenkel.{sn}", kn.lerp(ks, 0.5), (0.12, 0.12, 0.22))
+        stein(f"Fuss.{sn}", Vector((ks.x, -0.05, 0.08)), (0.13, 0.18, 0.085), kipp=0.05)
+        sh, el, ha = b.p("schulter", s), b.p("ellbogen", s), b.p("hand", s)
+        stein(f"Oberarm.{sn}", sh + Vector((0.05 * s, 0, 0.04)), (0.15, 0.14, 0.13))
+        stein(f"Oberarm.{sn}", sh.lerp(el, 0.55), (0.11, 0.11, 0.18))
+        stein(f"Unterarm.{sn}", el, (0.085, 0.085, 0.075))
+        stein(f"Unterarm.{sn}", el.lerp(ha, 0.5), (0.12, 0.12, 0.18))
+        stein(f"Hand.{sn}", b.griff(s) + Vector((0, -0.01, 0.02)), (0.13, 0.13, 0.13))
+    stein("Becken", (0, 0.0, 0.98), (0.23, 0.16, 0.13))
+    stein("Bauch", (0, 0.0, 1.15), (0.2, 0.15, 0.14))
+    stein("Brust", (0, 0.0, 1.37), (0.3, 0.21, 0.2))
+    stein("Brust", (0, 0.06, 1.55), (0.16, 0.13, 0.09))
+    stein("Kopf", (0, -0.04, 1.67), (0.1, 0.1, 0.09), kipp=0.05, drehen=False)
+    # kleine Brocken, die um die Gelenke schweben
+    for kn_, ort in (("Brust", (0.22, -0.05, 1.5)), ("Brust", (-0.22, -0.05, 1.5)), ("Becken", (0.17, -0.06, 1.05)), ("Becken", (-0.17, -0.06, 1.05)),
+                     ("Brust", (0.0, 0.2, 1.4)), ("Kopf", (0.09, 0.0, 1.73))):
+        stein(kn_, ort, (0.045, 0.045, 0.04))
+
+    runen_steine = {id(o) for o, kn, _ in steine if kn in ("Brust", "Oberarm.L", "Oberarm.R", "Kopf") and r.random() < 0.7}
+
+    for obj, knochen, mitte in steine:
+        # Je Bruchfläche eine Farbe: Stein mit leichten Schwankungen, Moos oben, einzelne Runenflächen
+        mesh = obj.data
+        attr = mesh.color_attributes.new("Farbe", "FLOAT_COLOR", "CORNER")
+        rune_flaechen = set()
+        if id(obj) in runen_steine:
+            seiten = [p_.index for p_ in mesh.polygons if abs(p_.normal.z) < 0.4 and p_.area > 0.001]
+            rune_flaechen = set(r.sample(seiten, min(2, len(seiten))))
+        for poly in mesh.polygons:
+            pc, nn = poly.center, poly.normal
+            c = fels.lerp(fels_dunkel, r.uniform(0.15, 0.55)).lerp(fels_hell, weich(0.2, 0.9, nn.z) * 0.3)
+            if nn.z > 0.7 and bh.rausch(pc, 3.0) > 0.25:
+                c = moos.lerp(moos_hell, r.uniform(0.0, 0.6))
+            if poly.index in rune_flaechen:
+                c = GLUT * 1.7
+            for li in poly.loop_indices:
+                attr.data[li].color = (c.x, c.y, c.z, 1.0)
+        f._gewichten(obj, lambda co, kn=knochen: {kn: 1.0})
+        f.teile.append(obj)
+    # Energiefäden zwischen den Steinen an den Gelenken und der glühende Kern
+    for s, sn in ((1, "L"), (-1, "R")):
+        for a, e, kn in ((b.p("schulter", s), b.p("ellbogen", s), f"Oberarm.{sn}"), (b.p("ellbogen", s), b.p("hand", s), f"Unterarm.{sn}"),
+                         (b.p("huefte", s), b.p("knie", s), f"Oberschenkel.{sn}"), (b.p("knie", s), b.p("knoechel", s), f"Unterschenkel.{sn}")):
+            for j in range(3):
+                w = math.tau * j / 3 + r.uniform(0, 1)
+                quer = Vector((math.cos(w), math.sin(w), 0)) * 0.035
+                punkte = [a + quer * 0.3, a.lerp(e, 0.5) + quer, e + quer * 0.3]
+                f.straehne("Energiefaden", punkte, 0.011, 0.011, GLUT * 2.2, lambda co, kn=kn: {kn: 1.0}, 5, 0.0, 1.0, teilung=2, glatt=True)
+    for j in range(4):
+        w = math.tau * j / 4
+        f.straehne("Energiefaden", [Vector((0, 0.0, 1.0)), Vector((math.cos(w) * 0.06, math.sin(w) * 0.05, 1.2)), Vector((0, 0.0, 1.42))],
+                   0.012, 0.012, GLUT * 2.2, b.rumpf, 5, 0.0, 1.0, teilung=2, glatt=True)
+    f.kugel("Kern", (0, -0.08, 1.24), (0.035, 0.035, 0.035), GLUT * 3.0, lambda co: {"Brust": 1.0}, 16, 12)
+    for s in (1, -1):
+        f.kugel("Glutauge", (0.033 * s, -0.13, 1.685), (0.013, 0.008, 0.007), farbe("#F4C8FF") * 3.0, KOPF, 12, 8)
+    # Kristalle wachsen aus Rücken und Schultern
+    for j in range(7):
+        basis = Vector((r.uniform(-0.15, 0.15), 0.2, r.uniform(1.3, 1.55)))
+        if j >= 5:
+            basis = b.p("schulter", 1 if j == 5 else -1) + Vector((0.05 * (1 if j == 5 else -1), 0.04, 0.14))
+        richtung = Vector((basis.x * 2, 0.8, 1.0)).normalized()
+        laenge = r.uniform(0.1, 0.18)
+        kn = "Brust" if j < 5 else ("Oberarm.L" if j == 5 else "Oberarm.R")
+        obj = f.loft("Kristall", [(basis, X, Y, 0.04, 0.035), (basis + richtung * laenge * 0.4, X, Y, 0.05, 0.045), (basis + richtung * laenge, X, Y, 0.001, 0.001)],
+                     6, lambda ii, kk, p: GLUT, lambda co, kn=kn: {kn: 1.0}, oben_zu=True, unten_zu=True)
+        bh.glatt_einfaerben(obj, lambda p, n, h: GLUT * (0.7 + 0.9 * max(0.0, n.z)))
+    skalieren(f, 1.7)
+    return f.fertig(_animationen(_angriff_stampfen, arme_ruhe=((-5, -20), (-5, -20)), gehen=(18, 25, 10, 0.02, 6, 20)))
+
+
+# ===========================================================================
+# Rüstungsteile wie bei den Helden: einzelne, klar geschnittene Platten mit Rändern und Nieten
+# ===========================================================================
+def _ringe_entlang(a, b, radien, form=None):
+    a, b = Vector(a), Vector(b)
+    ach = (b - a).normalized()
+    q1 = ach.cross(Y if abs(ach.y) < 0.9 else X).normalized()
+    q2 = ach.cross(q1).normalized()
+    ringe = []
+    n = len(radien)
+    for i, r_ in enumerate(radien):
+        rx, ry = r_ if isinstance(r_, tuple) else (r_, r_)
+        ring = (a.lerp(b, i / (n - 1)), q1, q2, rx, ry)
+        ringe.append(ring + ((form,) if form else ()))
+    return ringe, ach
+
+
+def plattenfarbe(c, rand=None, rand_breite=0.008, enden=None, ach=None, a=None, laenge=None, glanz=0.5):
+    """Stahl: dunkle Fugen, helle Kanten, ein Zierrand an den Enden der Platte."""
+    def farbe_von(p, n, h):
+        basis = c
+        if rand is not None and enden:
+            t = (p - a).dot(ach)
+            if min(t, laenge - t) < rand_breite:
+                basis = rand
+        basis = basis * (0.82 + 0.25 * max(0.0, n.z) + 0.06 * bh.rausch(p, 35.0))
+        return bh.schmutz(basis, h, 0.55, glanz)
+    return farbe_von
+
+
+def schiene(f, name, a, b, radien, gewicht, c, rand=None, seg=20, form=None, nieten=0, nieten_c=None, rand_breite=0.008):
+    """Röhre aus Stahl um ein Glied (Armschiene, Beinschiene), mit Zierrand und Nieten."""
+    ringe, ach = _ringe_entlang(a, b, radien, form)
+    obj = f.loft(name, ringe, seg, lambda i, k, p: c, gewicht, teilung=2, glatt=True)
+    laenge = (Vector(b) - Vector(a)).length
+    bh.glatt_einfaerben(obj, plattenfarbe(c, rand, rand_breite, True, ach, Vector(a), laenge))
+    if nieten:
+        q1 = ringe[0][1]
+        for j in range(nieten):
+            w = math.tau * j / nieten
+            for t_ in (0.1, 0.9):
+                rad = radien[0] if t_ < 0.5 else radien[-1]
+                rad = rad[0] if isinstance(rad, tuple) else rad
+                ort = Vector(a).lerp(Vector(b), t_) + (q1 * math.cos(w) + ach.cross(q1) * math.sin(w)) * (rad + 0.002)
+                f.kugel("Niete", ort, (0.007, 0.007, 0.007), nieten_c or rand or c, gewicht, 6, 4)
+    return obj
+
+
+def rumpfschale(f, b, k, name, z_werte, zusatz, c, rand=None, grat=True, seg=56, gewicht=None, offen_hinten=False, vorne=0.0):
+    """Platte um den Rumpf, am Körper ausgemessen: Ringe in den Höhen \`z_werte\` (von unten nach
+    oben), je Höhe \`zusatz\` Abstand zur Haut; \`vorne\` wölbt die Vorderseite (Brustpanzer)."""
+    ringe = []
+    for z, dz in zip(z_werte, zusatz):
+        my, rx, ry = rumpf_breite(k, z, 0.025)
+        form = (lambda w, v=vorne: 1.0 + v * max(0.0, -math.sin(w)) ** 2) if vorne else None
+        ring = (Vector((0, my, z)), X, Y, rx + dz, ry + dz)
+        ringe.append(ring + ((form,) if form else ()))
+    obj = f.loft(name, ringe, seg, lambda i, kk, p: c, gewicht or b.rumpf, teilung=3, glatt=True)
+    unten, oben = z_werte[0], z_werte[-1]
+
+    def farbe_von(p, n, h):
+        basis = c
+        if rand is not None and (p.z - unten < 0.009 or oben - p.z < 0.009):
+            basis = rand
+        if grat and abs(p.x) < 0.007 and p.y < 0:
+            basis = basis * 1.5
+        return bh.schmutz(basis * (0.82 + 0.25 * max(0.0, n.z) + 0.06 * bh.rausch(p, 35.0)), h, 0.55, 0.5)
+    bh.glatt_einfaerben(obj, farbe_von)
+    if grat:
+        # Mittelgrat vorne als echte Kante
+        for v in obj.data.vertices:
+            if abs(v.co.x) < 0.012 and v.co.y < 0:
+                v.co.y -= 0.008 * (1 - abs(v.co.x) / 0.012)
+    return obj
+
+
+def schulterstueck(f, b, s, c, rand, lagen=3, groesse=0.15, dornen=0, dorn_c=None):
+    """Mehrlagiges Schulterstück: überlappende, gewölbte Platten mit Zierrand, Nieten und Dornen."""
+    sl = b.p("schulter", s)
+    gewicht = lambda co, s=s: _mischen(("Brust", 0.3), ("Oberarm.L" if s > 0 else "Oberarm.R", 0.7))
+    for j in range(lagen):
+        mitte = sl + Vector((0.035 * s, 0.0, 0.06 - 0.055 * j))
+        g = groesse * (1.0 - 0.07 * j)
+        obj = _schale(f, "Schulterplatte", mitte, g, g * 0.95, g * 0.62, (0, 360), (-5, 85), lambda poly: c, gewicht, seg=(28, 8))
+        bh.glatt_einfaerben(obj, lambda p, n, h, m=mitte, g=g: bh.schmutz((rand if (p - m).length > g * 0.97 or n.z < 0.04 else c) *
+                                                                          (0.82 + 0.3 * max(0.0, n.z)), h, 0.55, 0.6))
+        for w in range(5):
+            ww = math.tau * (w + 0.5) / 5
+            f.kugel("Niete", mitte + Vector((math.cos(ww) * g * 0.9, math.sin(ww) * g * 0.86, 0.012)), (0.008, 0.008, 0.008), rand, gewicht, 8, 6)
+    for j in range(dornen):
+        w = -0.5 + j * 0.5
+        basis = sl + Vector((0.06 * s, 0.07 * math.sin(w) * 2, 0.13))
+        _kegel(f, "Dorn", basis, Vector((0.5 * s, math.sin(w) * 0.4, 1)), 0.16 - 0.03 * abs(j - 1), 0.022, dorn_c or c, gewicht, 10)
+
+
+def kachel(f, mitte, normale, groesse, c, rand, gewicht, fluegel=True):
+    """Ellbogen-/Kniekachel: gewölbte Scheibe mit Rand, dazu ein seitlicher Flügel."""
+    normale = Vector(normale).normalized()
+    q1 = normale.cross(Z if abs(normale.z) < 0.9 else X).normalized()
+    q2 = normale.cross(q1).normalized()
+    ringe = [(Vector(mitte) + normale * (0.03 * math.cos(t * math.pi / 2)), q1, q2, groesse * math.sin(t * math.pi / 2) + 0.002,
+              groesse * math.sin(t * math.pi / 2) + 0.002) for t in (0.05, 0.4, 0.75, 1.0)]
+    obj = f.loft("Kachel", ringe, 24, lambda i, k, p: c, gewicht, oben_zu=False, teilung=2, glatt=True)
+    bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz((rand if (p - Vector(mitte)).length > groesse * 0.9 else c) * (0.85 + 0.25 * max(0.0, n.z)), h, 0.55, 0.6))
+    f.kugel("Kachelnagel", Vector(mitte) + normale * 0.033, (0.012, 0.012, 0.012), rand, gewicht, 10, 6)
+    if fluegel:
+        _platte(f, "Kachelfluegel", Vector(mitte) + q1 * groesse * 0.9, groesse * 1.4, groesse * 0.8, 0.006, q2, normale + q1 * 0.5,
+                lambda i, k, p: c, gewicht, spitz=0.5, wolbung=0.6)
+
+
+def panzerhandschuh(f, b, s, c, rand):
+    """Stulpe über dem Handgelenk und Plättchen über den Fingerknöcheln."""
+    e, h = b.p("ellbogen", s), b.p("hand", s)
+    ach = (h - e).normalized()
+    gewicht = b.arm(s)
+    schiene(f, "Stulpe", h - ach * 0.06, h + ach * 0.035, [0.042, 0.05, 0.062], gewicht, c, rand, seg=20)
+    g_ = b.griff(s)
+    for j in range(4):
+        kn = g_ + Vector((0.012 * s, -0.036, 0.026 - 0.018 * j))
+        f.kiste("Knoechelplatte", kn, (0.02, 0.008, 0.014), c * 1.1, b.hand(s))
+    f.kugel("Handruecken", g_ + Vector((0.03 * s, -0.005, 0.03)), (0.02, 0.035, 0.035), c, b.hand(s), 12, 8)
+
+
+def eisenschuh(f, b, s, c, rand):
+    """Geschuppter Eisenschuh: vier überlappende Reifen über dem Fuß, Spitze, Sporn."""
+    ks = b.p("knoechel", s)
+    gewicht = b.fuss(s)
+    for j in range(4):
+        y = 0.03 - 0.055 * j
+        ringe = [(Vector((ks.x, y + 0.01, 0.0)), X, Z, 0.058 - 0.004 * j, 0.012), (Vector((ks.x, y, 0.05 - 0.006 * j)), X, Z, 0.058 - 0.004 * j, 0.052 - 0.006 * j),
+                 (Vector((ks.x, y - 0.035, 0.05 - 0.006 * j)), X, Z, 0.055 - 0.004 * j, 0.05 - 0.006 * j)]
+        obj = f.loft("Schuhreif", [(r_[0], r_[1], Y, r_[3], r_[4]) for r_ in ringe], 18, lambda i, k, p: c, gewicht, teilung=2, glatt=True)
+        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz((rand if n.y < -0.6 else c) * (0.85 + 0.25 * max(0.0, n.z)), h, 0.55, 0.6))
+    _kegel(f, "Schuhspitze", Vector((ks.x, -0.18, 0.03)), Vector((0, -1, 0.1)), 0.06, 0.03, c, gewicht, 10)
+    f.loft("Knoechelreif", [(Vector((ks.x, 0.02, 0.06)), X, Y, 0.06, 0.062), (Vector((ks.x, 0.02, 0.13)), X, Y, 0.058, 0.06)], 20, lambda i, k, p: c, gewicht, glatt=True)
+
+
+def wappenrock(f, b, k, c, saum, zeichen=None, zeichen_c=GOLD, lang=0.52, oben=1.5):
+    """Waffenrock als vordere und hintere Bahn (an den Seiten offen), unten ausgefranst, mit Wappen."""
+    for vorn in (1, -1):
+        ringe = []
+        for z in (oben, 1.3, 1.08, 0.95, 0.8, lang):
+            my, rx, ry = rumpf_breite(k, max(z, 0.97), 0.03)
+            tiefe = my - vorn * (ry + 0.03 + (0.01 if z < 1.0 else 0.0))
+            breite = 0.17 if z > 1.0 else 0.18 + (0.95 - z) * 0.1
+            ringe.append((Vector((0, tiefe - vorn * max(0.0, 0.95 - z) * 0.08, z)), X, Y, breite, 0.005))
+        obj = f.loft("Waffenrock", ringe, 12, lambda i, kk, p: c, b.rock, oben_zu=True, unten_zu=True, teilung=3, glatt=True)
+        # Fransen unten: einige Streifen zurückschneiden
+        for v in obj.data.vertices:
+            if v.co.z < lang + 0.05:
+                v.co.z += 0.05 * max(0.0, math.sin(v.co.x * 90 + vorn))
+        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz((saum if p.z < lang + 0.07 or abs(abs(p.x) - 0.125) < 0.01 and p.z > 0.95 else c) *
+                                                            (0.85 + 0.2 * bh.rausch(p, 14.0)), h, 0.4, 0.1))
+        bh.gewichte_uebertragen(obj, k, lambda kn: kn in ("Brust", "Bauch", "Becken") or kn.startswith("Oberschenkel"))
+        if zeichen is not None and vorn == 1:
+            my, rx, ry = rumpf_breite(k, 1.25, 0.03)
+            f.stern("Wappen", Vector((0, my - ry - 0.04, 1.26)), -Y, 0.06, zeichen_c, b.rumpf, zacken=zeichen)
+
+
+def helm_geschlossen(f, c, rand, schlitz_c, hoerner=None):
+    """Geschlossener Topfhelm: gerade Wangen, spitz zulaufende Haube, Grat, Sehschlitz mit Glut,
+    Atemlöcher."""
+    ringe = [(Vector((0, 0.0, 1.62)), X, Y, 0.1, 0.108), (Vector((0, -0.005, 1.66)), X, Y, 0.112, 0.12), (Vector((0, -0.01, 1.76)), X, Y, 0.118, 0.126),
+             (Vector((0, -0.005, 1.84)), X, Y, 0.112, 0.12), (Vector((0, 0.0, 1.9)), X, Y, 0.085, 0.092), (Vector((0, 0.005, 1.95)), X, Y, 0.03, 0.035)]
+    obj = f.loft("Helm", ringe, 40, lambda i, k, p: c, KOPF, oben_zu=True, teilung=3, glatt=True)
+    for v in obj.data.vertices:
+        if abs(v.co.x) < 0.02 and v.co.y < -0.05:
+            v.co.y -= 0.012 * (1 - abs(v.co.x) / 0.02)                    # Mittelgrat vorne
+
+    def farbe_von(p, n, h):
+        basis = c
+        if abs(p.z - 1.62) < 0.009 or abs(p.z - 1.81) < 0.006:
+            basis = rand
+        if p.y < -0.06 and 1.66 < p.z < 1.72 and abs(p.x) > 0.02 and (int(p.x * 110) + int(p.z * 110)) % 3 == 0:
+            return farbe("#08080A")                                           # Atemlöcher
+        return bh.schmutz(basis * (0.82 + 0.3 * max(0.0, n.z) + 0.06 * bh.rausch(p, 40.0)), h, 0.55, 0.6)
+    bh.glatt_einfaerben(obj, farbe_von)
+    # Sehschlitz: ein dunkler Bogen um das Visier, darin eine schmale Glutlinie
+    for s in (1, -1):
+        bogen = [Vector((math.sin(w) * 0.121 * s, -math.cos(w) * 0.13, 1.758)) for w in (0.12, 0.45, 0.8, 1.1)]
+        f.straehne("Sehschlitz", bogen, 0.011, 0.011, farbe("#050406"), KOPF, 6, 0.0, 0.35, teilung=2, glatt=True)
+        glut = [Vector((p.x * 1.09, p.y * 1.085, 1.758)) for p in bogen]
+        f.straehne("Glutschlitz", glut, 0.005, 0.005, schlitz_c * 1.5, KOPF, 6, 0.0, 0.6, teilung=2, glatt=True)
+    kamm = [Vector((0, 0.1 * math.cos(w), 1.84 + 0.1 * math.sin(w))) for w in (0.3, 0.9, 1.57, 2.2, 2.8)]
+    f.straehne("Helmkamm", kamm, 0.012, 0.012, c * 1.3, KOPF, 8, 0.0, 0.4, teilung=3, glatt=True)
+    if hoerner is not None:
+        for s in (1, -1):
+            punkte = [Vector((0.1 * s, 0.0, 1.84)), Vector((0.2 * s, -0.02, 1.9)), Vector((0.27 * s, -0.06, 2.0)), Vector((0.28 * s, -0.11, 2.13))]
+            obj = f.straehne("Horn", punkte, 0.036, 0.004, hoerner, KOPF, 14, 0.0, 1.0, teilung=4, glatt=True)
+            bh.glatt_einfaerben(obj, lambda p, n, h, a=punkte[0]: farbe("#5A4A38").lerp(hoerner, weich(0.03, 0.18, (p - a).length)) *
+                                (0.8 + 0.25 * max(0.0, math.sin((p - a).length * 220))))
+            f.loft("Hornring", [(punkte[0] + Vector((0.01 * s, 0, 0)), Vector((0, 1, 0)), Z, 0.042, 0.042), (punkte[0] + Vector((0.03 * s, 0, 0.01)), Vector((0, 1, 0)), Z, 0.04, 0.04)],
+                   14, lambda i, k, p: rand, KOPF, glatt=True)
+
+
+def scheide(f, b, c, beschlag):
+    """Schwertscheide an der linken Hüfte, schräg nach hinten."""
+    a = Vector((0.2, -0.02, 1.0))
+    e = a + Vector((0.06, 0.28, -0.62))
+    gewicht = lambda co: {"Becken": 1.0}
+    obj = schiene(f, "Scheide", a, e, [(0.03, 0.014), (0.028, 0.012), (0.018, 0.008)], gewicht, c, beschlag, seg=12, rand_breite=0.03)
+    f.kugel("Ortband", e, (0.02, 0.012, 0.02), beschlag, gewicht, 10, 6)
+
+
+def dunkler_ritter(seed=101):
+    f = Figur("DunklerRitter", seed)
+    stahl, bronze = farbe("#2E3036"), farbe("#6A5436")
+    violett, violett_saum = farbe("#4A2466"), farbe("#7E2227")
+    b, formen = mensch(f, breite=0.96, muskel=0.1, kopf=False)
+    formen += [((0, 0.0, 1.75), (0.085, 0.095, 0.105))]                 # Schädel unter dem Helm
+
+    def ketten(p, c):
+        return c * (0.72 if (int(p.z * 110) + int(p.x * 110 + p.y * 110)) % 2 else 1.0)
+    k = koerper(f, b, formen, kleidung(b, STAHL_DUNKEL, farbe("#50545C"), farbe("#50545C"), stahl, hand=stahl, streifen=ketten,
+                                       gesicht=lambda p, n, h: bh.schmutz(ketten(p, farbe("#50545C")), h, 0.5, 0.2)), ziel=5500)
+    # Rumpf: Brustplatte mit Grat, drei Bauchreifen, Halsberge
+    rumpfschale(f, b, k, "Brustplatte", [1.12, 1.22, 1.34, 1.44, 1.52], [0.03, 0.035, 0.04, 0.035, 0.028], stahl, bronze, vorne=0.08)
+    for j in range(3):
+        z0 = 1.12 - 0.065 * j
+        rumpfschale(f, b, k, "Bauchreif", [z0 - 0.075, z0], [0.04 + 0.008 * j, 0.034 + 0.008 * j], stahl, bronze, grat=False)
+    rumpfschale(f, b, k, "Halsberge", [1.5, 1.56, 1.6], [0.045, 0.03, 0.02], stahl, bronze, grat=False)
+    # Rückenplatte mit Rune (hellerer Stahl), Brustrune glüht
+    my, rx, ry = rumpf_breite(k, 1.33, 0.03)
+    f.stern("Brustrune", Vector((0, my - ry - 0.05, 1.33)), -Y, 0.045, GLUT * 1.8, b.rumpf, zacken=4)
+    # Beintaschen: je Seite zwei überlappende Platten
+    for s in (1, -1):
+        for j in range(2):
+            mitte = Vector((0.12 * s, -0.08 + 0.06 * j, 0.86 - 0.05 * j))
+            _platte(f, "Beintasche", mitte, 0.2, 0.08, 0.008, Vector((0.15 * s, 0.1, -1)), Vector((0.5 * s, -1 + 1.2 * j, 0)),
+                    lambda i, kk, p: stahl, lambda co, s=s: {"Oberschenkel.L" if s > 0 else "Oberschenkel.R": 1.0}, spitz=0.3, wolbung=0.8)
+    for obj in [o for o in f.teile if o.name.startswith("Beintasche")]:
+        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz(stahl * (0.85 + 0.25 * max(0.0, n.z)), h, 0.55, 0.6))
+    for s, sn in ((1, "L"), (-1, "R")):
+        sh, el, ha = b.p("schulter", s), b.p("ellbogen", s), b.p("hand", s)
+        schulterstueck(f, b, s, stahl, bronze, lagen=3, groesse=0.14, dornen=3, dorn_c=farbe("#3A3A42"))
+        schiene(f, "Armroehre", sh.lerp(el, 0.35), el.lerp(sh, 0.08), [0.058, 0.055, 0.052], b.arm(s), stahl, bronze, nieten=4)
+        schiene(f, "Armschiene", el.lerp(ha, 0.12), el.lerp(ha, 0.9), [0.05, 0.052, 0.046], b.arm(s), stahl, bronze, nieten=4)
+        kachel(f, el + Vector((0.01 * s, 0.035, 0)), Vector((0.2 * s, 1, 0)), 0.045, stahl, bronze, b.arm(s))
+        panzerhandschuh(f, b, s, stahl, bronze)
+        hu, kn, ks = b.p("huefte", s), b.p("knie", s), b.p("knoechel", s)
+        schiene(f, "Beinschiene", kn.lerp(ks, 0.1), kn.lerp(ks, 0.85), [(0.064, 0.066), (0.068, 0.07), (0.056, 0.058)], b.bein(s), stahl, bronze, nieten=3)
+        schiene(f, "Schenkelplatte", hu.lerp(kn, 0.45), hu.lerp(kn, 0.92), [(0.082, 0.08), (0.07, 0.068)], b.bein(s), stahl, bronze)
+        kachel(f, kn + Vector((0, -0.055, 0.0)), Vector((0.15 * s, -1, 0)), 0.05, stahl, bronze, b.bein(s))
+        eisenschuh(f, b, s, stahl, bronze)
+    helm_geschlossen(f, stahl, bronze, GLUT * 2.2, hoerner=KNOCHEN)
+    wappenrock(f, b, k, violett, violett_saum, zeichen=4, zeichen_c=GLUT * 1.2, lang=0.52, oben=1.12)
+    guertel(f, b, k, 1.06, LEDER * 0.6, bronze, hoehe=0.045)
+    scheide(f, b, farbe("#2A1E16"), bronze)
+    umhang(f, b, farbe("#2A1538"), laenge=1.2, rand=farbe("#1A0E22"), fetzen=0.1)
+    schwert(b, 0.9, klinge=farbe("#B8BECA"), parier=bronze, griff_c=farbe("#2A1E16"))
+    schild(b, stahl, bronze, zeichen=GLUT, buckel=bronze)
+    return f.fertig(_animationen(_angriff_hieb, arme_ruhe=((-20, -60), (-10, -25))))
+
+
+# ---------------------------------------------------------------------------
+# Dunkelmagier (wie der Magier der Helden aufgebaut): lange Unterrobe mit bestickter Vorderbahn,
+# offener Mantel mit Futter und Borte, hoher gezackter Kragen, tiefe Kapuze (Gesicht im Schatten,
+# glühende Augen), Glockenärmel, Knochenschulterstücke, Schärpe mit Enden, Gürtel mit Schädel,
+# Taschen, Tränke, Buch an der Kette, Amulett, Knochenstab mit Kristall
+# ---------------------------------------------------------------------------
+def dunkelmagier(seed=105):
+    f = Figur("Dunkelmagier", seed)
+    r = f.rng
+    robe, robe_dunkel, borte = farbe("#5A2E80"), farbe("#2A1640"), farbe("#B89AD8")
+    mantel_c, futter = farbe("#3E3452"), farbe("#7A2438")
+    silber, knochen_c = farbe("#B8B4C4"), farbe("#D8CEB4")
+    b, formen = mensch(f, breite=0.9)
+    k = koerper(f, b, formen, kleidung(b, farbe("#9C8FA8"), robe_dunkel, robe_dunkel, farbe("#16121A"), hand=farbe("#B8A8C4"), gesicht=schatten_gesicht),
+                ziel=5500)
+    augen_paar(b, GLUT * 1.8, leuchten=True)
+    falten = [r.uniform(0.6, 1.4) for _ in range(8)]
+
+    def faltig(staerke, phase=0.0):
+        return lambda w: 1.0 + staerke * sum(math.sin(w * (3 + i) + phase + falten[i]) * falten[i] / (3 + i) for i in range(6))
+
+    def vorne_winkel(w):
+        return abs(math.atan2(math.sin(w + math.pi / 2), math.cos(w + math.pi / 2)))
+    # ---- Unterrobe: bis zum Boden, vorne eine bestickte Bahn mit Runen ----
+    robe_ringe = [(Vector((0, 0.005, 1.56)), X, Y, 0.16, 0.11), (Vector((0, 0.0, 1.45)), X, Y, 0.19, 0.135), (Vector((0, 0.0, 1.3)), X, Y, 0.18, 0.13),
+                  (Vector((0, 0.0, 1.12)), X, Y, 0.165, 0.122), (Vector((0, 0.0, 0.95)), X, Y, 0.19, 0.145, faltig(0.02)),
+                  (Vector((0, 0.01, 0.7)), X, Y, 0.23, 0.18, faltig(0.05)), (Vector((0, 0.02, 0.4)), X, Y, 0.27, 0.22, faltig(0.08)),
+                  (Vector((0, 0.03, 0.12)), X, Y, 0.31, 0.26, faltig(0.1)), (Vector((0, 0.03, 0.02)), X, Y, 0.32, 0.27, faltig(0.1))]
+
+    def robe_farbe(p, n, h):
+        w = math.atan2(p.y, p.x)
+        vorne = vorne_winkel(w)
+        if p.z < 0.08:
+            return robe_dunkel
+        if vorne < 0.3 and p.z < 1.05:
+            if vorne > 0.26:
+                return borte
+            # Runenstickerei: Winkel und Punkte übereinander
+            q = (p.z * 9.0) % 1.0
+            if abs(q - 0.5) < 0.07 or (abs(q - 0.25) < 0.05 and vorne < 0.12):
+                return GLUT * 1.4
+            return robe_dunkel
+        return bh.schmutz(robe * (0.85 + 0.2 * weich(0.0, 1.5, p.z)) * (0.9 + 0.12 * bh.rausch(p, 14.0)), h, 0.4, 0.1)
+    obj = f.loft("Robe", robe_ringe, 64, lambda i, kk, p: robe, b.rock, teilung=3, glatt=True)
+    bh.glatt_einfaerben(obj, robe_farbe)
+    bh.gewichte_uebertragen(obj, k, lambda kn: kn in ("Brust", "Bauch", "Becken", "Hals") or kn.startswith("Oberschenkel"))
+    # ---- Offener Mantel mit Futter und silberner Borte ----
+    mantel = [(Vector((0, 0.012, 1.585)), 0.11, 0.095), (Vector((0, 0.006, 1.52)), 0.215, 0.152), (Vector((0, 0.002, 1.44)), 0.222, 0.158),
+              (Vector((0, 0.002, 1.27)), 0.205, 0.152), (Vector((0, 0.006, 1.1)), 0.2, 0.152), (Vector((0, 0.015, 0.9)), 0.245, 0.196),
+              (Vector((0, 0.025, 0.6)), 0.3, 0.25), (Vector((0, 0.035, 0.3)), 0.345, 0.29), (Vector((0, 0.04, 0.06)), 0.37, 0.31)]
+    gew_m = lambda co: _mischen(("Brust", weich(0.9, 1.3, co.z)), ("Becken", 1 - weich(0.9, 1.3, co.z)))
+    obj = _glocke(f, "Mantel", mantel, (38, 322), lambda poly: mantel_c, gew_m, seg=64, welle=0.05)
+    bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz((borte if vorne_winkel(math.atan2(p.y, p.x)) < 0.74 else
+                                                         mantel_c * (0.85 + 0.25 * max(0.0, n.z) + 0.1 * bh.rausch(p, 10.0))), h, 0.4, 0.15))
+    bh.gewichte_uebertragen(obj, k, lambda kn: kn in ("Brust", "Bauch", "Becken") or kn.startswith("Oberschenkel"))
+    obj = _glocke(f, "Mantelfutter", [(m, rx * 0.985, ry * 0.985) for m, rx, ry in mantel], (38, 322), lambda poly: futter, gew_m, innen=True, seg=48, welle=0.05)
+    bh.glatt_einfaerben(obj, lambda p, n, h: futter * (0.7 + 0.3 * weich(0.0, 1.4, p.z)))
+    bh.gewichte_uebertragen(obj, k, lambda kn: kn in ("Brust", "Bauch", "Becken") or kn.startswith("Oberschenkel"))
+    # Gestickte Rune auf dem Rücken des Mantels
+    ruecken = Vector((0, 0.19, 1.12))
+    ring_punkte = [ruecken + Vector((math.cos(math.tau * j / 24) * 0.1, 0.0, math.sin(math.tau * j / 24) * 0.1)) for j in range(25)]
+    f.straehne("Rueckenrune", ring_punkte, 0.006, 0.006, borte, b.rumpf, 5, 0.0, 0.5, teilung=1)
+    f.stern("Rueckenstern", ruecken, Y, 0.075, GLUT * 1.3, b.rumpf, zacken=5)
+    # Gezackter Stehkragen
+    kragen = [(Vector((0, 0.02, 1.55)), 0.13, 0.11), (Vector((0, 0.035, 1.64)), 0.16, 0.14), (Vector((0, 0.05, 1.76)), 0.2, 0.17)]
+    obj = _glocke(f, "Kragen", kragen, (50, 310), lambda poly: mantel_c, b.rumpf, seg=40, welle=0.0)
+    for v in obj.data.vertices:
+        if v.co.z > 1.7:
+            w = math.atan2(v.co.y, v.co.x)
+            v.co.z += 0.05 * max(0.0, math.sin(w * 9))
+    bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz((borte if p.z > 1.74 else mantel_c) * (0.8 + 0.3 * max(0.0, n.y)), h, 0.4, 0.2))
+    # Kapuze mit Randborte
+    kapuze(f, b, k, robe_dunkel, spitz=0.9, schulter=False)
+    rand = [bh.auf_haut(k, Vector(p), 0.03) for p in ((0.078, -0.08, 1.62), (0.082, -0.1, 1.7), (0.078, -0.1, 1.79), (0.05, -0.1, 1.84), (0.0, -0.1, 1.855),
+                                                        (-0.05, -0.1, 1.84), (-0.078, -0.1, 1.79), (-0.082, -0.1, 1.7), (-0.078, -0.08, 1.62))]
+    f.straehne("Kapuzenrand", rand, 0.011, 0.011, borte, KOPF, 8, 0.0, 0.6, teilung=3, glatt=True)
+    # Knochenschulterstücke: Schädelplatte mit Dornen
+    for s in (1, -1):
+        sl = b.p("schulter", s)
+        gew = lambda co, s=s: _mischen(("Brust", 0.35), ("Oberarm.L" if s > 0 else "Oberarm.R", 0.65))
+        obj = _schale(f, "Knochenschulter", sl + Vector((0.03 * s, 0, 0.05)), 0.12, 0.11, 0.075, (0, 360), (0, 80), lambda poly: knochen_c, gew, seg=(28, 8))
+        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz(knochen_c.lerp(farbe("#8A7A5A"), 0.3 * bh.rausch(p, 15.0) + 0.3), h, 0.7, 0.2))
+        for j in range(3):
+            _kegel(f, "Knochendorn", sl + Vector((0.08 * s, (j - 1) * 0.05, 0.08)), Vector((0.6 * s, (j - 1) * 0.3, 1)), 0.09, 0.016, knochen_c, gew, 8)
+        aermel(f, b, s, robe, saum=borte, weite=0.12)
+    # Schärpe mit hängenden Enden, Gürtel mit Schädelschnalle, Taschen, Tränke, Buch
+    my, rx, ry = rumpf_breite(k, 1.05, 0.03)
+    obj = f.loft("Schaerpe", [(Vector((0, my, 1.0)), X, Y, rx + 0.035, ry + 0.035), (Vector((0, my, 1.08)), X, Y, rx + 0.037, ry + 0.037)], 40,
+                 lambda i, kk, p: futter, b.rumpf, glatt=True)
+    _veredeln(obj, futter, 20.0)
+    for j, x in enumerate((0.06, 0.1)):
+        punkte = [Vector((x, my - ry - 0.045, 1.02)), Vector((x + 0.01, my - ry - 0.06, 0.8)), Vector((x + 0.005 * j, my - ry - 0.07, 0.6 - 0.06 * j))]
+        obj = f.straehne("Schaerpenende", punkte, 0.032, 0.03, futter, b.rock, 6, 0.0, 0.2, teilung=3, glatt=True)
+        bh.glatt_einfaerben(obj, lambda p, n, h: (borte if p.z < 0.66 - 0.06 * j else futter) * (0.85 + 0.2 * bh.rausch(p, 18.0)))
+    schaedel = bh.ball_mesh("Schaedelschnalle", [((0, my - ry - 0.05, 1.05), (0.04, 0.025, 0.04)), ((0, my - ry - 0.058, 1.025), (0.025, 0.02, 0.02)),
+                                                 ((0.015, my - ry - 0.075, 1.055), (0.009, 0.008, 0.009), True), ((-0.015, my - ry - 0.075, 1.055), (0.009, 0.008, 0.009), True)], 0.006)
+    bh.modellieren(schaedel, 0.004, 700)
+    bh.einfaerben(schaedel, lambda p, n, h: bh.schmutz(knochen_c, h, 0.8, 0.2))
+    f._gewichten(schaedel, b.rumpf)
+    bh.aufnehmen(f, schaedel)
+    for s, (dy, farbe_trank) in ((1, (0.0, farbe("#6ADFA0"))), (-1, (0.04, GLUT))):
+        beutel = bh.ball_mesh("Beutel", [((0.17 * s, my - 0.02, 0.95), (0.045, 0.035, 0.05)), ((0.17 * s, my - 0.02, 0.995), (0.03, 0.025, 0.012))], 0.009)
+        bh.modellieren(beutel, 0.005, 500, lambda p, n: 0.0015 * bh.rausch(p, 50.0))
+        bh.einfaerben(beutel, lambda p, n, h: bh.schmutz(LEDER * 0.8, h, 0.5, 0.1))
+        f._gewichten(beutel, lambda co: {"Becken": 1.0})
+        bh.aufnehmen(f, beutel)
+        trank = Vector((0.12 * s, my - ry - 0.03 + dy, 0.95))
+        f.kugel("Trank", trank, (0.022, 0.022, 0.028), farbe_trank * 1.4, lambda co: {"Becken": 1.0}, 12, 8)
+        f.loft("Flaschenhals", [(trank + Z * 0.025, X, Y, 0.008, 0.008), (trank + Z * 0.05, X, Y, 0.008, 0.008)], 8, lambda i, kk, p: farbe("#C8D8E0"),
+               lambda co: {"Becken": 1.0}, oben_zu=True, glatt=True)
+        f.kugel("Korken", trank + Z * 0.055, (0.009, 0.009, 0.008), LEDER, lambda co: {"Becken": 1.0}, 8, 6)
+    buch = Vector((-0.2, my + 0.02, 0.86))
+    f.kiste("Buch", buch, (0.03, 0.11, 0.14), farbe("#3A1A1A"), lambda co: {"Becken": 1.0})
+    f.kiste("Seiten", buch + Vector((0.004, 0.0, 0.0)), (0.026, 0.104, 0.13), farbe("#D8CCA8"), lambda co: {"Becken": 1.0})
+    f.kiste("Buchbeschlag", buch + Vector((-0.017, 0.0, 0.0)), (0.004, 0.05, 0.05), silber, lambda co: {"Becken": 1.0})
+    for j in range(5):
+        f.kugel("Kettenglied", (-0.2 + 0.004 * j, my + 0.02, 0.94 + 0.02 * j), (0.007, 0.004, 0.009), silber, lambda co: {"Becken": 1.0}, 6, 4)
+    # Amulett
+    mb, mr_x, mr_y = rumpf_breite(k, 1.38, 0.03)
+    kette = [bh.auf_haut(k, Vector((math.sin(w) * 0.1, -0.1, 1.5 - (1 - math.cos(w)) * 0.1)), 0.01) for w in (-1.2, -0.6, 0.0, 0.6, 1.2)]
+    f.straehne("Amulettkette", kette, 0.004, 0.004, silber, b.rumpf, 5, 0.0, 1.0, teilung=2, glatt=True)
+    f.kugel("Amulett", kette[2] + Vector((0, -0.01, -0.02)), (0.028, 0.012, 0.034), silber, b.rumpf, 14, 8)
+    f.kugel("Amulettstein", kette[2] + Vector((0, -0.021, -0.02)), (0.016, 0.006, 0.02), GLUT * 2.0, b.rumpf, 12, 8)
+
+    def stab():
+        g_ = b.griff(-1)
+        unten, oben = Vector((g_.x, g_.y, 0.05)), Vector((g_.x, g_.y, 2.0))
+        punkte = [unten.lerp(oben, t) + Vector((0.012 * math.sin(t * 9), 0.01 * math.cos(t * 7), 0)) for t in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+        obj = f.straehne("Stab", punkte, 0.022, 0.018, farbe("#3A2A22"), b.hand(-1), 10, 1.2, 1.0, teilung=4, glatt=True)
+        bh.glatt_einfaerben(obj, lambda p, n, h: bh.schmutz(farbe("#3A2A22") * (0.7 + 0.5 * max(0.0, math.sin(p.z * 60 + math.atan2(p.y - g_.y, p.x - g_.x) * 3))), h, 0.5, 0.2))
+        for j in range(2):
+            z = 1.35 + 0.12 * j
+            f.loft("Stabring", [(Vector((g_.x, g_.y, z)), X, Y, 0.026, 0.026), (Vector((g_.x, g_.y, z + 0.02)), X, Y, 0.026, 0.026)], 12, lambda i, kk, p: silber, b.hand(-1), glatt=True)
+        for i in range(4):
+            w = math.tau * i / 4
+            punkte = [oben, oben + Vector((math.cos(w) * 0.08, math.sin(w) * 0.08, 0.09)), oben + Vector((math.cos(w) * 0.05, math.sin(w) * 0.05, 0.24))]
+            f.straehne("Klaue", punkte, 0.015, 0.003, knochen_c, b.hand(-1), 8, 0.0, 1.0, glatt=True)
+        obj = f.loft("Kristall", [(oben + Z * 0.05, X, Y, 0.001, 0.001), (oben + Z * 0.15, X, Y, 0.05, 0.05), (oben + Z * 0.3, X, Y, 0.001, 0.001)], 6,
+                     lambda i, kk, p: GLUT * 1.6, b.hand(-1), teilung=1)
+        for j in range(2):
+            a = oben - Z * (0.05 + 0.02 * j)
+            f.straehne("Band", [a, a + Vector((0.03 - 0.06 * j, 0.03, -0.12)), a + Vector((0.05 - 0.1 * j, 0.05, -0.28))], 0.012, 0.008, futter, b.hand(-1), 6, 0.3, 0.2, glatt=True)
+    b.starr("Stab", "Hand.R", stab)
+    return f.fertig(_animationen(_angriff_zauber, arme_ruhe=((-5, -20), (0, -8)), gehen=(22, 34, 12, 0.02, 4, 12)))

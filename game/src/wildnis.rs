@@ -43,6 +43,12 @@ const ZUENDEN_NAH: f32 = 1.6;
 const AUFLEUCHTEN: f32 = 0.7;
 pub const SPOREN_RADIUS: f32 = 3.5;
 const SPOREN_SCHADEN: f32 = 26.0;
+/// Keiler und Minotaurus: Ansturm (Anlauf, dann Lauf in gerader Linie)
+const ANLAUF: f32 = 0.55;
+const STURMLAUF: f32 = 1.1;
+/// Waldschrat: so lange warnt der Ring, bevor die Wurzeln hervorbrechen; so groß ist der Kreis
+pub const WURZEL_WARNUNG: f32 = 1.1;
+pub const WURZEL_RADIUS: f32 = 2.3;
 
 /// Wer in einem Lager haust.
 pub struct LagerArt {
@@ -249,6 +255,12 @@ struct Wilder {
     laeuft: bool,
     /// Pilzling glüht und rennt los: Restzeit bis zur Explosion
     zuendet: Option<f32>,
+    /// Abklingzeit der Eigenheit (Ansturm, Wurzeln, Heilung)
+    faehigkeit: f32,
+    /// Ansturm: Richtung und Restzeit (erst Anlauf, dann Lauf)
+    sturm: Option<(Vec2, f32)>,
+    /// Ork in Raserei
+    wut: bool,
 }
 
 impl Wilder {
@@ -306,6 +318,8 @@ pub struct WildAngriff {
     pub schaden: f32,
     /// Eine Explosion (kein Hieb und kein Geschoss zu zeigen)
     pub explosion: bool,
+    /// Rückstoß (Geschwindigkeit, mit der der Spieler weggeschleudert wird)
+    pub stoss: Vec3,
 }
 
 pub struct Wildnis {
@@ -320,6 +334,10 @@ pub struct Wildnis {
     pub gefallen: Vec<WildGefallen>,
     /// Geplatzte Pilzlinge seit dem letzten Abholen (Ort)
     pub explosionen: Vec<Vec3>,
+    /// Was die Streuner sonst noch tun und alle sehen sollen (Heilung, Raserei, Wurzeln, Ansturm)
+    pub ereignisse: Vec<crate::td::Ereignis>,
+    /// Wurzeln, die gleich hervorbrechen: Ort, Restzeit, Schaden
+    wurzeln: Vec<(Vec3, f32, f32)>,
     /// Neu besetzte Lager seit dem letzten Abholen (Name, Ort)
     pub besetzt: Vec<(&'static str, Vec2)>,
 }
@@ -336,6 +354,8 @@ impl Wildnis {
             uhr: 0.0,
             gefallen: Vec::new(),
             explosionen: Vec::new(),
+            ereignisse: Vec::new(),
+            wurzeln: Vec::new(),
             besetzt: Vec::new(),
         };
         for i in 0..wildnis.lager.len() {
@@ -468,6 +488,10 @@ impl Wildnis {
                 attacking: 0.0,
                 laeuft: false,
                 zuendet: None,
+                // Keiler und Minotaurus stürmen los, sobald sie jemanden bemerken
+                faehigkeit: if matches!(kind, EnemyKind::Keiler | EnemyKind::Minotaurus) { 0.0 } else { self.rng.range(2.0, 5.0) },
+                sturm: None,
+                wut: false,
             });
         }
         self.wilde.extend(neu);
@@ -504,6 +528,7 @@ impl Wildnis {
             }
         }
         self.umherziehen(dt, boden);
+        let mut heilen: Vec<(usize, Vec3)> = Vec::new();
         for w in &mut self.wilde {
             if let Some(seit) = &mut w.dying {
                 *seit += dt;
@@ -551,7 +576,7 @@ impl Wildnis {
                         let abstand = p.distance(mitte);
                         if abstand <= SPOREN_RADIUS {
                             let schaden = SPOREN_SCHADEN * staerke(lager.art().gefahr).1 * (1.0 - 0.5 * abstand / SPOREN_RADIUS);
-                            angriffe.push(WildAngriff { kind: w.kind, von: mitte, ziel: p, spieler: id, schaden, explosion: true });
+                            angriffe.push(WildAngriff { kind: w.kind, von: mitte, ziel: p, spieler: id, schaden, explosion: true, stoss: (p - mitte).with_y(0.0).normalize_or_zero() * 5.0 + Vec3::Y * 4.0 });
                         }
                     }
                     self.explosionen.push(mitte);
@@ -591,9 +616,74 @@ impl Wildnis {
                     .min_by(|a, b| a.1.distance(w.position).total_cmp(&b.1.distance(w.position)))
                     .map(|s| s.0);
             }
+            // ---- Eigenheiten der Streuner ----
+            w.faehigkeit -= dt;
+            let ziel_p = w.ziel.and_then(finde);
+            let hier = vec2(w.position.x, w.position.z);
+            if let Some((mut richtung, mut rest)) = w.sturm {
+                rest -= dt;
+                let (radius, mitte) = (w.radius(), w.center());
+                if rest > STURMLAUF {
+                    // Anlauf: mit den Hufen scharren und auf das Ziel ausrichten
+                    if let Some(p) = ziel_p {
+                        richtung = (vec2(p.x, p.z) - hier).normalize_or(richtung);
+                    }
+                } else {
+                    let tempo = if w.kind == EnemyKind::Minotaurus { 10.0 } else { 11.5 };
+                    let neu = lager.begrenzen(hier + richtung * tempo * dt, radius);
+                    w.position = vec3(neu.x, boden(neu), neu.y);
+                    w.laeuft = true;
+                    // Wer im Weg steht, wird umgerannt und weggeschleudert
+                    if let Some(&(id, p)) = spieler.iter().find(|(_, p)| vec2(p.x, p.z).distance(neu) < radius + 0.75) {
+                        let wucht = if w.kind == EnemyKind::Minotaurus { 11.0 } else { 8.0 };
+                        angriffe.push(WildAngriff {
+                            kind: w.kind,
+                            von: mitte,
+                            ziel: p,
+                            spieler: id,
+                            schaden: w.schlag * 2.2,
+                            explosion: false,
+                            stoss: vec3(richtung.x, 0.0, richtung.y) * wucht + Vec3::Y * 5.5,
+                        });
+                        w.attacking = 0.6;
+                        rest = 0.0;
+                    }
+                }
+                w.facing = richtung.x.atan2(-richtung.y);
+                w.sturm = (rest > 0.0).then_some((richtung, rest));
+                continue;
+            }
+            if let Some(p) = ziel_p {
+                let abstand = vec2(p.x, p.z).distance(hier);
+                match w.kind {
+                    EnemyKind::Keiler | EnemyKind::Minotaurus if w.faehigkeit <= 0.0 && (4.0..15.0).contains(&abstand) => {
+                        w.sturm = Some(((vec2(p.x, p.z) - hier).normalize_or(Vec2::Y), ANLAUF + STURMLAUF));
+                        w.faehigkeit = if w.kind == EnemyKind::Minotaurus { 8.0 } else { 6.0 };
+                        self.ereignisse.push(crate::td::Ereignis::Ansturm(w.position));
+                        continue;
+                    }
+                    EnemyKind::Waldschrat if w.faehigkeit <= 0.0 && abstand < 14.0 => {
+                        let unter = vec3(p.x, boden(vec2(p.x, p.z)), p.z);
+                        self.wurzeln.push((unter, WURZEL_WARNUNG, w.schlag * 1.6));
+                        self.ereignisse.push(crate::td::Ereignis::Wurzelwarnung(unter));
+                        w.faehigkeit = 7.0;
+                        w.attacking = 0.8;
+                    }
+                    EnemyKind::GoblinSchamane if w.faehigkeit <= 0.0 => {
+                        heilen.push((w.lager, w.position));
+                        w.faehigkeit = 9.0;
+                        w.attacking = 0.7;
+                    }
+                    _ => {}
+                }
+            }
+            if w.kind == EnemyKind::Ork && !w.wut && w.health < w.max_health * 0.5 {
+                w.wut = true;
+                self.ereignisse.push(crate::td::Ereignis::Wut(w.center()));
+            }
             // Streuner ohne Ziel schlendern
             let schlendern = if lager.streift && w.ziel.is_none() { 0.42 } else { 1.0 };
-            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0) * schlendern * if w.zuendet.is_some() { 2.2 } else { 1.0 };
+            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0) * schlendern * if w.zuendet.is_some() { 2.2 } else if w.wut { 1.35 } else { 1.0 };
             let hier = vec2(w.position.x, w.position.z);
             let (weg, zu) = match w.ziel.and_then(finde) {
                 // Glühend rennt er stur auf sein Ziel zu
@@ -606,9 +696,9 @@ impl Wildnis {
                     let abstand = hier.distance(ziel);
                     if abstand <= reichweite {
                         if w.cooldown <= 0.0 {
-                            w.cooldown = pause;
+                            w.cooldown = pause * if w.wut { 0.65 } else { 1.0 };
                             w.attacking = 0.7;
-                            angriffe.push(WildAngriff { kind: w.kind, von: w.center(), ziel: p, spieler: w.ziel.unwrap_or_default(), schaden: w.schlag, explosion: false });
+                            angriffe.push(WildAngriff { kind: w.kind, von: w.center(), ziel: p, spieler: w.ziel.unwrap_or_default(), schaden: w.schlag * if w.wut { 1.5 } else { 1.0 }, explosion: false, stoss: Vec3::ZERO });
                         }
                         (None, Some(ziel))
                     } else {
@@ -642,6 +732,34 @@ impl Wildnis {
                 }
             }
         }
+        // Der Schamane heilt seinen Trupp
+        for (lager, ort) in heilen {
+            for w in self.wilde.iter_mut().filter(|w| w.lager == lager && w.lebt() && w.position.distance(ort) < 10.0) {
+                w.health = (w.health + w.max_health * 0.3).min(w.max_health);
+            }
+            self.ereignisse.push(crate::td::Ereignis::Heilung(ort + Vec3::Y));
+        }
+        // Wurzeln brechen hervor: wer noch im Kreis steht, wird getroffen und hochgeschleudert
+        for (ort, rest, schaden) in &mut self.wurzeln {
+            *rest -= dt;
+            if *rest <= 0.0 {
+                for &(id, p) in spieler {
+                    if vec2(p.x, p.z).distance(vec2(ort.x, ort.z)) <= WURZEL_RADIUS && (p.y - ort.y).abs() < 3.0 {
+                        angriffe.push(WildAngriff {
+                            kind: EnemyKind::Waldschrat,
+                            von: *ort,
+                            ziel: p,
+                            spieler: id,
+                            schaden: *schaden,
+                            explosion: true,
+                            stoss: Vec3::Y * 7.0,
+                        });
+                    }
+                }
+                self.ereignisse.push(crate::td::Ereignis::Wurzeln(*ort));
+            }
+        }
+        self.wurzeln.retain(|w| w.1 > 0.0);
         // Nicht ineinander stehen
         let orte: Vec<(Vec2, f32, bool)> = self.wilde.iter().map(|w| (vec2(w.position.x, w.position.z), w.radius(), w.lebt())).collect();
         for (i, w) in self.wilde.iter_mut().enumerate() {
@@ -916,6 +1034,9 @@ impl Wildnis {
                 if w.zuendet.is_some() {
                     flags |= zustand::ZUENDET;
                 }
+                if w.wut {
+                    flags |= zustand::WUT;
+                }
                 EnemyState {
                     id: w.id,
                     kind: w.kind,
@@ -1068,6 +1189,67 @@ mod tests {
         assert_eq!(w.explosionen.len(), 1);
         assert!(w.gefallen.iter().any(|g| g.kind == EnemyKind::Pilzling && g.von == "anna"), "keine Beute für den Angreifer");
         let _ = start;
+    }
+
+    /// Ein Trupp einer bestimmten Art auf ebenem Boden.
+    fn trupp(name: &str) -> Wildnis {
+        let art = ARTEN.iter().position(|a| a.name == name).unwrap();
+        Wildnis::new(vec![Lager::streifend(vec2(0.0, 0.0), 5.0, art)], &|_| 5.0)
+    }
+
+    #[test]
+    fn keiler_nimmt_anlauf_und_rammt() {
+        let mut w = trupp("Keilerrotte");
+        let spieler = [(7u64, vec3(9.0, 5.0, 0.0))];
+        let mut stoss = None;
+        for _ in 0..(12 * 60) {
+            for a in w.tick(1.0 / 60.0, &spieler, &|_| 5.0) {
+                if a.stoss.length() > 5.0 {
+                    stoss = Some(a);
+                }
+            }
+            if stoss.is_some() {
+                break;
+            }
+        }
+        let a = stoss.expect("kein Ansturm");
+        assert!(a.stoss.x > 3.0 && a.stoss.y > 3.0, "Rückstoß falsch: {}", a.stoss);
+        assert!(w.ereignisse.iter().any(|e| matches!(e, crate::td::Ereignis::Ansturm(_))));
+    }
+
+    #[test]
+    fn schamane_heilt_seinen_trupp() {
+        let mut w = trupp("Goblintrupp");
+        for x in w.wilde.iter_mut().filter(|x| x.kind == EnemyKind::Goblin) {
+            x.health = x.max_health * 0.3;
+        }
+        let spieler = [(7u64, vec3(8.0, 5.0, 0.0))];
+        for _ in 0..(12 * 60) {
+            w.tick(1.0 / 60.0, &spieler, &|_| 5.0);
+        }
+        assert!(w.ereignisse.iter().any(|e| matches!(e, crate::td::Ereignis::Heilung(_))), "keine Heilung");
+    }
+
+    #[test]
+    fn waldschrat_laesst_wurzeln_hervorbrechen() {
+        let mut w = trupp("Waldschrat");
+        let spieler = [(7u64, vec3(10.0, 5.0, 0.0))];
+        let mut getroffen = false;
+        for _ in 0..(12 * 60) {
+            getroffen |= w.tick(1.0 / 60.0, &spieler, &|_| 5.0).iter().any(|a| a.kind == EnemyKind::Waldschrat && a.explosion && a.stoss.y > 5.0);
+        }
+        assert!(w.ereignisse.iter().any(|e| matches!(e, crate::td::Ereignis::Wurzelwarnung(_))), "keine Warnung");
+        assert!(getroffen, "Wurzeln treffen den stehenden Spieler nicht");
+    }
+
+    #[test]
+    fn ork_geraet_in_raserei() {
+        let mut w = trupp("Orkkriegstrupp");
+        let ork = w.wilde.iter().find(|x| x.kind == EnemyKind::Ork).unwrap().id;
+        let treffer = Treffer { schaden: w.wilde.iter().find(|x| x.id == ork).unwrap().max_health * 0.6, art: DamageKind::Arcane, ..Default::default() };
+        w.damage(ork, treffer, "anna", Some(7));
+        w.tick(1.0 / 60.0, &[(7u64, vec3(5.0, 5.0, 0.0))], &|_| 5.0);
+        assert!(w.states().iter().any(|s| s.id == ork && s.flags & zustand::WUT != 0), "keine Raserei");
     }
 
     #[test]

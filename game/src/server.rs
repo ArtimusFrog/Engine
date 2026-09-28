@@ -792,6 +792,15 @@ impl Authority {
                 world.strikes.push(entry);
             }
             self.spieler_schaden(ctx, world, a.spieler, a.schaden, a.kind.label());
+            if a.stoss != Vec3::ZERO {
+                if let Some(avatar) = world.players.get(&a.spieler) {
+                    ctx.physics.stossen(avatar.character, a.stoss);
+                }
+            }
+        }
+        for ereignis in std::mem::take(&mut world.wildnis.ereignisse) {
+            world.ereignisse.push(ereignis);
+            self.ereignisse.push(ereignis);
         }
         for ort in std::mem::take(&mut world.wildnis.explosionen) {
             let ereignis = Ereignis::Sporenexplosion(ort);

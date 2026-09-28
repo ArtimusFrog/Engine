@@ -10,6 +10,8 @@ use crate::world::SoundEvent;
 const BRAND: u8 = 0;
 const GIFT: u8 = 1;
 const FROST: u8 = 2;
+/// Waldschrat: der Boden bricht auf (Erdkrumen springen hoch)
+const WURZEL: u8 = 3;
 
 fn funken(ctx: &mut Context, at: Vec3, count: u32, color: Vec3, speed: f32, size: f32, life: f32, gravity: f32, glow: f32) {
     ctx.particles.burst(Burst {
@@ -248,6 +250,51 @@ pub fn ereignis(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, felder: &mut Ve
             sounds.push(SoundEvent::Impact { at, animal: false, killed: true });
             sounds.push(SoundEvent::Thunder { volume: 0.25 });
         }
+        Ereignis::Ansturm(at) => {
+            // Staubwolke vom Scharren
+            ctx.particles.burst(Burst {
+                position: at + Vec3::Y * 0.2,
+                count: 30,
+                color: vec3(0.55, 0.45, 0.32),
+                color_variation: 0.15,
+                speed: 2.5,
+                direction: Vec3::Y * 0.4,
+                size: 0.25,
+                life: 1.2,
+                gravity: -0.2,
+                glow: 0.0,
+                grow: 2.0,
+                round: true,
+            });
+            sounds.push(SoundEvent::Impact { at, animal: true, killed: false });
+        }
+        Ereignis::Wurzelwarnung(at) => {
+            // Der Boden bricht auf: grüner Warnring und bröckelnde Erde
+            ring(ctx, at + Vec3::Y * 0.05, crate::wildnis::WURZEL_RADIUS, vec3(0.45, 0.8, 0.2), 2.0, 0.2);
+            funken(ctx, at, 24, vec3(0.4, 0.3, 0.2), 1.5, 0.12, crate::wildnis::WURZEL_WARNUNG, 3.0, 0.0);
+            felder.push((at, crate::wildnis::WURZEL_RADIUS, crate::wildnis::WURZEL_WARNUNG, WURZEL));
+        }
+        Ereignis::Wurzeln(at) => {
+            // Wurzeln schießen hervor: Erdbrocken, Holzsplitter, Blätter
+            for (farbe, n, tempo) in [(vec3(0.3, 0.22, 0.14), 40, 8.0), (vec3(0.42, 0.3, 0.18), 30, 10.0), (vec3(0.35, 0.6, 0.18), 20, 5.0)] {
+                ctx.particles.burst(Burst {
+                    position: at + Vec3::Y * 0.2,
+                    count: n,
+                    color: farbe,
+                    color_variation: 0.2,
+                    speed: tempo,
+                    direction: Vec3::Y,
+                    size: 0.14,
+                    life: 1.1,
+                    gravity: 12.0,
+                    glow: 0.0,
+                    grow: 0.0,
+                    round: false,
+                });
+            }
+            ring(ctx, at, crate::wildnis::WURZEL_RADIUS, vec3(0.4, 0.3, 0.2), 0.0, 1.5);
+            sounds.push(SoundEvent::Impact { at, animal: false, killed: true });
+        }
         Ereignis::Frostfeld(at, radius) => {
             ring(ctx, at, radius, vec3(0.6, 0.85, 1.0), 2.5, 0.6);
             felder.push((at, radius, 1.4, FROST));
@@ -272,6 +319,7 @@ pub fn felder(ctx: &mut Context, felder: &mut Vec<(Vec3, f32, f32, u8)>, rng: &m
             let (color, size, life, gravity, glow, grow) = match *art {
                 BRAND => (vec3(1.0, 0.5, 0.12), 0.18, 0.7, -2.5, 4.0, 0.0),
                 GIFT => (vec3(0.35, 0.85, 0.25), 0.45, 1.4, -0.2, 0.6, 1.5),
+                WURZEL => (vec3(0.38, 0.27, 0.16), 0.09, 0.5, 9.0, 0.0, 0.0),
                 _ => (vec3(0.7, 0.9, 1.0), 0.1, 0.9, -0.5, 2.5, 0.0),
             };
             ctx.particles.burst(Burst {
