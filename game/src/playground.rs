@@ -1388,7 +1388,9 @@ impl Playground {
         let painter = egui_ctx.layer_painter(egui::LayerId::background());
         let needed = resource.spec.kind.tool();
         let hint;
-        let (action, color) = if self.tool() == needed {
+        let (action, color) = if !resource.spec.kind.von_hand() {
+            ("Nur die Magier eines Kristallturms lösen diese Kristalle", Color32::from_rgb(150, 205, 255))
+        } else if self.tool() == needed {
             let verb = if needed == Tool::Axe { "Linksklick: Holz hacken" } else { "Linksklick: Abbauen" };
             (verb, Color32::from_white_alpha(200))
         } else {
