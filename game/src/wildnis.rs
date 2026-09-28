@@ -1,8 +1,11 @@
-//! Lager in der Wildnis: kleine Trupps der Schattenfestung, die abseits der Heerstraßen lagern.
+//! Die Wildnis: Streuner, die in kleinen Trupps über die Insel ziehen (Goblins, Orks, Echsen,
+//! Pilzlinge, Waldschrate, Minotauren, Keiler – je nach Gegend und Gefahr), und die Bewohner der
+//! Dungeons, die ihren Raum bewachen.
 //!
-//! Sie bewachen ihr Lager, greifen Spieler an, die zu nahe kommen (oder auf sie schießen), und
-//! verfolgen sie bis zur Leine – dann kehren sie um und heilen sich. Besiegte lassen Gold und mit
-//! etwas Glück ein Runenfragment fallen. Ein leeres Lager wird nach einer Weile neu besetzt.
+//! Ein Trupp wandert gemächlich durch sein Streifgebiet und rastet zwischendurch. Wer zu nahe kommt
+//! (oder auf ihn schießt), wird angegriffen und verfolgt, bis zur Leine – dann kehrt der Trupp um
+//! und heilt sich. Besiegte lassen Gold und mit etwas Glück ein Runenfragment fallen. Ein
+//! aufgeriebener Trupp taucht nach einer Weile anderswo auf der Insel wieder auf.
 //! Gezeigt werden sie wie die Truppen der Festung (`EnemyState`, IDs ab `WILD_ID`).
 
 use engine::noise::Rng;
@@ -16,6 +19,17 @@ use crate::tuerme::DamageKind;
 pub const WILD_ID: u16 = 0xF000;
 /// So lange bleibt ein leeres Lager leer (Sekunden).
 const NEU_BESETZEN: f32 = 150.0;
+/// So lange dauert es, bis ein aufgeriebener Trupp anderswo wieder auftaucht (Sekunden).
+const NEU_STREIFEN: f32 = 110.0;
+/// So weit zieht ein Trupp um die Mitte seines Streifgebiets (Meter).
+const STREIF_RADIUS: f32 = 45.0;
+/// Gegenden der Insel (Bits in `LagerArt::gebiet`).
+pub mod gebiet {
+    pub const KUESTE: u8 = 1;
+    pub const WIESE: u8 = 2;
+    pub const WALD: u8 = 4;
+    pub const BERG: u8 = 8;
+}
 /// Solange ein Spieler so nahe ist, wird ein leeres Lager nicht neu besetzt.
 const BESETZEN_ABSTAND: f32 = 60.0;
 /// Solange liegen Besiegte am Boden.
@@ -34,23 +48,28 @@ pub struct LagerArt {
     pub dungeon: bool,
     /// Der Anführer ist ein Endgegner: sichere, wertvolle Beute
     pub boss: bool,
+    /// Streuner: in welchen Gegenden der Trupp umherzieht (`gebiet::…`)
+    pub gebiet: u8,
 }
 
-const fn wild(name: &'static str, gefahr: u8, einheiten: &'static [EnemyKind], anfuehrer: EnemyKind) -> LagerArt {
-    LagerArt { name, gefahr, einheiten, anfuehrer, leben: 1.0, dungeon: false, boss: false }
+const fn streu(name: &'static str, gefahr: u8, einheiten: &'static [EnemyKind], anfuehrer: EnemyKind, gebiet: u8) -> LagerArt {
+    LagerArt { name, gefahr, einheiten, anfuehrer, leben: 1.0, dungeon: false, boss: false, gebiet }
 }
 
 const fn tief(name: &'static str, gefahr: u8, einheiten: &'static [EnemyKind], anfuehrer: EnemyKind, leben: f32, boss: bool) -> LagerArt {
-    LagerArt { name, gefahr, einheiten, anfuehrer, leben, dungeon: true, boss }
+    LagerArt { name, gefahr, einheiten, anfuehrer, leben, dungeon: true, boss, gebiet: 0 }
 }
 
-/// Eigene Bewohner der Wildnis – deutlich schwächer als die Truppen der Festung.
-pub const ARTEN: [LagerArt; 17] = [
-    wild("Spinnennest", 1, &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Waldspinne),
-    wild("Plündererlager", 1, &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Pluenderer], EnemyKind::Pluenderer),
-    wild("Banditenlager", 2, &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Bandit, EnemyKind::Banditenschuetze], EnemyKind::Bandit),
-    wild("Plündererbande", 2, &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer], EnemyKind::Bandit),
-    wild("Banditenfestung", 3, &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer, EnemyKind::Bandit], EnemyKind::Bandit),
+use gebiet::{BERG, KUESTE, WALD, WIESE};
+
+/// Streuner und Dungeonbewohner – deutlich schwächer als die Truppen der Festung.
+/// Die Indizes 5–16 gehören den Dungeons (`dungeon.rs`), der Rest zieht über die Insel.
+pub const ARTEN: [LagerArt; 23] = [
+    streu("Goblinbande", 1, &[EnemyKind::Goblin, EnemyKind::Goblin], EnemyKind::Goblin, WIESE | WALD | KUESTE | BERG),
+    streu("Pilzkreis", 1, &[EnemyKind::Pilzling, EnemyKind::Pilzling], EnemyKind::Pilzling, WALD),
+    streu("Goblintrupp", 2, &[EnemyKind::Goblin, EnemyKind::Goblin, EnemyKind::GoblinSchamane], EnemyKind::Goblin, WIESE | WALD | BERG),
+    streu("Echsenjäger", 2, &[EnemyKind::Echse], EnemyKind::Echse, KUESTE),
+    streu("Orkspäher", 2, &[EnemyKind::Goblin, EnemyKind::Goblin], EnemyKind::Ork, WIESE | BERG),
     // ---------- Spinnengrotte ----------
     tief("Spinnenbrut", 2, &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Spinnling, 1.0, false),
     tief("Harpyiennest", 3, &[EnemyKind::Harpy, EnemyKind::Harpy, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Harpy, 1.0, false),
@@ -67,7 +86,30 @@ pub const ARTEN: [LagerArt; 17] = [
     tief("Wacht der Dunklen Ritter", 4, &[EnemyKind::Knight, EnemyKind::Pikeman, EnemyKind::Knight, EnemyKind::Archer], EnemyKind::Knight, 0.8, false),
     tief("Trollhöhle", 4, &[EnemyKind::Felsling, EnemyKind::Felsling, EnemyKind::Wolf], EnemyKind::Troll, 0.16, true),
     tief("Thron des Dämonenfürsten", 5, &[EnemyKind::Knight, EnemyKind::Wolf, EnemyKind::Wolf, EnemyKind::Warlock], EnemyKind::Daemon, 0.14, true),
+    // ---------- weitere Streuner ----------
+    streu("Keilerrotte", 1, &[EnemyKind::Keiler], EnemyKind::Keiler, WALD | WIESE | KUESTE),
+    streu("Schamanenzirkel", 2, &[EnemyKind::GoblinSchamane, EnemyKind::Pilzling], EnemyKind::GoblinSchamane, WALD),
+    streu("Orkkriegstrupp", 3, &[EnemyKind::Ork, EnemyKind::GoblinSchamane], EnemyKind::Ork, WIESE | BERG),
+    streu("Waldschrat", 3, &[EnemyKind::Pilzling, EnemyKind::Pilzling], EnemyKind::Waldschrat, WALD),
+    streu("Minotaurus", 3, &[], EnemyKind::Minotaurus, BERG | WIESE),
+    streu("Echsenkriegstrupp", 3, &[EnemyKind::Echse, EnemyKind::Echse], EnemyKind::Echse, KUESTE | WIESE),
 ];
+
+/// Ein möglicher Ort für einen Trupp: Mitte, Bodenhöhe, Gefahr (zur Inselmitte hin höher), Gegend.
+#[derive(Clone, Copy, Debug)]
+pub struct Streifort {
+    pub mitte: Vec2,
+    pub hoehe: f32,
+    pub gefahr: u8,
+    pub gebiet: u8,
+}
+
+/// Die Arten, die an diesem Ort umherziehen können (Gefahr passt, Gegend passt).
+fn passend(ort: &Streifort) -> Vec<usize> {
+    let alle: Vec<usize> = (0..ARTEN.len()).filter(|&i| !ARTEN[i].dungeon && ARTEN[i].gefahr == ort.gefahr).collect();
+    let genau: Vec<usize> = alle.iter().copied().filter(|&i| ARTEN[i].gebiet & ort.gebiet != 0).collect();
+    if genau.is_empty() { alle } else { genau }
+}
 
 /// Leben, Schlagkraft und Beute je Gefahrenstufe.
 fn staerke(gefahr: u8) -> (f32, f32) {
@@ -113,6 +155,10 @@ pub struct Lager {
     leer_seit: Option<f32>,
     /// In Dungeons: der Raum (min, max), den die Bewohner nicht verlassen
     pub bereich: Option<(Vec2, Vec2)>,
+    /// Ein Trupp, der umherzieht: wohin er gerade geht (`anker`) und wie lange er dort rastet
+    pub streift: bool,
+    pub anker: Vec2,
+    rast: f32,
 }
 
 impl Lager {
@@ -122,12 +168,17 @@ impl Lager {
 
     /// Ein Raum in einem Dungeon.
     pub fn im_dungeon(mitte: Vec2, hoehe: f32, art: usize, bereich: (Vec2, Vec2)) -> Lager {
-        Lager { mitte, hoehe, art, leer_seit: None, bereich: Some(bereich) }
+        Lager { mitte, hoehe, art, leer_seit: None, bereich: Some(bereich), streift: false, anker: mitte, rast: 0.0 }
     }
 
-    /// Bis hierhin (Meter vom Lager) verfolgen die Bewohner einen Spieler.
+    /// Ein Trupp, der um `mitte` umherzieht.
+    pub fn streifend(mitte: Vec2, hoehe: f32, art: usize) -> Lager {
+        Lager { mitte, hoehe, art, leer_seit: None, bereich: None, streift: true, anker: mitte, rast: 4.0 }
+    }
+
+    /// Bis hierhin (Meter vom Lager bzw. vom Trupp) verfolgen die Bewohner einen Spieler.
     fn leine(&self) -> f32 {
-        32.0 + 6.0 * self.art().gefahr as f32
+        (if self.streift { 40.0 } else { 32.0 }) + 6.0 * self.art().gefahr as f32
     }
 
     /// Wer näher kommt, wird bemerkt.
@@ -145,6 +196,7 @@ impl Lager {
                 let q = vec2(p.x, p.z);
                 q.cmpge(a - Vec2::splat(3.0)).all() && q.cmple(b + Vec2::splat(3.0)).all() && (p.y - self.hoehe).abs() < 6.0
             }
+            None if self.streift => vec2(p.x, p.z).distance(self.anker) <= self.leine(),
             None => p.distance(vec3(self.mitte.x, self.hoehe, self.mitte.y)) <= self.leine(),
         }
     }
@@ -163,8 +215,11 @@ struct Wilder {
     kind: EnemyKind,
     lager: usize,
     anfuehrer: bool,
-    /// Posten im Lager
+    /// Größer dargestellt (Anführer eines Dungeonlagers)
+    gross: bool,
+    /// Posten im Lager (bei Streunern: Platz im Trupp relativ zum Anker)
     heim: Vec2,
+    versatz: Vec2,
     position: Vec3,
     facing: f32,
     health: f32,
@@ -187,7 +242,7 @@ struct Wilder {
 
 impl Wilder {
     fn groesse(&self) -> f32 {
-        self.kind.groesse() * if self.anfuehrer { 1.35 } else { 1.0 }
+        self.kind.groesse() * if self.gross { 1.35 } else { 1.0 }
     }
 
     fn center(&self) -> Vec3 {
@@ -242,6 +297,9 @@ pub struct WildAngriff {
 
 pub struct Wildnis {
     pub lager: Vec<Lager>,
+    /// Wo Trupps (wieder) auftauchen können, und wohin sie nicht ziehen (Siedlungen, Burg, Start)
+    orte: Vec<Streifort>,
+    sperren: Vec<(Vec2, f32)>,
     wilde: Vec<Wilder>,
     next_id: u16,
     rng: Rng,
@@ -253,7 +311,17 @@ pub struct Wildnis {
 
 impl Wildnis {
     pub fn new(lager: Vec<Lager>, boden: &dyn Fn(Vec2) -> f32) -> Wildnis {
-        let mut wildnis = Wildnis { lager, wilde: Vec::new(), next_id: WILD_ID, rng: Rng::new(0x_57_11D), uhr: 0.0, gefallen: Vec::new(), besetzt: Vec::new() };
+        let mut wildnis = Wildnis {
+            lager,
+            orte: Vec::new(),
+            sperren: Vec::new(),
+            wilde: Vec::new(),
+            next_id: WILD_ID,
+            rng: Rng::new(0x_57_11D),
+            uhr: 0.0,
+            gefallen: Vec::new(),
+            besetzt: Vec::new(),
+        };
         for i in 0..wildnis.lager.len() {
             wildnis.besetzen(i, boden);
         }
@@ -261,50 +329,78 @@ impl Wildnis {
         wildnis
     }
 
-    /// Sucht Lagerplätze: fester Zufall (auf allen Rechnern gleich), ebener Boden an Land, weit weg
-    /// von Heerstraßen, Siedlungsplätzen, Burg, Festung, Startlager und voneinander. Die Gefahr
-    /// steigt zur Inselmitte (zur Festung) hin.
-    pub fn plaetze(terrain: &Terrain, meiden: &[(Vec2, f32)], strassen: &[Vec<Vec2>], anzahl: usize) -> Vec<Lager> {
-        let mut rng = Rng::new(0x1A6E_2);
-        let mut lager: Vec<Lager> = Vec::new();
+    /// Wo Trupps (wieder) auftauchen können und wohin sie nicht ziehen.
+    pub fn mit_streifgebieten(mut self, orte: Vec<Streifort>, sperren: Vec<(Vec2, f32)>) -> Wildnis {
+        self.orte = orte;
+        self.sperren = sperren;
+        self
+    }
+
+    /// Mögliche Orte für Trupps: fester Zufall (auf allen Rechnern gleich), Land, nicht zu steil, weit
+    /// weg von Heerstraßen, Siedlungsplätzen, Burg, Festung und Startlager. Die Gefahr steigt zur
+    /// Inselmitte (zur Festung) hin; die Gegend (Küste, Wiese, Wald, Berg) bestimmt, wer dort lebt.
+    pub fn streifgebiete(terrain: &Terrain, meiden: &[(Vec2, f32)], strassen: &[Vec<Vec2>]) -> Vec<Streifort> {
+        let mut rng = Rng::new(0x57_2E1F);
+        let mut orte: Vec<Streifort> = Vec::new();
         let radius = crate::island::ISLAND_RADIUS;
-        for _ in 0..6000 {
-            if lager.len() >= anzahl {
-                break;
-            }
+        for _ in 0..9000 {
             let p = vec2(rng.range(-radius, radius), rng.range(-radius, radius));
             let r = p.length();
-            if !(170.0..radius * 0.82).contains(&r) {
+            if !(160.0..radius * 0.88).contains(&r) {
                 continue;
             }
             let h = terrain.height_at(p.x, p.y);
-            if h < 3.0 {
+            if h < 2.4 {
                 continue;
             }
-            let steil = [vec2(5.0, 0.0), vec2(-5.0, 0.0), vec2(0.0, 5.0), vec2(0.0, -5.0)]
+            let steil = [vec2(4.0, 0.0), vec2(-4.0, 0.0), vec2(0.0, 4.0), vec2(0.0, -4.0)]
                 .iter()
                 .map(|d| (terrain.height_at(p.x + d.x, p.y + d.y) - h).abs())
                 .fold(0.0f32, f32::max);
-            if steil > 1.6 {
+            if steil > 2.4 {
                 continue;
             }
-            if meiden.iter().any(|&(q, weite)| q.distance(p) < weite) {
+            if meiden.iter().any(|&(q, weite)| q.distance(p) < weite) || strassen.iter().flatten().any(|q| q.distance(p) < 30.0) {
                 continue;
             }
-            if strassen.iter().flatten().any(|q| q.distance(p) < 45.0) {
+            if crate::island::burg_rand(p) < 60.0 || crate::island::burg_weg(p).0 < 25.0 || crate::island::festung_rand(p) < 80.0 {
                 continue;
             }
-            if crate::island::burg_rand(p) < 60.0 || crate::island::burg_weg(p).0 < 30.0 || crate::island::festung_rand(p) < 60.0 {
+            if orte.iter().any(|o| o.mitte.distance(p) < 55.0) {
                 continue;
             }
-            if lager.iter().any(|l| l.mitte.distance(p) < 150.0) {
-                continue;
+            let gefahr = if r > radius * 0.64 { 1 } else if r > radius * 0.42 { 2 } else { 3 };
+            let gebiet = if h < 5.0 {
+                KUESTE
+            } else if h > 26.0 {
+                BERG
+            } else if crate::island::moisture(p) > 0.56 {
+                WALD
+            } else {
+                WIESE
+            };
+            orte.push(Streifort { mitte: p, hoehe: h, gefahr, gebiet });
+        }
+        orte
+    }
+
+    /// Verteilt `anzahl` Trupps über die Insel (weit auseinander).
+    pub fn streuner(orte: &[Streifort], anzahl: usize) -> Vec<Lager> {
+        let mut rng = Rng::new(0x57_2E20);
+        let mut lager: Vec<Lager> = Vec::new();
+        for abstand in [150.0, 115.0, 85.0] {
+            for _ in 0..4000 {
+                if lager.len() >= anzahl || orte.is_empty() {
+                    return lager;
+                }
+                let ort = orte[(rng.next_u32() % orte.len() as u32) as usize];
+                if lager.iter().any(|l| l.mitte.distance(ort.mitte) < abstand) {
+                    continue;
+                }
+                let arten = passend(&ort);
+                let art = arten[(rng.next_u32() % arten.len() as u32) as usize];
+                lager.push(Lager::streifend(ort.mitte, ort.hoehe, art));
             }
-            // Gefahr: außen harmlos, zur Festung hin gefährlich
-            let gefahr = if r > radius * 0.64 { 1 } else if r > radius * 0.44 { 2 } else { 3 };
-            let passend: Vec<usize> = (0..ARTEN.len()).filter(|&i| ARTEN[i].gefahr == gefahr && !ARTEN[i].dungeon).collect();
-            let art = passend[lager.len() % passend.len()];
-            lager.push(Lager { mitte: p, hoehe: h, art, leer_seit: None, bereich: None });
         }
         lager
     }
@@ -324,18 +420,22 @@ impl Wildnis {
                 mitte
             } else {
                 let w = std::f32::consts::TAU * (i - 1) as f32 / n as f32 + self.rng.range(-0.2, 0.2);
-                mitte + vec2(w.cos(), w.sin()) * self.rng.range(4.5, 6.5)
+                mitte + vec2(w.cos(), w.sin()) * if lager.streift { self.rng.range(2.2, 3.6) } else { self.rng.range(4.5, 6.5) }
             };
             let id = self.next_id;
             self.next_id = if self.next_id == u16::MAX { WILD_ID } else { self.next_id + 1 };
             let heim = lager.begrenzen(heim, 1.5);
-            let max_health = kind.max_health() * leben * art.leben * if anfuehrer { 2.2 } else { 1.0 };
+            let versatz = heim - mitte;
+            let fuehrung = if !anfuehrer { 1.0 } else if lager.streift { 1.6 } else { 2.2 };
+            let max_health = kind.max_health() * leben * art.leben * fuehrung;
             neu.push(Wilder {
                 id,
                 kind,
                 lager: index,
                 anfuehrer,
+                gross: anfuehrer && !lager.streift,
                 heim,
+                versatz,
                 position: vec3(heim.x, boden(heim), heim.y),
                 facing: self.rng.range(0.0, std::f32::consts::TAU),
                 health: max_health,
@@ -355,6 +455,7 @@ impl Wildnis {
         }
         self.wilde.extend(neu);
         self.lager[index].leer_seit = None;
+        self.lager[index].anker = mitte;
         self.besetzt.push((art.name, mitte));
     }
 
@@ -385,12 +486,16 @@ impl Wildnis {
                 alarm[w.lager].get_or_insert(ziel);
             }
         }
+        self.umherziehen(dt, boden);
         for w in &mut self.wilde {
             if let Some(seit) = &mut w.dying {
                 *seit += dt;
                 continue;
             }
             let lager = &self.lager[w.lager];
+            if lager.streift {
+                w.heim = lager.anker + w.versatz;
+            }
             // Brand, Betäubung, Verlangsamung
             if w.burn.1 > 0.0 {
                 w.burn.1 -= dt;
@@ -439,7 +544,9 @@ impl Wildnis {
                     .min_by(|a, b| a.1.distance(w.position).total_cmp(&b.1.distance(w.position)))
                     .map(|s| s.0);
             }
-            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0);
+            // Streuner ohne Ziel schlendern
+            let schlendern = if lager.streift && w.ziel.is_none() { 0.42 } else { 1.0 };
+            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0) * schlendern;
             let hier = vec2(w.position.x, w.position.z);
             let (weg, zu) = match w.ziel.and_then(finde) {
                 Some(p) => {
@@ -509,19 +616,81 @@ impl Wildnis {
             }
         }
         self.wilde.retain(|w| w.dying.is_none_or(|t| t < STERBEN));
-        // Leere Lager nach einer Weile neu besetzen (nicht vor den Augen der Spieler)
+        // Leere Lager nach einer Weile neu besetzen (nicht vor den Augen der Spieler); ein
+        // aufgeriebener Trupp taucht anderswo auf der Insel wieder auf
         for i in 0..self.lager.len() {
             if self.wilde.iter().any(|w| w.lager == i) {
                 continue;
             }
             let seit = *self.lager[i].leer_seit.get_or_insert(self.uhr);
+            let warten = if self.lager[i].streift { NEU_STREIFEN } else { NEU_BESETZEN };
+            if self.uhr - seit <= warten {
+                continue;
+            }
+            if self.lager[i].streift && !self.orte.is_empty() {
+                let andere: Vec<Vec2> = self.lager.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, l)| l.anker).collect();
+                for _ in 0..30 {
+                    let ort = self.orte[(self.rng.next_u32() % self.orte.len() as u32) as usize];
+                    let frei = spieler.iter().all(|(_, p)| vec2(p.x, p.z).distance(ort.mitte) > 90.0) && andere.iter().all(|a| a.distance(ort.mitte) > 90.0);
+                    if frei {
+                        let arten = passend(&ort);
+                        let lager = &mut self.lager[i];
+                        lager.mitte = ort.mitte;
+                        lager.hoehe = ort.hoehe;
+                        lager.art = arten[(self.rng.next_u32() % arten.len() as u32) as usize];
+                        self.besetzen(i, boden);
+                        break;
+                    }
+                }
+                continue;
+            }
             let mitte = self.lager[i].mitte;
             let beobachtet = spieler.iter().any(|(_, p)| vec2(p.x, p.z).distance(mitte) < BESETZEN_ABSTAND);
-            if self.uhr - seit > NEU_BESETZEN && !beobachtet {
+            if !beobachtet {
                 self.besetzen(i, boden);
             }
         }
         angriffe
+    }
+
+    /// Trupps ohne Ziel ziehen weiter: sind alle angekommen, rasten sie eine Weile und suchen sich
+    /// dann ein neues Ziel in ihrem Streifgebiet (an Land, nicht in Siedlungen oder an der Burg).
+    fn umherziehen(&mut self, dt: f32, boden: &dyn Fn(Vec2) -> f32) {
+        for i in 0..self.lager.len() {
+            if !self.lager[i].streift {
+                continue;
+            }
+            let mut lebende = self.wilde.iter().filter(|w| w.lager == i && w.lebt()).peekable();
+            if lebende.peek().is_none() {
+                continue;
+            }
+            let anker = self.lager[i].anker;
+            let mut ruhig = true;
+            for w in lebende {
+                if w.ziel.is_some() || vec2(w.position.x, w.position.z).distance(anker + w.versatz) > 1.2 {
+                    ruhig = false;
+                }
+            }
+            if !ruhig {
+                continue;
+            }
+            self.lager[i].rast -= dt;
+            if self.lager[i].rast > 0.0 {
+                continue;
+            }
+            let mitte = self.lager[i].mitte;
+            for _ in 0..10 {
+                let w = self.rng.range(0.0, std::f32::consts::TAU);
+                let d = self.rng.range(12.0, STREIF_RADIUS);
+                let ziel = mitte + vec2(w.cos(), w.sin()) * d;
+                if boden(ziel) < 1.5 || self.sperren.iter().any(|&(q, weite)| q.distance(ziel) < weite) {
+                    continue;
+                }
+                self.lager[i].anker = ziel;
+                break;
+            }
+            self.lager[i].rast = self.rng.range(7.0, 20.0);
+        }
     }
 
     /// Schaden an einem Bewohner. `spieler`: wer getroffen hat (das Lager nimmt ihn ins Visier).
@@ -674,7 +843,7 @@ impl Wildnis {
                         EnemyAction::Idle
                     },
                     health: ((w.health / w.max_health).clamp(0.0, 1.0) * 100.0).ceil() as u8,
-                    boss: w.anfuehrer,
+                    boss: w.gross,
                     lp: w.health.max(0.0).round() as u32,
                     flags,
                 }
@@ -687,39 +856,69 @@ impl Wildnis {
 mod tests {
     use super::*;
 
+    /// Ein Goblintrupp (Anführer und drei Streuner) auf ebenem Land.
     fn wildnis() -> Wildnis {
-        let lager = vec![Lager { mitte: vec2(0.0, 0.0), hoehe: 0.0, art: 1, leer_seit: None, bereich: None }];
-        Wildnis::new(lager, &|_| 0.0)
+        let lager = vec![Lager::streifend(vec2(0.0, 0.0), 5.0, 2)];
+        Wildnis::new(lager, &|_| 5.0)
     }
 
     #[test]
-    fn lager_bemerkt_verfolgt_und_laesst_los() {
+    fn trupp_bemerkt_verfolgt_und_laesst_los() {
         let mut w = wildnis();
-        let n = w.anzahl();
-        assert_eq!(n, 4, "Anführer und drei Bewohner");
+        assert_eq!(w.anzahl(), 4, "Anführer und drei Streuner");
         // Weit weg: niemand greift an
-        let weit = [(7u64, vec3(80.0, 0.0, 0.0))];
+        let weit = [(7u64, vec3(120.0, 5.0, 0.0))];
         for _ in 0..120 {
-            assert!(w.tick(1.0 / 60.0, &weit, &|_| 0.0).is_empty());
+            assert!(w.tick(1.0 / 60.0, &weit, &|_| 5.0).is_empty());
         }
         // Nah dran: sie kommen und schlagen zu
-        let nah = [(7u64, vec3(9.0, 0.0, 0.0))];
+        let hier = w.lager[0].anker;
+        let nah = [(7u64, vec3(hier.x + 9.0, 5.0, hier.y))];
         let mut angriffe = 0;
         for _ in 0..600 {
-            angriffe += w.tick(1.0 / 60.0, &nah, &|_| 0.0).len();
+            angriffe += w.tick(1.0 / 60.0, &nah, &|_| 5.0).len();
         }
         assert!(angriffe > 3, "zu wenige Angriffe: {angriffe}");
-        // Außerhalb der Leine: sie kehren heim
-        let weg = [(7u64, vec3(70.0, 0.0, 0.0))];
-        for _ in 0..1800 {
-            w.tick(1.0 / 60.0, &weg, &|_| 0.0);
+        // Außerhalb der Leine: sie lassen los und sammeln sich wieder um ihren Anker
+        let weg = [(7u64, vec3(hier.x + 150.0, 5.0, hier.y))];
+        for _ in 0..1200 {
+            w.tick(1.0 / 60.0, &weg, &|_| 5.0);
         }
+        assert!(w.wilde.iter().all(|x| x.ziel.is_none()), "verfolgen noch");
         let weiteste = w.wilde.iter().map(|x| vec2(x.position.x, x.position.z).length()).fold(0.0f32, f32::max);
-        assert!(weiteste < 8.0, "nicht heimgekehrt: {weiteste}");
+        assert!(weiteste < STREIF_RADIUS + 10.0, "nicht ins Streifgebiet zurückgekehrt: {weiteste}");
+        assert!(w.lager[0].anker.length() <= STREIF_RADIUS + 0.1, "Anker außerhalb des Streifgebiets");
     }
 
     #[test]
-    fn besiegte_melden_sich_und_das_lager_kommt_wieder() {
+    fn trupp_zieht_umher_und_bleibt_im_gebiet() {
+        let mut w = wildnis();
+        let niemand: [(PlayerId, Vec3); 0] = [];
+        let mut ziele = Vec::new();
+        let mut weiteste = 0.0f32;
+        for _ in 0..(120 * 20) {
+            w.tick(0.05, &niemand, &|_| 5.0);
+            let a = w.lager[0].anker;
+            if ziele.last() != Some(&a) {
+                ziele.push(a);
+            }
+            for x in &w.wilde {
+                weiteste = weiteste.max(vec2(x.position.x, x.position.z).length());
+            }
+        }
+        assert!(ziele.len() >= 4, "zieht nicht umher: {} Ziele", ziele.len());
+        assert!(weiteste > 10.0, "bleibt auf der Stelle: {weiteste}");
+        assert!(weiteste < STREIF_RADIUS + 8.0, "verlässt das Streifgebiet: {weiteste}");
+        // Kein Ziel im Wasser
+        let mut nass = Wildnis::new(vec![Lager::streifend(vec2(0.0, 0.0), 5.0, 2)], &|_| 5.0);
+        for _ in 0..(60 * 20) {
+            nass.tick(0.05, &niemand, &|p: Vec2| if p.x > 5.0 { 0.0 } else { 5.0 });
+        }
+        assert!(nass.lager[0].anker.x <= 5.0, "zieht ins Wasser: {}", nass.lager[0].anker);
+    }
+
+    #[test]
+    fn besiegte_melden_sich_und_der_trupp_kommt_wieder() {
         let mut w = wildnis();
         let ids: Vec<u16> = w.states().iter().map(|s| s.id).collect();
         for id in ids {
@@ -733,7 +932,18 @@ mod tests {
         for _ in 0..((NEU_BESETZEN + 5.0) * 10.0) as usize {
             w.tick(0.1, &niemand, &|_| 0.0);
         }
-        assert_eq!(w.anzahl(), 4, "Lager nicht neu besetzt");
+        assert_eq!(w.anzahl(), 4, "Trupp nicht neu aufgetaucht");
+    }
+
+    #[test]
+    fn jede_gegend_hat_eigene_streuner() {
+        for gefahr in 1..=3u8 {
+            for g in [KUESTE, WIESE, WALD, BERG] {
+                let ort = Streifort { mitte: Vec2::ZERO, hoehe: 5.0, gefahr, gebiet: g };
+                let arten = passend(&ort);
+                assert!(!arten.is_empty() && arten.iter().all(|&i| ARTEN[i].gebiet & g != 0 && !ARTEN[i].dungeon), "Gefahr {gefahr}, Gegend {g}: {arten:?}");
+            }
+        }
     }
 
     #[test]

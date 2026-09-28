@@ -147,24 +147,6 @@ pub fn build_runenbrunnen(ctx: &mut Context, mitte: Vec3, places: &mut Places) -
     Some(kristall)
 }
 
-/// Ein Lager der Wildnis: Feuer neben der Mitte, zwei Zelte, Kisten, Fass und Holzstapel (mit
-/// Kollision) – die Bewohner stehen im Kreis darum (siehe `wildnis.rs`).
-pub fn build_wildlager(ctx: &mut Context, terrain: &Terrain, mitte: Vec2, places: &mut Places) {
-    let feuer = mitte + vec2(2.2, 1.4);
-    if prop(ctx, terrain, "lagerfeuer", feuer, Quat::IDENTITY, Some(vec3(1.4, 0.5, 1.4))).is_some() {
-        places.fires.push(vec3(feuer.x, terrain.height_at(feuer.x, feuer.y), feuer.y));
-    }
-    let toward = |from: Vec2| facing((mitte - from).normalize_or(Vec2::X));
-    for (name, winkel) in [("zelt_2", 0.6f32), ("zelt_1", 2.9)] {
-        let spot = mitte + vec2(winkel.cos(), winkel.sin()) * 9.5;
-        prop(ctx, terrain, name, spot, toward(spot), Some(vec3(2.3, 1.6, 2.0)));
-    }
-    for (name, winkel, weite, size) in [("kiste", 4.2f32, 8.6f32, 0.6f32), ("fass", 4.5, 8.8, 0.55), ("kiste", 5.3, 9.0, 0.6), ("holzstapel", 1.8, 9.2, 1.2)] {
-        let spot = mitte + vec2(winkel.cos(), winkel.sin()) * weite;
-        prop(ctx, terrain, name, spot, Quat::from_rotation_y(winkel * 2.3), Some(vec3(size, size * 0.8, size)));
-    }
-}
-
 /// Lage des Marktplatzes in der Burganlage (Modellkoordinaten, wie MARKT_ORT in marktplatz.py).
 const MARKT_VERSATZ: Vec3 = vec3(-32.25, 0.0, 46.5);
 

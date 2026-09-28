@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0020;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0021;
 
 pub type PlayerId = u64;
 pub type NetId = u32;

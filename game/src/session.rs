@@ -780,7 +780,9 @@ mod tests {
         let hello = Hello { name: "Tester".into(), class };
         let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
         let local = session.local_player().unwrap();
-        let lager = session.world().wildnis.lager[0].mitte;
+        // Ein gemächlicher Trupp (Pilzlinge), damit Fähigkeiten mit Verzögerung noch treffen
+        let wildnis = &session.world().wildnis;
+        let lager = wildnis.lager.iter().find(|l| l.art().name == "Pilzkreis").unwrap_or(&wildnis.lager[0]).mitte;
         let stand = lager + vec2(abstand, 0.0);
         let y = session.world().terrain.height_at(stand.x, stand.y) + 1.2;
         ctx.physics.teleport_character(session.world().players[&local].character, vec3(stand.x, y, stand.y));
@@ -843,6 +845,30 @@ mod tests {
     fn frostnova_friert_lagerbewohner_ein() {
         let zustaende = gegen_lager(CharacterClass::Mage, &[2], 3.0);
         assert!(zustaende.iter().any(|s| s.flags & crate::heer::zustand::GEFROREN != 0), "niemand eingefroren");
+    }
+
+    #[test]
+    fn streuner_ziehen_ueber_die_ganze_insel() {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Gimli".into(), class: CharacterClass::Zwerg };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let wildnis = &session.world().wildnis;
+        let trupps: Vec<&crate::wildnis::Lager> = wildnis.lager.iter().filter(|l| l.streift).collect();
+        assert_eq!(trupps.len(), crate::world::STREUNER_TRUPPS, "zu wenige Trupps");
+        // Über die Insel verteilt: in alle vier Himmelsrichtungen, keine zwei dicht beieinander
+        for (a, b) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            assert!(trupps.iter().any(|l| l.mitte.normalize().dot(vec2(a, b)) > 0.7), "keine Streuner Richtung ({a}, {b})");
+        }
+        let arten: std::collections::BTreeSet<&str> = trupps.iter().map(|l| l.art().name).collect();
+        assert!(arten.len() >= 8, "zu wenig Abwechslung: {arten:?}");
+        let vorher: Vec<Vec2> = trupps.iter().map(|l| l.anker).collect();
+        for _ in 0..(60 * 60) {
+            ctx.time.tick += 1;
+            session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
+        }
+        let nachher: Vec<Vec2> = session.world().wildnis.lager.iter().filter(|l| l.streift).map(|l| l.anker).collect();
+        let gewandert = vorher.iter().zip(&nachher).filter(|(a, b)| a.distance(**b) > 5.0).count();
+        assert!(gewandert * 2 > vorher.len(), "nur {gewandert} von {} Trupps ziehen umher", vorher.len());
     }
 
     #[test]

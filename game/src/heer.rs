@@ -46,15 +46,20 @@ pub enum EnemyKind {
     Spinnling,
     Daemon,
     Drache,
-    // Bewohner der Lager in der Wildnis (nicht in den Wellen der Festung)
-    Bandit,
-    Banditenschuetze,
-    Pluenderer,
+    // Streuner der Wildnis (nicht in den Wellen der Festung), dazu die Waldspinnen der Spinnengrotte
     Waldspinne,
+    Goblin,
+    GoblinSchamane,
+    Ork,
+    Echse,
+    Pilzling,
+    Waldschrat,
+    Minotaurus,
+    Keiler,
 }
 
 impl EnemyKind {
-    pub const ALL: [EnemyKind; 21] = [
+    pub const ALL: [EnemyKind; 26] = [
         EnemyKind::Knight,
         EnemyKind::Archer,
         EnemyKind::Pikeman,
@@ -72,10 +77,15 @@ impl EnemyKind {
         EnemyKind::Spinnling,
         EnemyKind::Daemon,
         EnemyKind::Drache,
-        EnemyKind::Bandit,
-        EnemyKind::Banditenschuetze,
-        EnemyKind::Pluenderer,
         EnemyKind::Waldspinne,
+        EnemyKind::Goblin,
+        EnemyKind::GoblinSchamane,
+        EnemyKind::Ork,
+        EnemyKind::Echse,
+        EnemyKind::Pilzling,
+        EnemyKind::Waldschrat,
+        EnemyKind::Minotaurus,
+        EnemyKind::Keiler,
     ];
 
     /// Ein großer Boss mit eigenem Modell (nicht nur ein vergrößerter Anführer)?
@@ -102,10 +112,15 @@ impl EnemyKind {
             EnemyKind::Spinnling => "Spinnling",
             EnemyKind::Daemon => "Dämonenfürst",
             EnemyKind::Drache => "Schattendrache",
-            EnemyKind::Bandit => "Bandit",
-            EnemyKind::Banditenschuetze => "Banditenschütze",
-            EnemyKind::Pluenderer => "Plünderer",
             EnemyKind::Waldspinne => "Waldspinne",
+            EnemyKind::Goblin => "Goblin",
+            EnemyKind::GoblinSchamane => "Goblin-Schamane",
+            EnemyKind::Ork => "Ork-Berserker",
+            EnemyKind::Echse => "Echsenkrieger",
+            EnemyKind::Pilzling => "Pilzling",
+            EnemyKind::Waldschrat => "Waldschrat",
+            EnemyKind::Minotaurus => "Minotaurus",
+            EnemyKind::Keiler => "Keiler",
         }
     }
 
@@ -129,10 +144,15 @@ impl EnemyKind {
             EnemyKind::Spinnling => "Spinnling",
             EnemyKind::Daemon => "Dämon",
             EnemyKind::Drache => "Drache",
-            EnemyKind::Bandit => "Bandit",
-            EnemyKind::Banditenschuetze => "Schütze",
-            EnemyKind::Pluenderer => "Plünderer",
             EnemyKind::Waldspinne => "Spinne",
+            EnemyKind::Goblin => "Goblin",
+            EnemyKind::GoblinSchamane => "Schamane",
+            EnemyKind::Ork => "Ork",
+            EnemyKind::Echse => "Echse",
+            EnemyKind::Pilzling => "Pilzling",
+            EnemyKind::Waldschrat => "Schrat",
+            EnemyKind::Minotaurus => "Minotaurus",
+            EnemyKind::Keiler => "Keiler",
         }
     }
 
@@ -152,6 +172,10 @@ impl EnemyKind {
             EnemyKind::Spinnling => Some("klein und schnell"),
             EnemyKind::Daemon => Some("immun gegen Feuer, Glutaura verbrennt Soldaten, ersteht einmal aus den Flammen"),
             EnemyKind::Drache => Some("speit Feuer auf Soldaten und Barrikaden, steigt zeitweise auf (dann nur Anti-Luft)"),
+            EnemyKind::GoblinSchamane => Some("schleudert Giftblitze aus der Ferne"),
+            EnemyKind::Pilzling => Some("immun gegen Gift, brennt leicht"),
+            EnemyKind::Waldschrat => Some("zähe Rinde gegen Waffen, Feuer frisst sich hinein"),
+            EnemyKind::Keiler => Some("stürmt heran und reißt mit den Hauern"),
             _ => None,
         }
     }
@@ -173,10 +197,15 @@ impl EnemyKind {
             EnemyKind::Spinnenkoenigin | EnemyKind::Spinnling => "spinnenkoenigin",
             EnemyKind::Daemon => "daemonenfuerst",
             EnemyKind::Drache => "schattendrache",
-            EnemyKind::Bandit => "bandit",
-            EnemyKind::Banditenschuetze => "banditenschuetze",
-            EnemyKind::Pluenderer => "pluenderer",
             EnemyKind::Waldspinne => "waldspinne",
+            EnemyKind::Goblin => "goblin",
+            EnemyKind::GoblinSchamane => "goblin_schamane",
+            EnemyKind::Ork => "ork_berserker",
+            EnemyKind::Echse => "echsenkrieger",
+            EnemyKind::Pilzling => "pilzling",
+            EnemyKind::Waldschrat => "waldschrat",
+            EnemyKind::Minotaurus => "minotaurus",
+            EnemyKind::Keiler => "keiler",
         }
     }
 
@@ -208,10 +237,15 @@ impl EnemyKind {
             EnemyKind::Spinnling => 35.0,
             EnemyKind::Daemon => 3200.0,
             EnemyKind::Drache => 5200.0,
-            EnemyKind::Bandit => 60.0,
-            EnemyKind::Banditenschuetze => 42.0,
-            EnemyKind::Pluenderer => 50.0,
             EnemyKind::Waldspinne => 28.0,
+            EnemyKind::Goblin => 45.0,
+            EnemyKind::GoblinSchamane => 38.0,
+            EnemyKind::Ork => 170.0,
+            EnemyKind::Echse => 95.0,
+            EnemyKind::Pilzling => 40.0,
+            EnemyKind::Waldschrat => 380.0,
+            EnemyKind::Minotaurus => 320.0,
+            EnemyKind::Keiler => 75.0,
         }
     }
 
@@ -231,8 +265,13 @@ impl EnemyKind {
             EnemyKind::Spinnenkoenigin => 0.35,
             EnemyKind::Daemon => 0.45,
             EnemyKind::Drache => 0.55,
-            EnemyKind::Banditenschuetze | EnemyKind::Pluenderer | EnemyKind::Waldspinne => 0.0,
-            EnemyKind::Bandit => 0.1,
+            EnemyKind::Waldspinne | EnemyKind::GoblinSchamane | EnemyKind::Pilzling => 0.0,
+            EnemyKind::Goblin => 0.05,
+            EnemyKind::Keiler => 0.1,
+            EnemyKind::Echse => 0.15,
+            EnemyKind::Ork => 0.2,
+            EnemyKind::Minotaurus => 0.25,
+            EnemyKind::Waldschrat => 0.35,
         }
     }
 
@@ -264,7 +303,10 @@ impl EnemyKind {
             DamageKind::Holy if self == EnemyKind::Daemon => 1.5,
             DamageKind::Fire if matches!(self, EnemyKind::Daemon | EnemyKind::Drache) => 0.0,
             DamageKind::Holy => 1.0,
-            DamageKind::Poison if self == EnemyKind::Skeleton => 0.0,
+            DamageKind::Poison if matches!(self, EnemyKind::Skeleton | EnemyKind::Pilzling) => 0.0,
+            DamageKind::Poison if self == EnemyKind::Waldschrat => 0.5,
+            DamageKind::Fire if self == EnemyKind::Waldschrat => 1.6,
+            DamageKind::Fire if self == EnemyKind::Pilzling => 1.3,
             DamageKind::Poison => 1.0,
             DamageKind::Fire if self.schwer() => 0.5,
             DamageKind::Fire => 1.0,
@@ -285,8 +327,14 @@ impl EnemyKind {
             EnemyKind::Troll | EnemyKind::Daemon => 2.1,
             EnemyKind::Lich | EnemyKind::Spinnenkoenigin => 2.2,
             EnemyKind::Drache => 1.9,
-            EnemyKind::Pluenderer => 2.9,
             EnemyKind::Waldspinne => 3.6,
+            EnemyKind::Goblin => 3.3,
+            EnemyKind::GoblinSchamane => 2.8,
+            EnemyKind::Echse => 3.0,
+            EnemyKind::Pilzling => 2.3,
+            EnemyKind::Waldschrat => 1.9,
+            EnemyKind::Minotaurus => 2.7,
+            EnemyKind::Keiler => 3.8,
             _ => 2.6,
         }
     }
@@ -308,9 +356,15 @@ impl EnemyKind {
             EnemyKind::Spinnling => (1.6, 1.2),
             EnemyKind::Daemon => (4.5, 2.2),
             EnemyKind::Drache => (6.0, 2.8),
-            EnemyKind::Pluenderer => (2.2, 1.5),
-            EnemyKind::Banditenschuetze => (15.0, 2.6),
             EnemyKind::Waldspinne => (1.8, 1.3),
+            EnemyKind::Goblin => (2.0, 1.1),
+            EnemyKind::GoblinSchamane => (14.0, 2.8),
+            EnemyKind::Ork => (2.8, 2.0),
+            EnemyKind::Echse => (3.0, 1.6),
+            EnemyKind::Pilzling => (1.8, 1.6),
+            EnemyKind::Waldschrat => (4.0, 2.6),
+            EnemyKind::Minotaurus => (3.6, 2.3),
+            EnemyKind::Keiler => (2.2, 1.8),
             _ => (2.4, 1.8),
         }
     }
@@ -335,9 +389,14 @@ impl EnemyKind {
             EnemyKind::Spinnling => 5.0,
             EnemyKind::Daemon => 60.0,
             EnemyKind::Drache => 80.0,
-            EnemyKind::Banditenschuetze | EnemyKind::Waldspinne => 4.0,
-            EnemyKind::Pluenderer => 5.0,
-            EnemyKind::Bandit => 6.0,
+            EnemyKind::Waldspinne | EnemyKind::Pilzling => 4.0,
+            EnemyKind::Goblin => 5.0,
+            EnemyKind::GoblinSchamane => 7.0,
+            EnemyKind::Keiler => 8.0,
+            EnemyKind::Echse => 9.0,
+            EnemyKind::Ork => 14.0,
+            EnemyKind::Minotaurus => 20.0,
+            EnemyKind::Waldschrat => 22.0,
         }
     }
 
@@ -355,6 +414,13 @@ impl EnemyKind {
             EnemyKind::Daemon => (2.5, 1.7),
             EnemyKind::Drache => (2.4, 2.8),
             EnemyKind::Waldspinne => (0.35, 0.45),
+            EnemyKind::Goblin | EnemyKind::GoblinSchamane => (0.6, 0.4),
+            EnemyKind::Ork => (1.2, 0.65),
+            EnemyKind::Echse => (1.0, 0.55),
+            EnemyKind::Pilzling => (0.55, 0.45),
+            EnemyKind::Waldschrat => (1.6, 0.9),
+            EnemyKind::Minotaurus => (1.4, 0.8),
+            EnemyKind::Keiler => (0.6, 0.7),
             _ => (1.0, 0.6),
         }
     }

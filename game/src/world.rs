@@ -240,6 +240,9 @@ pub struct World {
     pub unter_tage: bool,
 }
 
+/// So viele Trupps von Streunern ziehen gleichzeitig über die Insel.
+pub const STREUNER_TRUPPS: usize = 34;
+
 /// Bodenhöhe: im Dungeon dessen Boden, sonst das Gelände.
 pub fn bodenhoehe(terrain: &Terrain, dungeons: &[crate::dungeon::Dungeon], p: Vec2) -> f32 {
     crate::dungeon::boden(dungeons, p).unwrap_or_else(|| terrain.height_at(p.x, p.y))
@@ -260,7 +263,7 @@ impl World {
             .map(|(strasse, achse)| crate::heer::Route::new(achse, island::festung_hoehe(), strasse, |p| island.terrain.height_at(p.x, p.y)))
             .collect();
         let animals = animals::populate(&island.terrain, island.spawn, island::SEED, island::moisture);
-        // Lager der Wildnis: weit weg von Siedlungsplätzen, Startlager und Sehenswürdigkeiten
+        // Streuner der Wildnis: ziehen fern von Siedlungsplätzen, Startlager und Sehenswürdigkeiten umher
         let meiden: Vec<(Vec2, f32)> = island
             .siedlungen
             .iter()
@@ -268,10 +271,11 @@ impl World {
             .chain([(vec2(island.spawn.x, island.spawn.z), 130.0)])
             .chain(island.places.labels.iter().map(|&(_, p)| (p, 45.0)))
             .collect();
-        let mut lager = crate::wildnis::Wildnis::plaetze(&island.terrain, &meiden, &island.strassen, 9);
+        let orte = crate::wildnis::Wildnis::streifgebiete(&island.terrain, &meiden, &island.strassen);
+        let mut lager = crate::wildnis::Wildnis::streuner(&orte, STREUNER_TRUPPS);
+        let sperren: Vec<(Vec2, f32)> = meiden.iter().copied().chain([(island::BURG_ORT, 150.0), (Vec2::ZERO, 200.0)]).collect();
         // Die Dungeons: Eingänge weit weg von allem, drinnen je Raum ein Lager, das seinen Raum hütet
-        let meiden_dungeon: Vec<(Vec2, f32)> =
-            meiden.iter().copied().chain(lager.iter().map(|l| (l.mitte, 70.0))).chain([(island::BURG_ORT, 190.0)]).collect();
+        let meiden_dungeon: Vec<(Vec2, f32)> = meiden.iter().copied().chain([(island::BURG_ORT, 190.0)]).collect();
         let eingaenge = crate::dungeon::eingaenge_suchen(&island.terrain, &meiden_dungeon, &island.strassen);
         let dungeons = crate::dungeon::planen(&eingaenge);
         lager.extend(
@@ -281,7 +285,7 @@ impl World {
         );
         crate::dungeon::kollision(ctx, &dungeons);
         let durchgaenge = crate::dungeon::durchgaenge(&dungeons);
-        let wildnis = crate::wildnis::Wildnis::new(lager, &|p| bodenhoehe(&island.terrain, &dungeons, p));
+        let wildnis = crate::wildnis::Wildnis::new(lager, &|p| bodenhoehe(&island.terrain, &dungeons, p)).mit_streifgebieten(orte, sperren);
         let mut world = World {
             players: HashMap::new(),
             objects: BTreeMap::new(),
@@ -341,13 +345,7 @@ impl World {
             dungeon_ansicht: Default::default(),
             unter_tage: false,
         };
-        // Lager der Wildnis: Feuer, Zelte, Kisten (mit Kollision) und ihr Name auf der Karte
         if !ctx.is_headless() {
-            let lager: Vec<(Vec2, &'static str)> = world.wildnis.lager.iter().filter(|l| l.bereich.is_none()).map(|l| (l.mitte, l.art().name)).collect();
-            for (mitte, name) in lager {
-                crate::orte::build_wildlager(ctx, &world.terrain, mitte, &mut world.places);
-                world.places.labels.push((name, mitte));
-            }
             world.runenkristall = crate::orte::build_runenbrunnen(ctx, world.runenbrunnen, &mut world.places);
         }
         // Schutzsteine am Ende jeder Heerstraße (etwas hinter dem Ende, quer zur Straße)
@@ -399,12 +397,10 @@ impl World {
         for d in &world.dungeons {
             world.places.labels.push((d.name, vec2(d.eingang.x, d.eingang.z)));
         }
-        let lagerplaetze: Vec<Vec2> =
-            world.wildnis.lager.iter().map(|l| l.mitte).collect();
         for (id, spec) in island.resources {
-            // In den Lagern der Wildnis steht nichts im Weg
+            // Vor den Eingängen der Dungeons steht nichts im Weg
             let p = spec.transform.position;
-            if lagerplaetze.iter().any(|m| m.distance(vec2(p.x, p.z)) < 12.0) || world.dungeons.iter().any(|d| vec2(d.eingang.x, d.eingang.z).distance(vec2(p.x, p.z)) < 17.0) {
+            if world.dungeons.iter().any(|d| vec2(d.eingang.x, d.eingang.z).distance(vec2(p.x, p.z)) < 17.0) {
                 continue;
             }
             let health = spec.max_health;
@@ -1562,7 +1558,8 @@ fn strike_visual(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, kind: crate::h
     use crate::heer::EnemyKind;
     let target = target + Vec3::Y * 0.2;
     let (color, glow, streak) = match kind {
-        EnemyKind::Archer | EnemyKind::Banditenschuetze => (vec3(0.45, 0.32, 0.2), 0.0, true),
+        EnemyKind::Archer => (vec3(0.45, 0.32, 0.2), 0.0, true),
+        EnemyKind::GoblinSchamane => (vec3(0.45, 1.0, 0.3), 4.0, true),
         EnemyKind::Warlock => (vec3(0.8, 0.35, 1.0), 4.0, true),
         _ => (vec3(0.9, 0.85, 0.8), 1.5, false),
     };
