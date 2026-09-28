@@ -1,5 +1,5 @@
 """spinnenkoenigin (siehe art/lib/bosse.py)."""
 
-from bosse import spinnenkoenigin
+from truppen import spinnenkoenigin
 
 spinnenkoenigin()

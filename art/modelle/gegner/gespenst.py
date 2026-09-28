@@ -1,5 +1,5 @@
 """gespenst (siehe art/lib/gegner.py)."""
 
-from gegner import gespenst
+from truppen import gespenst
 
 gespenst()

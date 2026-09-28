@@ -1,5 +1,5 @@
 """bergtroll (siehe art/lib/bosse.py)."""
 
-from bosse import bergtroll
+from truppen import bergtroll
 
 bergtroll()

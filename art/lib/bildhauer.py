@@ -83,13 +83,14 @@ def _modifikator(obj, art, **werte):
     bpy.ops.object.modifier_apply(modifier=mod.name)
 
 
-def modellieren(obj, voxel, ziel, versatz=None, glaetten=4, nach_glaetten=1):
+def modellieren(obj, voxel, ziel, versatz=None, glaetten=4, nach_glaetten=1, inseln=True):
     """Neu vernetzen, glätten, Detail prägen, vereinfachen, weich schattieren."""
     _aktiv(obj)
     obj.data.remesh_voxel_size = voxel
     obj.data.remesh_voxel_adaptivity = 0.0
     bpy.ops.object.voxel_remesh()
-    _inseln_entfernen(obj)
+    if inseln:
+        _inseln_entfernen(obj)
     if glaetten:
         _modifikator(obj, "SMOOTH", factor=0.6, iterations=glaetten)
     if versatz is not None:
@@ -282,14 +283,16 @@ def aufnehmen(f, obj):
 
 
 def teil(f, name, formen, voxel, ziel, farbe, gewichte=None, versatz=None, glaetten=4, aufloesung=None, knochen=None, quelle=None,
-         erlaubt=None, hoehle=1.0):
+         erlaubt=None, hoehle=1.0, naechster_knochen=False, inseln=True):
     """Alles in einem: Grobform, modellieren, einfärben, Gewichte (Funktion, automatisch aus
     \`knochen\` oder übertragen von \`quelle\`)."""
     obj = ball_mesh(name, formen, aufloesung or voxel * 1.6)
-    modellieren(obj, voxel, ziel, versatz, glaetten)
+    modellieren(obj, voxel, ziel, versatz, glaetten, inseln=inseln)
     einfaerben(obj, farbe, hoehle)
     if gewichte is not None:
         f._gewichten(obj, gewichte)
+    elif naechster_knochen:
+        knochen_gewichte(obj, knochen)
     elif knochen is not None:
         auto_gewichte(obj, knochen)
     elif quelle is not None:
@@ -327,7 +330,7 @@ def auf_haut(koerper, punkt, abstand=0.008):
     return ort + normale * abstand
 
 
-def huelle(f, koerper, name, auswahl, dicke, farbe, glaetten=2):
+def huelle(f, koerper, name, auswahl, dicke, farbe, glaetten=2, ziel=1600, versatz=None):
     """Eng anliegende Kleidung: der ausgewählte Teil der Haut, um \`dicke\` nach außen versetzt,
     mit Stoffdicke (Hose, Ärmel, Wams). Übernimmt die Gewichte der Haut."""
     import bmesh as _bm
@@ -341,17 +344,38 @@ def huelle(f, koerper, name, auswahl, dicke, farbe, glaetten=2):
     weg = [v for v in bm.verts if not auswahl(v.co, v.normal)]
     _bm.ops.delete(bm, geom=weg, context="VERTS")
     for v in bm.verts:
-        v.co += v.normal * dicke
+        v.co += v.normal * (dicke + (versatz(v.co.copy(), v.normal.copy()) if versatz else 0.0))
     bm.to_mesh(kopie.data)
     bm.free()
     if glaetten:
         _modifikator(kopie, "SMOOTH", factor=0.5, iterations=glaetten)
     dreiecke = sum(len(p.vertices) - 2 for p in kopie.data.polygons)
-    if dreiecke > 1600:
-        _modifikator(kopie, "DECIMATE", ratio=1600 / dreiecke)
+    if dreiecke > ziel:
+        _modifikator(kopie, "DECIMATE", ratio=ziel / dreiecke)
     _modifikator(kopie, "SOLIDIFY", thickness=dicke * 0.8, offset=-1.0)
     for p in kopie.data.polygons:
         p.use_smooth = True
     einfaerben(kopie, farbe)
     f.teile.append(kopie)
     return kopie
+
+
+def knochen_gewichte(obj, knochen, schaerfe=4.0, ausser=("Hut",)):
+    """Gewichte nach Nähe zu den Knochenstrecken (für Figuren aus vielen Einzelteilen, bei denen
+    die automatische Verteilung versagt): die zwei nächsten Knochen, weich überblendet."""
+    strecken = [(n, Vector(a), Vector(e)) for n, a, e, _, _ in knochen if n not in ausser]
+    gruppen = {n: (obj.vertex_groups.get(n) or obj.vertex_groups.new(name=n)) for n, _, _ in strecken}
+    for v in obj.data.vertices:
+        p = obj.matrix_world @ v.co
+        abst = []
+        for n, a, e in strecken:
+            ae = e - a
+            t = max(0.0, min(1.0, (p - a).dot(ae) / max(ae.length_squared, 1e-9)))
+            abst.append(((a + ae * t - p).length, n))
+        abst.sort()
+        (d1, n1), (d2, n2) = abst[0], abst[1]
+        w1, w2 = 1.0 / (d1 + 0.01) ** schaerfe, 1.0 / (d2 + 0.01) ** schaerfe
+        summe = w1 + w2
+        gruppen[n1].add([v.index], w1 / summe, "REPLACE")
+        if w2 / summe > 0.02:
+            gruppen[n2].add([v.index], w2 / summe, "REPLACE")

@@ -1,5 +1,5 @@
 """steingolem (siehe art/lib/gegner.py)."""
 
-from gegner import steingolem
+from truppen import steingolem
 
 steingolem()

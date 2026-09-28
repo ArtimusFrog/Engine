@@ -1,5 +1,5 @@
 """lichkoenig (siehe art/lib/bosse.py)."""
 
-from bosse import lichkoenig
+from truppen import lichkoenig
 
 lichkoenig()

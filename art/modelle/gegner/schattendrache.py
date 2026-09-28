@@ -1,5 +1,5 @@
 """schattendrache (siehe art/lib/bosse.py)."""
 
-from bosse import schattendrache
+from truppen import schattendrache
 
 schattendrache()

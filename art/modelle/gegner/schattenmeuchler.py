@@ -1,5 +1,5 @@
 """schattenmeuchler (siehe art/lib/einheiten.py)."""
 
-from einheiten import schattenmeuchler
+from truppen import schattenmeuchler
 
 schattenmeuchler()

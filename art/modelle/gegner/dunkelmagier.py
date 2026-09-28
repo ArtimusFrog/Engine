@@ -1,5 +1,5 @@
 """dunkelmagier (siehe art/lib/gegner.py)."""
 
-from gegner import dunkelmagier
+from truppen import dunkelmagier
 
 dunkelmagier()

@@ -1,5 +1,5 @@
 """soldat (siehe art/lib/einheiten.py)."""
 
-from einheiten import soldat
+from truppen import soldat
 
 soldat()

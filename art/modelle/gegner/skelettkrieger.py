@@ -1,5 +1,5 @@
 """skelettkrieger (siehe art/lib/gegner.py)."""
 
-from gegner import skelettkrieger
+from truppen import skelettkrieger
 
 skelettkrieger()

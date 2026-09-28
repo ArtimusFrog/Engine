@@ -1,5 +1,5 @@
 """schattenwolf (siehe art/lib/gegner.py)."""
 
-from gegner import schattenwolf
+from truppen import schattenwolf
 
 schattenwolf()

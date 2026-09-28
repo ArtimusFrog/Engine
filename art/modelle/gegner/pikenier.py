@@ -1,5 +1,5 @@
 """pikenier (siehe art/lib/gegner.py)."""
 
-from gegner import pikenier
+from truppen import pikenier
 
 pikenier()

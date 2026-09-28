@@ -81,7 +81,7 @@ pub const ARTEN: [LagerArt; 23] = [
     streu("Orkspäher", 2, &[EnemyKind::Goblin, EnemyKind::Goblin], EnemyKind::Ork, WIESE | BERG),
     // ---------- Spinnengrotte ----------
     tief("Spinnenbrut", 2, &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Spinnling, 1.0, false),
-    tief("Harpyiennest", 3, &[EnemyKind::Harpy, EnemyKind::Harpy, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Harpy, 1.0, false),
+    tief("Gargoylenhorst", 3, &[EnemyKind::Harpy, EnemyKind::Harpy, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Harpy, 1.0, false),
     tief("Thron der Spinnenkönigin", 4, &[EnemyKind::Spinnling, EnemyKind::Spinnling, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne],
          EnemyKind::Spinnenkoenigin, 0.16, true),
     // ---------- Gruft der Vergessenen ----------

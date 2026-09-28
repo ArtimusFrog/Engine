@@ -2,7 +2,7 @@
 //! marschieren durch die vier Tore, die Rampen hinab und die Straßen entlang. Wer das Ende der
 //! Straße erreicht, bricht durch und kostet die Insel Leben.
 //!
-//! Die Einheiten haben Eigenschaften, auf die man mit passenden Türmen antworten muss: Harpyien
+//! Die Einheiten haben Eigenschaften, auf die man mit passenden Türmen antworten muss: Gargoyles
 //! fliegen, Schattenmeuchler sind getarnt, Dunkelmagier heilen, Dunkle Ritter schirmen ihre
 //! Nachbarn ab, Steingolems zerfallen in Felslinge. Jede fünfte Welle führt ein Boss mit eigener
 //! Fähigkeit an. Soldaten der Kaserne und Barrikaden halten Gruppen auf wie Spieler.
@@ -103,7 +103,7 @@ impl EnemyKind {
             EnemyKind::Golem => "Steingolem",
             EnemyKind::Wolf => "Schattenwolf",
             EnemyKind::Ghost => "Gespenst",
-            EnemyKind::Harpy => "Harpyie",
+            EnemyKind::Harpy => "Gargoyle",
             EnemyKind::Assassin => "Schattenmeuchler",
             EnemyKind::Felsling => "Felsling",
             EnemyKind::Troll => "Bergtroll",
@@ -135,7 +135,7 @@ impl EnemyKind {
             EnemyKind::Golem => "Golem",
             EnemyKind::Wolf => "Wolf",
             EnemyKind::Ghost => "Geist",
-            EnemyKind::Harpy => "Harpyie",
+            EnemyKind::Harpy => "Gargoyle",
             EnemyKind::Assassin => "Meuchler",
             EnemyKind::Felsling => "Felsling",
             EnemyKind::Troll => "Troll",
@@ -190,7 +190,7 @@ impl EnemyKind {
             EnemyKind::Golem | EnemyKind::Felsling => "steingolem",
             EnemyKind::Wolf => "schattenwolf",
             EnemyKind::Ghost => "gespenst",
-            EnemyKind::Harpy => "harpyie",
+            EnemyKind::Harpy => "gargoyle",
             EnemyKind::Assassin => "schattenmeuchler",
             EnemyKind::Troll => "bergtroll",
             EnemyKind::Lich => "lichkoenig",
@@ -695,7 +695,7 @@ const ENGAGE: f32 = 16.0;
 const SPERRE: f32 = 4.5;
 /// So weit dürfen Einheiten seitlich von der Mitte ihrer Straße abweichen (Pflaster bis 2,35 m)
 const STRASSEN_RAND: f32 = 2.2;
-/// Flughöhe der Harpyien über dem Boden
+/// Flughöhe der Gargoyles über dem Boden
 const FLUGHOEHE: f32 = 5.0;
 
 struct Member {
@@ -743,7 +743,7 @@ struct Member {
     /// Bossfähigkeit bzw. Heilung: Zeit bis zum nächsten Mal
     faehigkeit: f32,
     heilen: f32,
-    /// Aktuelle Flughöhe (Harpyien, aufgestiegener Drache) und wie lange der Drache noch fliegt
+    /// Aktuelle Flughöhe (Gargoyles, aufgestiegener Drache) und wie lange der Drache noch fliegt
     hoehe: f32,
     flug: f32,
     /// Zweite Fähigkeit der großen Bosse (Zeit bis zum nächsten Mal)
@@ -2541,7 +2541,7 @@ mod tests {
         heer.tick(0.05, &[], &boden);
         let states = heer.states();
         let finde = |k: EnemyKind| states.iter().find(|s| s.kind == k).copied().unwrap();
-        // Harpyie fliegt hoch über dem Boden, Bodentürme treffen sie nicht
+        // Der Gargoyle fliegt hoch über dem Boden, Bodentürme treffen sie nicht
         let h = finde(Harpy);
         assert!(h.flags & zustand::FLIEGT != 0 && h.position.y - world.terrain.height_at(h.position.x, h.position.z) > 3.0);
         assert!(heer.ziel(h.position, 30.0, 0.0, Zielmodus::Erster, Filter::BODEN).is_none_or(|(id, _)| id != h.id));
