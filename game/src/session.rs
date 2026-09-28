@@ -696,7 +696,7 @@ mod tests {
         let stand = mitte + vec2(16.0, 0.0);
         let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
         ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));
-        let genug = Inventory { wood: 500, stone: 500, ore: 100, gold: 1000, ..Default::default() };
+        let genug = Inventory { wood: 500, stone: 500, ore: 100, lehm: 200, gold: 1000, ..Default::default() };
         session.world_mut().inventories.insert(local, genug);
 
         // Ohne Runenstein im Schutzstein keine Dorfhalle

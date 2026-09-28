@@ -816,7 +816,43 @@ def _bogen_symbol(knoten):
     return lambda: _aus_magier(knoten, Matrix.Rotation(math.radians(-40), 4, "Y") @ Matrix.Rotation(math.radians(90), 4, "X"), figur="bogenschuetze")
 
 
-GEGENSTAENDE = {"gold": gold, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
+def lehm():
+    """Zwei gestochene Lehmblöcke (hell, weich, feucht glänzend) und ein Klumpen mit Fingerspuren."""
+    ocker = material("Lehm", "#E0B878", rau=0.45, muster=True, muster_farbe="#C8985E", muster_skala=7.0, glanz=0.15)
+    ton = material("Ton", "#A8B6BC", rau=0.5, muster=True, muster_farbe="#8C9AA2", muster_skala=9.0)
+    for i, (ort, drehung, groesse) in enumerate((((-0.3, 0.15, -0.2), (0, 0, 12), (1.0, 0.7, 0.55)), ((0.35, -0.2, -0.28), (0, 0, -20), (0.8, 0.6, 0.45)))):
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.12, segments=3, affect="EDGES")
+        for f in bm.faces:
+            f.material_index = 1 if f.calc_center_median().z < -0.3 else 0
+        verbeulen(bm, 0.03, seed=5 + i)
+        bewegen(bm, ort, drehung, groesse)
+        objekt(f"Lehmblock{i}", bm, ocker, ton, glatt=True)
+    kugel(0.34, (0.05, -0.05, 0.28), ocker, name="Klumpen", groesse=(1.1, 1.0, 0.8))
+
+
+def kristall():
+    """Drei blau leuchtende Kristalle wie aus den Kristallvorkommen."""
+    blau = glimmen("Kristall", "#3C9CFF", 0.9)
+    hell = glimmen("Kristallhell", "#BFE8FF", 1.1)
+    for i, (ort, drehung, r, laenge, mat) in enumerate((((0.0, 0.0, -0.75), (0, 0, 0), 0.3, 1.5, blau), ((-0.35, 0.1, -0.7), (0, -28, 10), 0.2, 1.0, hell),
+                                                          ((0.35, -0.05, -0.72), (0, 30, -15), 0.18, 0.9, blau))):
+        bm = zylinder(r, laenge * 0.75, 6)
+        bewegen(bm, (0, 0, laenge * 0.375))
+        spitze = zylinder(r, laenge * 0.25, 6, 0.0)
+        bewegen(spitze, (0, 0, laenge * 0.75 + laenge * 0.125))
+        bm2 = bmesh.new()
+        for teil in (bm, spitze):
+            mesh = bpy.data.meshes.new("tmp")
+            teil.to_mesh(mesh)
+            bm2.from_mesh(mesh)
+            bpy.data.meshes.remove(mesh)
+        bewegen(bm2, ort, drehung)
+        objekt(f"Kristall{i}", bm2, mat)
+
+
+GEGENSTAENDE = {"gold": gold, "lehm": lehm, "kristall": kristall, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
                 "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab, "runenfragment": runenfragment, "runenstein": runenstein,
                 "faehigkeit_arkangeschoss": faehigkeit_arkangeschoss, "faehigkeit_feuerball": faehigkeit_feuerball,
                 "faehigkeit_frostnova": faehigkeit_frostnova, "faehigkeit_hammerschlag": faehigkeit_hammerschlag,

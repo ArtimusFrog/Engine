@@ -328,6 +328,10 @@ impl Authority {
         let Some(kind) = world.resources.get(&id).map(|r| r.spec.kind) else { return };
         let mining = kind.needs_pickaxe();
         let cooldown = if mining { MINE_COOLDOWN_TICKS } else { HARVEST_COOLDOWN_TICKS };
+        // Kristalle lösen nur die Magier eines Kristallturms
+        if !kind.von_hand() {
+            return;
+        }
         if avatar.tool != kind.tool() || ctx.time.tick < avatar.last_harvest_tick + cooldown || !world.in_reach(ctx, player, id, 1.0) {
             return;
         }

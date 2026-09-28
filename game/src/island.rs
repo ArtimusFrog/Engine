@@ -29,12 +29,33 @@ pub enum ResourceKind {
     Stone,
     /// Erzvorkommen (nur mit der Spitzhacke)
     Ore,
+    /// Lehmvorkommen (Spitzhacke oder Lehmgrube)
+    Lehm,
+    /// Magische Kristallvorkommen: nur die Kristallmagier eines Kristallturms lösen sie
+    Kristall,
 }
 
 impl ResourceKind {
     /// Braucht man zum Abbauen die Spitzhacke?
     pub fn needs_pickaxe(self) -> bool {
-        matches!(self, ResourceKind::Stone | ResourceKind::Ore)
+        matches!(self, ResourceKind::Stone | ResourceKind::Ore | ResourceKind::Lehm | ResourceKind::Kristall)
+    }
+
+    /// Können Spieler es selbst abbauen? (Kristalle nur die Magier des Kristallturms)
+    pub fn von_hand(self) -> bool {
+        self != ResourceKind::Kristall
+    }
+
+    /// Was es ins Inventar bringt.
+    pub fn item(self) -> crate::protocol::Item {
+        use crate::protocol::Item;
+        match self {
+            ResourceKind::Wood => Item::Wood,
+            ResourceKind::Stone => Item::Stone,
+            ResourceKind::Ore => Item::Ore,
+            ResourceKind::Lehm => Item::Lehm,
+            ResourceKind::Kristall => Item::Kristall,
+        }
     }
 
     /// Werkzeug, mit dem man es abbaut: Axt für Bäume, Spitzhacke für Vorkommen.
@@ -1009,6 +1030,7 @@ struct Library {
     /// Abbaubare Vorkommen (Spitzhacke)
     stone_nodes: Vec<Variant>,
     ore_nodes: Vec<Variant>,
+    clay_nodes: Vec<Variant>,
     /// Magische Kristallvorkommen (leuchten, noch nicht abbaubar)
     crystal_nodes: Vec<Variant>,
     /// Strandgut
@@ -1082,6 +1104,7 @@ impl Library {
             magic_trees,
             stone_nodes,
             ore_nodes,
+            clay_nodes: asset_files::load_variants(ctx, "natur", "lehmvorkommen", Vec3::ONE, 0.0),
             crystal_nodes: asset_files::load_variants(ctx, "natur", "kristallvorkommen", Vec3::ONE, 0.0),
             driftwood: asset_files::load_variants(ctx, "natur", "treibholz", Vec3::ONE, 0.0),
             shells: asset_files::load_variants(ctx, "natur", "muscheln", Vec3::ONE, 0.0),
@@ -1109,6 +1132,7 @@ impl Library {
         }
         add_lods(ctx, &library.stone_nodes, &[Level(60.0, Some(0.3)), Level(350.0, None)]);
         add_lods(ctx, &library.ore_nodes, &[Level(60.0, Some(0.3)), Level(350.0, None)]);
+        add_lods(ctx, &library.clay_nodes, &[Level(60.0, Some(0.3)), Level(350.0, None)]);
         add_lods(ctx, &library.crystal_nodes, &[Level(120.0, Some(0.4)), Level(420.0, None)]);
         // Kleinkram verschwindet je nach Größe – auf der großen Insel wären sonst Zehntausende im Bild
         add_lods(ctx, &library.logs, &[Level(50.0, Some(0.25)), Level(170.0, None)]);
@@ -1338,6 +1362,40 @@ pub fn build(ctx: &mut Context) -> Island {
                 }
             };
 
+            // Lehm: helle, weiche Hügel in feuchten Niederungen und an der Küste
+            let clay = |rng: &mut Rng| {
+                let (mesh, glow_part) = pick(&lib.clay_nodes, rng);
+                let scale = rng.range(1.0, 1.3);
+                ResourceSpec {
+                    kind: ResourceKind::Lehm,
+                    name: "Lehmvorkommen",
+                    mesh,
+                    transform: Transform::from_position(base - Vec3::Y * 0.05).with_rotation(yaw).with_scale(Vec3::splat(scale)),
+                    color: Vec4::ONE,
+                    material: Material::Standard,
+                    glow_part,
+                    collider: Shape::Box { size: vec3(1.6, 0.8, 1.4) * scale },
+                    collider_offset: Vec3::Y * 0.4 * scale,
+                    max_health: 5,
+                }
+            };
+            // Kristallvorkommen: leuchten, sind fest und lassen sich nur von Kristallmagiern abbauen
+            let crystal = |rng: &mut Rng, scale: f32| {
+                let (mesh, glow_part) = pick(&lib.crystal_nodes, rng);
+                ResourceSpec {
+                    kind: ResourceKind::Kristall,
+                    name: "Kristallvorkommen",
+                    mesh,
+                    transform: Transform::from_position(base - Vec3::Y * 0.05).with_rotation(yaw).with_scale(Vec3::splat(scale)),
+                    color: Vec4::ONE,
+                    material: Material::Standard,
+                    glow_part,
+                    collider: Shape::Box { size: vec3(1.1, 1.2, 1.1) * scale },
+                    collider_offset: Vec3::Y * 0.6 * scale,
+                    max_health: 8,
+                }
+            };
+
             let mut found: Option<ResourceSpec> = None;
             if !clearing {
                 if slope > 0.55 {
@@ -1353,6 +1411,8 @@ pub fn build(ctx: &mut Context) -> Island {
                         decor(ctx, pick(&lib.driftwood, &mut rng), base, yaw, size, Vec4::ONE, Material::Standard);
                     } else if roll < 0.1 && !lib.shells.is_empty() {
                         decor(ctx, pick(&lib.shells, &mut rng), base, yaw, 1.0, Vec4::ONE, Material::Standard);
+                    } else if roll < 0.118 && h > 1.3 && slope < 0.3 && !lib.clay_nodes.is_empty() {
+                        found = Some(clay(&mut rng));
                     }
                 } else if h > 28.0 {
                     if roll < 0.06 {
@@ -1360,7 +1420,9 @@ pub fn build(ctx: &mut Context) -> Island {
                     } else if roll < 0.10 {
                         found = Some(node(&mut rng));
                     } else if roll < 0.112 && !lib.crystal_nodes.is_empty() {
-                        crystals.push(crystal_node(ctx, pick(&lib.crystal_nodes, &mut rng), base, yaw, rng.range(1.0, 1.4)));
+                        let scale = rng.range(1.0, 1.4);
+                        found = Some(crystal(&mut rng, scale));
+                        crystals.push(base);
                     }
                 } else if h > 17.0 {
                     if roll < 0.17 {
@@ -1378,7 +1440,9 @@ pub fn build(ctx: &mut Context) -> Island {
                     } else if roll < 0.42 {
                         decor(ctx, pick(&lib.magic_flowers, &mut rng), base, yaw, size, Vec4::ONE, Material::Emissive { glow: 0.5 });
                     } else if roll < 0.445 && !lib.crystal_nodes.is_empty() {
-                        crystals.push(crystal_node(ctx, pick(&lib.crystal_nodes, &mut rng), base, yaw, rng.range(0.9, 1.3)));
+                        let scale = rng.range(0.9, 1.3);
+                        found = Some(crystal(&mut rng, scale));
+                        crystals.push(base);
                     }
                 } else if birch_grove(p) > 0.64 && h < 14.0 {
                     // Birkenhain: helle Stämme dicht beieinander, dazwischen Büsche und Blumen
@@ -1417,6 +1481,8 @@ pub fn build(ctx: &mut Context) -> Island {
                             let spot = vec3(q.x, terrain.height_at(q.x, q.y), q.y);
                             decor(ctx, by_id(&lib.red_mushroom), spot, yaw, rng.range(0.7, 1.1), Vec4::ONE, Material::Standard);
                         }
+                    } else if roll < 0.62 && slope < 0.3 && !lib.clay_nodes.is_empty() {
+                        found = Some(clay(&mut rng));
                     }
                 } else if roll < 0.02 {
                     let (oak_size, health) = oak(&mut rng);
@@ -1429,6 +1495,8 @@ pub fn build(ctx: &mut Context) -> Island {
                     found = Some(node(&mut rng));
                 } else if roll < 0.28 {
                     decor(ctx, pick(&lib.flowers, &mut rng), base, yaw, size, Vec4::ONE, FLOWERS);
+                } else if roll < 0.292 && h < 10.0 && slope < 0.25 && !lib.clay_nodes.is_empty() {
+                    found = Some(clay(&mut rng));
                 }
             }
 
@@ -1509,7 +1577,8 @@ pub fn build(ctx: &mut Context) -> Island {
 
     log::info!("Insel gebaut: {} Rohstoffe, {} Objekte insgesamt", resources.len(), ctx.scene.len());
     places.surf = find_surf(&terrain);
-    log::info!("{} Kristallvorkommen, {} Brandungsstellen", crystals.len(), places.surf.len());
+    let lehm = resources.iter().filter(|(_, r)| r.kind == ResourceKind::Lehm).count();
+    log::info!("{} Kristallvorkommen, {lehm} Lehmvorkommen, {} Brandungsstellen", crystals.len(), places.surf.len());
     let map = (!ctx.is_headless()).then(|| {
         let started = std::time::Instant::now();
         let trees: Vec<Vec2> = resources
@@ -1525,18 +1594,6 @@ pub fn build(ctx: &mut Context) -> Island {
     Island { terrain, resources, spawn, crystals, map, places, strassen, siedlungen }
 }
 
-/// Ein magisches Kristallvorkommen: leuchtet, ist fest (man läuft nicht hindurch), lässt sich
-/// aber noch nicht abbauen. Liefert die Mitte am Boden.
-fn crystal_node(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, scale: f32) -> Vec3 {
-    let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(scale));
-    let entity = ctx.scene.spawn(Entity::new("Kristallvorkommen", mesh).with_transform(transform));
-    if let Some(glow) = glow {
-        ctx.scene.spawn(Entity::new("Kristalle", glow).with_transform(transform).with_material(Material::Emissive { glow: 1.5 }));
-    }
-    let collider = Transform::from_position(base + Vec3::Y * 0.6 * scale).with_rotation(rotation);
-    ctx.physics.add_body(entity, &collider, BodyDesc::fixed(Shape::Box { size: vec3(1.1, 1.2, 1.1) * scale }));
-    base
-}
 
 fn decor(ctx: &mut Context, (mesh, glow): Variant, base: Vec3, rotation: Quat, size: f32, color: Vec4, material: Material) {
     let transform = Transform::from_position(base - Vec3::Y * 0.05).with_rotation(rotation).with_scale(Vec3::splat(size));

@@ -200,7 +200,29 @@ def steinhammer(f, m, gewicht):
            oben_zu=True, unten_zu=True, teilung=1, glatt=False)
 
 
-WERKZEUGE = {"holz": faelleraxt, "stein": steinhammer, "erz": keilhaue}
+def spaten(f, m, gewicht):
+    """Spaten: Stiel mit Holzgriff oben, flaches Eisenblatt unten (Schneide nach unten)."""
+    holz, holz_dunkel, leder = farbe("#B8864E"), farbe("#8A5E30"), farbe("#6A4A2C")
+    eisen, eisen_hell = farbe("#6A6E76"), farbe("#C8CED6")
+    x, y = GRIFF_R.x, GRIFF_R.y
+    _stiel(f, m, gewicht, holz, holz_dunkel, leder, x, y)
+    mr = m.to_3x3()
+    # Blatt: breit und flach, zur Schneide hin dünner, mit Tülle um den Stiel
+    blatt = []
+    for z, breite, dicke in ((KOPF_Z + 0.1, 0.03, 0.02), (KOPF_Z + 0.06, 0.085, 0.012), (KOPF_Z, 0.095, 0.009), (KOPF_Z - 0.12, 0.095, 0.007),
+                             (KOPF_Z - 0.17, 0.085, 0.004), (KOPF_Z - 0.185, 0.07, 0.002)):
+        blatt.append((m @ Vector((x, y, z)), mr @ X, mr @ Y, breite, dicke))
+    f.loft("Spatenblatt", blatt, 8, lambda i, k, p: eisen_hell if i > 4.2 else eisen * (0.92 + 0.08 * (k % 2)), gewicht, oben_zu=True, unten_zu=True, teilung=1)
+    f.loft("Tuelle", [(m @ Vector((x, y, z)), mr @ X, mr @ Y, 0.024, 0.024) for z in (KOPF_Z + 0.08, KOPF_Z + 0.2)], 10, lambda i, k, p: eisen, gewicht,
+           oben_zu=True, unten_zu=True)
+    # Querholz als Griff über der Faust
+    f.loft("Spatengriff", [(m @ Vector((x - 0.07, y, STIEL_OBEN + 0.09)), mr @ Y, mr @ Z, 0.018, 0.018), (m @ Vector((x + 0.07, y, STIEL_OBEN + 0.09)), mr @ Y, mr @ Z, 0.018, 0.018)],
+           8, lambda i, k, p: holz_dunkel, gewicht, oben_zu=True, unten_zu=True)
+    f.loft("Griffstiel", [(m @ Vector((x, y, STIEL_OBEN - 0.02)), mr @ X, mr @ Y, 0.017, 0.017), (m @ Vector((x, y, STIEL_OBEN + 0.09)), mr @ X, mr @ Y, 0.015, 0.015)],
+           8, lambda i, k, p: holz, gewicht)
+
+
+WERKZEUGE = {"holz": faelleraxt, "stein": steinhammer, "erz": keilhaue, "lehm": spaten}
 
 
 def _ruecken_matrix(grund, kopf_richtung):
@@ -324,6 +346,8 @@ def _kopf(f, haut, lippe, wange, haar, bart_art, russ=False):
                                        Vector((0.046 * s, -0.11, 1.667 + DZ))], 0.008, 0.003, haar, KOPF_GEWICHT, 8, 0.3, 0.6, glatt=True)
             f.straehne("Kinnbart", [Vector((0.006 * s, -0.102, 1.66 + DZ)), Vector((0.004 * s, -0.104, 1.64 + DZ))], 0.007, 0.004, haar, KOPF_GEWICHT, 6, 0.0, 0.6,
                        glatt=True)
+    elif bart_art == "keiner":
+        pass
     else:
         # Kurzer Stoppelbart um Kinn und Mund
         ringe = []
@@ -793,7 +817,7 @@ def _animationen(armatur, art):
 
     # Tragen: langsamer, schwerer Schritt; die Hände halten die Last (IK)
     def tragen(phi):
-        werte = _gehen(phi, 20, 34, 12, 0.02, 2 if art != "stein" else -4, 12)
+        werte = _gehen(phi, 20, 34, 12, 0.02, 2 if art not in ("stein", "lehm") else -4, 12)
         if art == "holz":
             werte = [w for w in werte if w[0] not in ("Oberarm.L", "Unterarm.L")] + [("Oberarm.L", "rot", (-40, 0, 0)), ("Unterarm.L", "rot", (-120, 0, 0))]
         else:
@@ -803,7 +827,7 @@ def _animationen(armatur, art):
     animation(armatur, "Tragen", 36, _schleife(36, 2, tragen))
     if art == "holz":
         _ik_backen(armatur, 36, [("L", "Brust", Vector((0.25, -0.32, 1.6)), pol_l + Vector((0, 0, -0.1)))])
-    elif art == "stein":
+    elif art in ("stein", "lehm"):
         _ik_backen(armatur, 36, [("L", "Brust", Vector((0.2, -0.3, 1.0)), pol_l), ("R", "Brust", Vector((-0.2, -0.3, 1.0)), pol_r)])
     else:
         _ik_backen(armatur, 36, [("L", "Brust", Vector((0.14, -0.15, 1.34)), pol_l), ("R", "Brust", Vector((-0.14, -0.15, 1.34)), pol_r)])
@@ -830,6 +854,17 @@ def _animationen(armatur, art):
         posen = [(0, ausgeholt), (15, oben), (19, _mit(oben, Oberarm_R=(-140, 0, 0), Brust=(4, -20, 0))), (22, schlag), (26, nach), (31, zurueck),
                  (36, ausgeholt)]
         laenge, einschlag = 36, 22
+    elif art == "lehm":
+        # Spaten: ansetzen, mit dem Fuß hineintreten, Lehm heraushebeln und zur Seite werfen (Stich bei Bild 14)
+        bereit = dict(beine, **{"Brust": (16, 0, 0), "Bauch": (6, 0, 0), "Oberarm.R": (-38, 0, 0), "Unterarm.R": (-32, 0, 0), "Hand.R": (8, 0, 0)})
+        stich = {"Oberschenkel.L": (-42, 0, 0), "Unterschenkel.L": (58, 0, 0), "Fuss.L": (6, 0, 0), "Oberschenkel.R": (6, 0, 0), "Unterschenkel.R": (14, 0, 0),
+                 "Brust": (26, 0, 0), "Bauch": (10, 0, 0), "Kopf": (-14, 0, 0), "Oberarm.R": (-22, 0, 0), "Unterarm.R": (-14, 0, 0), "Hand.R": (10, 0, 0),
+                 "Becken.pos": (0, 0, -0.05)}
+        hebeln = dict(beine, **{"Brust": (4, 0, 0), "Bauch": (0, 0, 0), "Kopf": (-4, 0, 0), "Oberarm.R": (-58, 0, 0), "Unterarm.R": (-48, 0, 0), "Hand.R": (-12, 0, 0)})
+        werfen = dict(beine, **{"Brust": (6, 26, 0), "Bauch": (2, 10, 0), "Kopf": (-4, 12, 0), "Oberarm.R": (-86, 0, 0), "Unterarm.R": (-30, 0, 0), "Hand.R": (-30, 0, 0)})
+        posen = [(0, bereit), (8, _mit(bereit, Brust=(20, 0, 0), Oberarm_R=(-30, 0, 0))), (14, stich), (18, _mit(stich, Oberarm_R=(-26, 0, 0))), (26, hebeln),
+                 (32, werfen), (36, _mit(werfen, Oberarm_R=(-70, 0, 0))), (42, bereit)]
+        laenge, einschlag = 42, 14
     else:
         # Über den Kopf ausholen und mit ganzer Kraft nach vorne unten schlagen (Einschlag bei Bild 27)
         bereit = dict(beine, **{"Brust": (12, 0, 0), "Bauch": (5, 0, 0), "Oberarm.R": (-42, 0, 0), "Unterarm.R": (-22, 0, 0)})
@@ -844,3 +879,92 @@ def _animationen(armatur, art):
     _ik_backen(armatur, laenge, [("L", "Hand.R", stiel(0.34), pol_l)])
     treff = _treffpunkt(armatur, einschlag, stiel(1.0))
     print(f"TREFFPUNKT {art}: vorne {-treff.y:.2f} m, seitlich {treff.x:.2f} m, Höhe {treff.z:.2f} m")
+
+
+# ---------------------------------------------------------------------------
+# Lehmarbeiter
+# ---------------------------------------------------------------------------
+def lehmarbeiter(seed=74, name="Lehmarbeiter"):
+    """Junger Lehmstecher: breiter Strohhut, Leinenhemd mit hochgekrempelten Ärmeln, grünes
+    Halstuch, hochgekrempelte braune Hose, lehmverschmierte Stiefel und Schürze; Spaten. Trägt
+    einen gestochenen Lehmblock vor dem Bauch."""
+    f = Figur(name, seed)
+    r = f.rng
+    haut, lippe, wange = farbe("#D8A07A"), farbe("#B8806A"), farbe("#D8866E")
+    haar = farbe("#C88A3A")
+    leinen = farbe("#E8DEC8")
+    braun, braun_dunkel = farbe("#7A5A3A"), farbe("#5A402A")
+    lehm, lehm_dunkel = farbe("#D8B070"), farbe("#A87E4A")
+    gruen = farbe("#4E8A4A")
+    stroh, stroh_dunkel = farbe("#E8CC7A"), farbe("#B89A4A")
+
+    def hemd(p):
+        c = leinen * (0.92 + 0.08 * max(0.0, -p.normal.y))
+        # Lehmspritzer
+        if math.sin(p.center.x * 90 + p.center.z * 70) * math.sin(p.center.z * 55 - p.center.x * 30) > 0.92:
+            c = lehm
+        return c
+
+    def hose(p, s):
+        c = braun_dunkel if p.normal.x * s > 0.85 else braun * (0.94 + 0.08 * max(0.0, -p.normal.y))
+        # Unten hochgekrempelt und voller Lehm
+        if p.center.z < 0.32:
+            return lehm.lerp(lehm_dunkel, 0.3 + 0.3 * math.sin(p.center.x * 80))
+        if 0.32 <= p.center.z < 0.4:
+            return braun * 1.15
+        return c
+
+    _koerper(f, haut, braun, hose, hemd, lehm_dunkel, farbe("#3A2A1A"), farbe("#B08A5A"), leinen, lambda p: leinen * 0.95, True)
+    # Umgeschlagene Hosenbeine unter dem Knie
+    for s in (1, -1):
+        mitte = _spiegel(Vector((0.1, 0.0, 0.36)), s)
+        f.loft("Hosenumschlag", [(mitte + Vector((0, 0.0, -0.02)), X, Y, 0.068, 0.068), (mitte + Vector((0, 0.0, 0.03)), X, Y, 0.07, 0.07)], 18,
+               lambda i, k, p: braun * 1.1, _bein(s), teilung=1, glatt=True)
+    # Kurze Schürze voller Lehm, Nackenriemen, grünes Halstuch
+    schuerze = []
+    for t, (z, y, breite) in enumerate(((1.25, -0.142, 0.14), (1.1, -0.15, 0.16), (0.95, -0.146, 0.175), (0.8, -0.156, 0.18), (0.66, -0.166, 0.176))):
+        schuerze.append((Vector((0, y, z)), X, Y, breite, 0.011, lambda w, t=t: 1.0 + 0.03 * math.sin(w * 3 + t)))
+
+    def schuerze_farbe(i, k, p):
+        c = farbe("#8A7A62") * (0.92 + 0.08 * math.sin(p.center.z * 30))
+        return c.lerp(lehm, 0.55 * weich(1.0, 0.7, p.center.z) + 0.3 * max(0.0, math.sin(p.center.x * 60 + p.center.z * 20)))
+    f.loft("Schuerze", schuerze, 16, schuerze_farbe, _huefte_bein_schuerze, oben_zu=True, unten_zu=True, teilung=3, glatt=True)
+    for s in (1, -1):
+        f.loft("Nackenriemen", [(Vector((0.11 * s, -0.135, 1.25)), X, Y, 0.012, 0.005), (Vector((0.1 * s, -0.12, 1.42)), X, Y, 0.012, 0.005),
+                                (Vector((0.06 * s, 0.03, 1.56)), X, Y, 0.012, 0.005)], 6, lambda i, k, p: braun_dunkel, _rumpf, oben_zu=True, unten_zu=True, teilung=2)
+    f.loft("Schuerzenband", [(Vector((0, 0.008, 1.05)), X, Y, 0.182, 0.14), (Vector((0, 0.008, 1.075)), X, Y, 0.181, 0.139)], 40, lambda i, k, p: braun_dunkel, _rumpf)
+    f.loft("Halstuch", [(Vector((0, 0.012, 1.53)), X, Y, 0.1, 0.085), (Vector((0, 0.012, 1.565)), X, Y, 0.075, 0.07)], 24,
+           lambda i, k, p: gruen * (0.85 if k % 4 == 0 else 1.0), _rumpf, teilung=2, glatt=True)
+    f.kugel("Knoten", Vector((0.04, -0.08, 1.52)), (0.022, 0.018, 0.02), gruen * 0.9, _rumpf, 10, 6)
+    # Lehm an den Unterarmen
+    for s in (1, -1):
+        f.kugel("Lehmfleck", _spiegel(Vector((0.3, -0.03, 1.02)), s), (0.035, 0.03, 0.05), lambda poly: lehm * (0.9 + 0.1 * (poly.index % 2)), _arm(s), 8, 5)
+
+    _kopf(f, haut, lippe, wange, haar, "keiner")
+    # Breiter Strohhut mit Band
+    hut = []
+    for z, rx, ry, y in ((1.73, 0.105, 0.115, 0.004), (1.77, 0.108, 0.117, 0.008), (1.81, 0.1, 0.11, 0.012), (1.84, 0.08, 0.088, 0.016), (1.852, 0.03, 0.034, 0.018)):
+        hut.append((Vector((0, y, z)), X, Y, rx, ry))
+    f.loft("Hut", hut, 32, lambda i, k, p: stroh * (0.85 + 0.15 * ((k + int(p.center.z * 120)) % 2)), KOPF_GEWICHT, oben_zu=True, teilung=2, glatt=True)
+    f.loft("Krempe", [(Vector((0, 0.004, 1.74)), X, Y, 0.108, 0.118), (Vector((0, 0.0, 1.73)), X, Y, 0.2, 0.21), (Vector((0, 0.0, 1.705)), X, Y, 0.235, 0.245)],
+           32, lambda i, k, p: stroh_dunkel if k % 3 == 0 else stroh * 0.95, KOPF_GEWICHT, teilung=1, glatt=True)
+    f.loft("Hutband", [(Vector((0, 0.004, 1.745)), X, Y, 0.109, 0.119), (Vector((0, 0.006, 1.772)), X, Y, 0.11, 0.12)], 32, lambda i, k, p: gruen, KOPF_GEWICHT)
+
+    # Last: ein gestochener Lehmblock vor dem Bauch
+    anfang = len(f.teile)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.03, segments=2, affect="EDGES")
+    for v in bm.verts:
+        v.co = Vector((v.co.x * 0.36, v.co.y * 0.24, v.co.z * 0.22)) + Vector((0, -0.3, 1.02))
+        v.co += Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1))) * 0.006
+
+    def block(poly):
+        n = poly.normal
+        return (lehm if n.z > 0.5 else lehm_dunkel.lerp(farbe("#A8B6BC"), 0.3)) * (0.9 + 0.1 * max(0.0, n.z))
+    f._objekt(bm, "Lehmblock", block, BRUST_GEWICHT)
+    f.als_starr("Last", "Brust", anfang)
+
+    _werkzeug(f, "lehm", _ruecken_matrix(Vector((0.18, 0.2, 0.9)), Vector((-0.38, 0.05, 0.93))))
+    _skelett(f)
+    return f.fertig(lambda armatur: _animationen(armatur, "lehm"))

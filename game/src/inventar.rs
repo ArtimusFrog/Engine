@@ -416,7 +416,7 @@ impl InventoryUi {
         verkaeuflich.extend(Item::ALL.into_iter().filter(|&i| crate::handel::ankauf(i).is_some() && inventory.count(i) > 0).map(Ware::Gegenstand));
         let reihen = verkaeuflich.len().div_ceil(SPALTEN).clamp(1, 4);
         let angebot_hoehe = 64.0 + 46.0;
-        let height = MARGIN + HEADER + 22.0 + angebot_hoehe + 22.0 + SLOT + 26.0 + 22.0 + reihen as f32 * (SLOT + GAP) + FOOTER;
+        let height = MARGIN + HEADER + 22.0 + angebot_hoehe + 22.0 + SLOT + 34.0 + 22.0 + reihen as f32 * (SLOT + GAP) + FOOTER;
 
         egui::Area::new(egui::Id::new("haendler_fenster")).anchor(Align2::LEFT_CENTER, [22.0, 0.0]).show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
@@ -486,14 +486,15 @@ impl InventoryUi {
             // ---------- Baumaterial ----------
             abschnitt(y, "Baumaterial · Klick: 10 Stück, Rechtsklick: 1");
             y += 12.0;
+            let anzahl = crate::handel::ROHSTOFFE.len();
+            let zelle = (width - MARGIN * 2.0) / anzahl as f32;
             for (n, &item) in crate::handel::ROHSTOFFE.iter().enumerate() {
-                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + n as f32 * (SLOT * 2.0 + GAP), y), egui::vec2(SLOT, SLOT));
+                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + n as f32 * zelle + (zelle - SLOT) / 2.0, y), egui::vec2(SLOT, SLOT));
                 let preis = crate::handel::verkauf(item).unwrap_or(0);
-                let response = ui.interact(slot_rect.union(slot_rect.translate(egui::vec2(SLOT, 0.0))), egui::Id::new(("haendler_rohstoff", n)), egui::Sense::click());
+                let response = ui.interact(slot_rect, egui::Id::new(("haendler_rohstoff", n)), egui::Sense::click());
                 slot_frame(&painter, slot_rect, response.hovered(), true);
                 icons.paint(&painter, slot_rect.shrink(1.5), item);
-                painter.text(slot_rect.right_center() + egui::vec2(6.0, -8.0), Align2::LEFT_CENTER, item.label(), FontId::proportional(13.0), PARCHMENT);
-                painter.text(slot_rect.right_center() + egui::vec2(6.0, 9.0), Align2::LEFT_CENTER, format!("{preis} Gold"), FontId::proportional(12.5), GOLD_LIGHT);
+                painter.text(egui::pos2(slot_rect.center().x, slot_rect.bottom() + 11.0), Align2::CENTER_CENTER, format!("{} · {preis} Gold", item.label()), FontId::proportional(12.0), GOLD_LIGHT);
                 if response.clicked() && inventory.gold >= preis * 10 {
                     befehl = Some(HandelBefehl::Kaufen(Ware::Gegenstand(item), 10));
                 } else if response.secondary_clicked() && inventory.gold >= preis {
@@ -501,7 +502,7 @@ impl InventoryUi {
                 }
                 response.on_hover_text(format!("{}: {preis} Gold je Stück · 10 Stück {} Gold", item.label(), preis * 10));
             }
-            y += SLOT + 26.0;
+            y += SLOT + 34.0;
             // ---------- Verkaufen ----------
             divider(&painter, rect.left() + MARGIN, rect.right() - MARGIN, y - 12.0);
             abschnitt(y, "Verkaufen · Klick: 10 Stück bzw. das Teil, Rechtsklick: alle");

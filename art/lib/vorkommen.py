@@ -396,3 +396,74 @@ def kristallvorkommen(seed):
     dreiecke = sum(len(p.vertices) - 2 for p in obj.data.polygons)
     print(f"VORKOMMEN Kristallvorkommen: {dreiecke} Dreiecke")
     return obj
+
+
+def lehmvorkommen(seed):
+    """Lehmgrube im Kleinen: ein flacher, feuchter Hügel aus rotbraunem Lehm mit frisch
+    abgestochenen Stufen (Schichten aus Ocker, Rostrot und grauem Ton), ein paar gestochene
+    Lehmsoden am Rand, eine Pfütze und Binsen."""
+    zufall = random.Random(seed)
+    # Hell und weich – deutlich anders als das dunkle, kantige Erz: cremiges Ocker, blaugrauer Ton
+    ocker, rost, ton, dunkel = farbe("#E0B878"), farbe("#CC9A64"), farbe("#A8B6BC"), farbe("#8A6A4C")
+    gras = farbe("#6A9A48")
+    narbe = _rauschen(seed + 5)
+
+    def lehm(poly, fase=False):
+        n, p = poly.normal, poly.center
+        # Waagerechte Schichten (Ocker, Rostrot, grauer Ton) – an der Stichwand als klare Bänder
+        c = ocker if p.z > 0.3 else (rost if p.z > 0.17 else ton)
+        c = dunkel.lerp(c, min(1.0, 0.6 + 0.4 * (n.z + 0.4)))
+        # Oben eine lückenhafte Grasnarbe
+        if n.z > 0.8 and p.z > 0.34 and narbe(p) > 0.6:
+            c = gras * (0.92 + 0.12 * narbe(p * 3.0))
+        if fase:
+            c = c.lerp(farbe("#D8A874"), 0.35)
+        return c * zufall.uniform(0.97, 1.03)
+
+    teile = []
+    # Der Hügel: zwei, drei flache Brocken, oben abgeflacht, vorne stufig abgestochen
+    for i in range(zufall.randint(2, 3)):
+        r = (0.75 if i == 0 else zufall.uniform(0.4, 0.55))
+        w = math.tau * i / 3 + zufall.uniform(-0.4, 0.4)
+        d = 0.0 if i == 0 else zufall.uniform(0.45, 0.65)
+        bm = _brocken_bm(zufall, r, (zufall.uniform(1.1, 1.3), zufall.uniform(0.9, 1.1), 0.72), zufall.randint(2, 3), tiefe=(0.8, 0.97), oben=0.1, fase=0.0)
+        if i == 0:
+            # Frisch abgestochene, fast senkrechte Stichwand mit einer Stufe
+            for normale, abstand in ((Vector((0.2, -1.0, 0.12)).normalized(), r * 0.42), (Vector((0.1, -0.7, 0.7)).normalized(), r * 0.62)):
+                bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=normale * abstand, plane_no=normale, clear_outer=True)
+                rand = [e for e in bm.edges if e.is_boundary]
+                if rand:
+                    bmesh.ops.holes_fill(bm, edges=rand, sides=0)
+            bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        _setzen(bm, (math.cos(w) * d, math.sin(w) * d, r * 0.26), zufall.uniform(0, math.tau) if i else 0.0)
+        obj = _objekt(f"Lehmhuegel{i}", bm, lehm)
+        for poly in obj.data.polygons:
+            poly.use_smooth = True
+        teile.append(obj)
+    # Abgestochene Soden: glatte Quader mit Spatenkanten
+    for i in range(zufall.randint(3, 5)):
+        w = zufall.uniform(0, math.tau)
+        d = zufall.uniform(0.85, 1.2)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.015, segments=1, affect="EDGES")
+        bmesh.ops.transform(bm, matrix=Matrix.Diagonal((zufall.uniform(0.2, 0.28), zufall.uniform(0.13, 0.18), zufall.uniform(0.1, 0.14), 1.0)), verts=bm.verts)
+        _setzen(bm, (math.cos(w) * d, math.sin(w) * d, 0.05 + (0.12 if i == 1 else 0.0)), zufall.uniform(0, math.tau), (zufall.uniform(-0.15, 0.15), 0))
+        teile.append(_objekt(f"Sode{i}", bm, lambda poly, fase=False: (ocker if poly.normal.z > 0.5 else ton) * zufall.uniform(0.93, 1.05)))
+    # Pfütze in einer Mulde
+    w = zufall.uniform(0, math.tau)
+    bm = bmesh.new()
+    bmesh.ops.create_circle(bm, cap_ends=True, segments=10, radius=0.32)
+    bmesh.ops.transform(bm, matrix=Matrix.Diagonal((1.4, 0.9, 1.0, 1.0)), verts=bm.verts)
+    _setzen(bm, (math.cos(w) * 1.05, math.sin(w) * 1.05, 0.015), w)
+    teile.append(_objekt("Pfuetze", bm, lambda poly, fase=False: farbe("#7E9AA8")))
+    # Binsen am Rand der Pfütze
+    for k in range(7):
+        bm = bmesh.new()
+        bmesh.ops.create_cone(bm, cap_ends=False, segments=3, radius1=0.018, radius2=0.0, depth=zufall.uniform(0.35, 0.6))
+        bmesh.ops.translate(bm, vec=Vector((0, 0, 0.2)), verts=bm.verts)
+        q = Vector((math.cos(w) * 1.05, math.sin(w) * 1.05, 0)) + Vector((zufall.uniform(-0.45, 0.45), zufall.uniform(-0.35, 0.35), 0))
+        _setzen(bm, q, zufall.uniform(0, math.tau), (zufall.uniform(-0.25, 0.25), zufall.uniform(-0.25, 0.25)))
+        teile.append(_objekt(f"Binse{k}", bm, lambda poly, fase=False: farbe("#7FA84A") * zufall.uniform(0.85, 1.1)))
+    teile += _splitter(zufall, lambda poly, fase=False: ocker * zufall.uniform(0.85, 1.05), zufall.randint(4, 6), 1.0, (0.04, 0.08))
+    return _abschliessen("Lehmvorkommen", teile)

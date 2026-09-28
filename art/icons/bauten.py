@@ -17,9 +17,11 @@ sys.path.insert(0, str(REPO / "art" / "lib"))
 
 import siedlung  # noqa: E402
 import tuerme  # noqa: E402
+import werkstaetten  # noqa: E402
 import werkstatt  # noqa: E402
 
-GEBAEUDE = {"holzfaeller": siedlung.holzfaeller, "steinbruch": siedlung.steinbruch, "erzmine": siedlung.erzmine, "dorfhalle_1": lambda: siedlung.dorfhalle(1)}
+GEBAEUDE = {"holzfaeller": siedlung.holzfaeller, "steinbruch": siedlung.steinbruch, "erzmine": siedlung.erzmine, "dorfhalle_1": lambda: siedlung.dorfhalle(1),
+            "lehmgrube": werkstaetten.lehmgrube, "kristallturm": werkstaetten.kristallturm}
 
 
 def _turm(art):

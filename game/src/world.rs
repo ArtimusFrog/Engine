@@ -1002,7 +1002,14 @@ impl World {
         let camera = ctx.camera.position;
         let night = ctx.env.sky.stars;
         let dt = ctx.time.delta;
-        for &crystal in &self.crystals {
+        // Abgebaute Vorkommen leuchten nicht, bis sie nachgewachsen sind
+        let da: Vec<Vec3> = self
+            .resources
+            .values()
+            .filter(|r| r.spec.kind == ResourceKind::Kristall && r.is_present() && r.spec.transform.position.distance(camera) < 61.0)
+            .map(|r| r.spec.transform.position + Vec3::Y * 0.05)
+            .collect();
+        for crystal in da {
             let distance = crystal.distance(camera);
             if distance > 60.0 {
                 continue;
@@ -1481,6 +1488,51 @@ fn hit_particles(ctx: &mut Context, spec: &ResourceSpec, finished: bool) {
                 glow: if magic { 1.5 } else { 0.0 },
                 grow: 0.0,
                 round: false,
+            });
+        }
+        ResourceKind::Lehm => {
+            // Weiche, helle Lehmbrocken und etwas feuchter Spritzer
+            let at = base + Vec3::Y * 0.45 * scale;
+            ctx.particles.burst(Burst {
+                position: at,
+                count: 10 * many,
+                color: vec3(0.72, 0.52, 0.3),
+                color_variation: 0.15,
+                speed: if finished { 5.0 } else { 3.5 },
+                direction: Vec3::Y * 0.7,
+                size: if finished { 0.18 } else { 0.12 },
+                life: 1.0,
+                gravity: 9.0,
+                ..Default::default()
+            });
+            ctx.particles.burst(Burst {
+                position: at,
+                count: 3 * many,
+                color: vec3(0.42, 0.48, 0.5),
+                color_variation: 0.1,
+                speed: 1.5,
+                direction: Vec3::Y * 0.4,
+                size: 0.1,
+                life: 0.8,
+                ..Default::default()
+            });
+        }
+        ResourceKind::Kristall => {
+            // Leuchtende Splitter und ein Funkenregen
+            let at = base + Vec3::Y * 0.8 * scale;
+            ctx.particles.burst(Burst {
+                position: at,
+                count: 14 * many,
+                color: vec3(0.35, 0.75, 1.0),
+                color_variation: 0.3,
+                speed: if finished { 6.0 } else { 3.5 },
+                direction: Vec3::Y * 0.8,
+                size: 0.1,
+                life: 1.2,
+                gravity: 2.0,
+                glow: 3.0,
+                grow: 0.0,
+                round: true,
             });
         }
         ResourceKind::Stone | ResourceKind::Ore => {

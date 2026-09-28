@@ -333,6 +333,11 @@ pub struct Inventory {
     pub ruestungen: u32,
     #[serde(default)]
     pub ruestung: [u8; 3],
+    /// Lehm (Lehmgrube, Lehmvorkommen) und magische Kristalle (Kristallturm)
+    #[serde(default)]
+    pub lehm: u32,
+    #[serde(default)]
+    pub kristalle: u32,
 }
 
 /// Alles, was im Inventar liegen kann.
@@ -347,10 +352,12 @@ pub enum Item {
     Wool,
     Runenfragment,
     Runenstein,
+    Lehm,
+    Kristall,
 }
 
 impl Item {
-    pub const ALL: [Item; 9] = [Item::Gold, Item::Runenstein, Item::Runenfragment, Item::Wood, Item::Stone, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
+    pub const ALL: [Item; 11] = [Item::Gold, Item::Runenstein, Item::Runenfragment, Item::Kristall, Item::Wood, Item::Stone, Item::Lehm, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -363,6 +370,8 @@ impl Item {
             Item::Wool => "Wolle",
             Item::Runenfragment => "Runenfragment",
             Item::Runenstein => "Runenstein",
+            Item::Lehm => "Lehm",
+            Item::Kristall => "Kristall",
         }
     }
 
@@ -378,6 +387,8 @@ impl Item {
             Item::Wool => "wolle",
             Item::Runenfragment => "runenfragment",
             Item::Runenstein => "runenstein",
+            Item::Lehm => "lehm",
+            Item::Kristall => "kristall",
         }
     }
 
@@ -396,6 +407,8 @@ impl Item {
             Item::Pelt | Item::Wool => "Tierbeute · Handwerksmaterial",
             Item::Runenfragment => "Magie · Beute aus der Wildnis",
             Item::Runenstein => "Magie · öffnet einen Siedlungsplatz",
+            Item::Lehm => "Rohstoff · Baumaterial",
+            Item::Kristall => "Magie · Rohstoff für Zaubertürme",
         }
     }
 
@@ -410,17 +423,15 @@ impl Item {
             Item::Wool => "Weiche Schafwolle.",
             Item::Runenfragment => "Splitter eines alten Schutzsteins, erbeutet in den Lagern der Wildnis. Der Runenbrunnen in der Burg vereint vier davon zu einem Runenstein.",
             Item::Runenstein => "Setze ihn in den Schutzstein am Ende einer Heerstraße (E): Dann gehört dir der Siedlungsplatz und du kannst deine Dorfhalle bauen.",
+            Item::Lehm => "Heller, feuchter Lehm aus Lehmvorkommen in Niederungen und an der Küste. Für Rathaus, Burgfried, Kristallturm und Straßen.",
+            Item::Kristall => "Ein magischer Kristall, den die Kristallmagier eines Kristallturms aus den leuchtenden Vorkommen lösen. Stärkt die Zaubertürme.",
         }
     }
 }
 
 impl Inventory {
     pub fn add(&mut self, kind: crate::island::ResourceKind, amount: u32) {
-        match kind {
-            crate::island::ResourceKind::Wood => self.wood += amount,
-            crate::island::ResourceKind::Stone => self.stone += amount,
-            crate::island::ResourceKind::Ore => self.ore += amount,
-        }
+        self.add_item(kind.item(), amount);
     }
 
     pub fn count(&self, item: Item) -> u32 {
@@ -434,6 +445,8 @@ impl Inventory {
             Item::Wool => self.wool,
             Item::Runenfragment => self.runenfragmente,
             Item::Runenstein => self.runensteine,
+            Item::Lehm => self.lehm,
+            Item::Kristall => self.kristalle,
         }
     }
 
@@ -448,6 +461,8 @@ impl Inventory {
             Item::Wool => &mut self.wool,
             Item::Runenfragment => &mut self.runenfragmente,
             Item::Runenstein => &mut self.runensteine,
+            Item::Lehm => &mut self.lehm,
+            Item::Kristall => &mut self.kristalle,
         };
         *slot += amount;
     }
@@ -464,6 +479,8 @@ impl Inventory {
             Item::Wool => &mut self.wool,
             Item::Runenfragment => &mut self.runenfragmente,
             Item::Runenstein => &mut self.runensteine,
+            Item::Lehm => &mut self.lehm,
+            Item::Kristall => &mut self.kristalle,
         };
         if *slot < amount {
             return false;

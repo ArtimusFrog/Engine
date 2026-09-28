@@ -59,7 +59,9 @@ pub fn in_reichweite(p: Vec3) -> bool {
 pub fn ankauf(item: Item) -> Option<u32> {
     match item {
         Item::Wood | Item::Stone => Some(1),
+        Item::Lehm => Some(2),
         Item::Ore | Item::Wool => Some(3),
+        Item::Kristall => Some(15),
         Item::Meat => Some(2),
         Item::Pelt => Some(4),
         Item::Runenfragment => Some(35),
@@ -71,13 +73,14 @@ pub fn ankauf(item: Item) -> Option<u32> {
 pub fn verkauf(item: Item) -> Option<u32> {
     match item {
         Item::Wood | Item::Stone => Some(4),
+        Item::Lehm => Some(6),
         Item::Ore => Some(10),
         _ => None,
     }
 }
 
 /// Rohstoffe, die der Händler immer vorrätig hat.
-pub const ROHSTOFFE: [Item; 3] = [Item::Wood, Item::Stone, Item::Ore];
+pub const ROHSTOFFE: [Item; 4] = [Item::Wood, Item::Stone, Item::Lehm, Item::Ore];
 
 /// Wert einer Waffe oder eines Rüstungsteils in Gold (Kaufpreis beim Händler).
 pub fn wert(ware: Ware) -> Option<u32> {

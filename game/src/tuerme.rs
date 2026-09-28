@@ -277,7 +277,14 @@ impl TowerKind {
         };
         let s = (stufe.clamp(1, 3) - 1) as usize;
         let [holz, stein, erz] = tabelle[s];
-        [(Item::Gold, gold[s]), (Item::Wood, holz), (Item::Stone, stein), (Item::Ore, erz)].into_iter().filter(|&(_, n)| n > 0).collect()
+        // Die Zaubertürme brauchen für ihre letzte Stufe magische Kristalle (Kristallturm)
+        let kristalle = if s == 2 && self.magisch() { 4 } else { 0 };
+        [(Item::Gold, gold[s]), (Item::Wood, holz), (Item::Stone, stein), (Item::Ore, erz), (Item::Kristall, kristalle)].into_iter().filter(|&(_, n)| n > 0).collect()
+    }
+
+    /// Zaubertürme (Frost, Blitz, Sonne, Arkan, Sturm, Runen)
+    pub fn magisch(self) -> bool {
+        matches!(self, TowerKind::Frost | TowerKind::Lightning | TowerKind::Sun | TowerKind::Arcane | TowerKind::Storm | TowerKind::Rune)
     }
 
     /// Wen der Turm treffen kann.

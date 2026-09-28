@@ -353,6 +353,21 @@ pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
             painter.line_segment([v(0.0, -8.0 * n), v(0.0, 8.0 * n)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
             painter.line_segment([v(-5.0 * n, -2.0), v(5.0 * n, 3.0)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
         }
+        Item::Kristall => {
+            // Hoher blauer Kristall mit Glanzkante
+            let punkte = vec![v(0.0, -17.0), v(8.0, -8.0), v(7.0, 14.0), v(-7.0, 14.0), v(-8.0, -8.0)];
+            painter.add(egui::Shape::convex_polygon(punkte, Color32::from_rgb(60, 156, 255), outline));
+            painter.line_segment([v(0.0, -15.0), v(0.0, 12.0)], Stroke::new(2.0 * s, Color32::from_rgb(210, 241, 255)));
+        }
+        Item::Lehm => {
+            // Zwei helle, weiche Lehmblöcke
+            for (dx, dy) in [(-4.0, 5.0), (4.0, -4.0)] {
+                let block = egui::Rect::from_center_size(v(dx, dy), egui::vec2(20.0 * s, 13.0 * s));
+                painter.rect_filled(block, 4.0 * s, Color32::from_rgb(224, 184, 120));
+                painter.rect_stroke(block, 4.0 * s, outline, egui::StrokeKind::Inside);
+                painter.rect_filled(egui::Rect::from_min_size(block.left_bottom() - egui::vec2(0.0, 4.0 * s), egui::vec2(block.width(), 4.0 * s)), 2.0 * s, Color32::from_rgb(168, 182, 188));
+            }
+        }
         Item::Gold => {
             // Drei gestapelte Goldmünzen
             for (i, dy) in [9.0f32, 2.0, -5.0].into_iter().enumerate() {

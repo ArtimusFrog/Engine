@@ -219,7 +219,8 @@ impl Sounds {
                     let (hit, done) = match kind {
                         ResourceKind::Wood => (self.chop.wahl(&mut self.rng), self.tree_falls.wahl(&mut self.rng)),
                         ResourceKind::Stone => (self.stone.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
-                        ResourceKind::Ore => (self.ore.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
+                        ResourceKind::Ore | ResourceKind::Kristall => (self.ore.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
+                        ResourceKind::Lehm => (self.stone.wahl(&mut self.rng), self.rock_breaks.wahl(&mut self.rng)),
                     };
                     ctx.audio.play(hit, Play { at: Some(at + Vec3::Y), pitch, range: 45.0, ..Default::default() });
                     if finished {

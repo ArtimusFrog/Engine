@@ -1,4 +1,6 @@
-//! Arbeiter der Rohstoffgebäude: Holzfäller, Steinbruch und Erzmine schicken je drei Arbeiter los.
+//! Arbeiter der Rohstoffgebäude: Holzfäller, Steinbruch, Erzmine, Lehmgrube und Kristallturm
+//! schicken je drei Arbeiter los. Die Kristallmagier des Kristallturms schweben: Sie gleiten
+//! schneller, suchen weiter und lösen die Kristalle mit einem Zauberstrahl.
 //!
 //! Der Server steuert sie: Sie gehen aus der Tür zum nächsten freien Baum bzw. Vorkommen, bauen
 //! es ab (jeder Schlag trifft den Rohstoff wie der Schlag eines Spielers), tragen die Ladung
@@ -29,9 +31,26 @@ pub const LADUNG_AM_HAUS: u32 = 2;
 const ARBEIT_AM_HAUS: f32 = 14.0;
 /// So weit (Meter, ab der Tür) suchen die Arbeiter nach Bäumen und Vorkommen.
 pub const SUCHWEITE: f32 = 80.0;
-/// Gehen und Tragen (m/s)
+/// Kristallvorkommen sind selten: die Magier suchen viel weiter.
+pub const SUCHWEITE_KRISTALL: f32 = 220.0;
+/// Gehen und Tragen (m/s); die Magier gleiten schneller
 const TEMPO: f32 = 1.55;
 const TEMPO_TRAGEN: f32 = 1.3;
+const TEMPO_MAGIER: f32 = 2.6;
+const TEMPO_MAGIER_TRAGEN: f32 = 2.2;
+
+fn suchweite(art: ResourceKind) -> f32 {
+    if art == ResourceKind::Kristall { SUCHWEITE_KRISTALL } else { SUCHWEITE }
+}
+
+fn tempo(art: ResourceKind, tragen: bool) -> f32 {
+    match (art == ResourceKind::Kristall, tragen) {
+        (true, false) => TEMPO_MAGIER,
+        (true, true) => TEMPO_MAGIER_TRAGEN,
+        (false, false) => TEMPO,
+        (false, true) => TEMPO_TRAGEN,
+    }
+}
 /// Aufheben der Ladung am Rohstoff und Abladen an der Tür (Sekunden)
 const BUECKEN: f32 = 1.3;
 /// Pause an der Tür nach dem Abliefern, und Abstand, in dem die drei zu Beginn losgehen
@@ -77,6 +96,10 @@ pub fn schlag_takt(art: ResourceKind) -> (f32, f32) {
         ResourceKind::Wood => (36.0 / 30.0, 22.0 / 30.0 - crate::characters::CHOP_STRIKE),
         // Spitzhacke: 42 Bilder, Einschlag bei Bild 27
         ResourceKind::Stone | ResourceKind::Ore => (42.0 / 30.0, 27.0 / 30.0 - crate::characters::MINE_STRIKE),
+        // Spaten: 42 Bilder, Stich bei Bild 14
+        ResourceKind::Lehm => (42.0 / 30.0, 14.0 / 30.0 - crate::characters::MINE_STRIKE),
+        // Zauber: 48 Bilder, Stoß bei Bild 30
+        ResourceKind::Kristall => (48.0 / 30.0, 30.0 / 30.0 - crate::characters::MINE_STRIKE),
     }
 }
 
@@ -86,6 +109,8 @@ pub fn modell(art: ResourceKind) -> &'static str {
         ResourceKind::Wood => "holzarbeiter",
         ResourceKind::Stone => "steinarbeiter",
         ResourceKind::Ore => "erzarbeiter",
+        ResourceKind::Lehm => "lehmarbeiter",
+        ResourceKind::Kristall => "kristallmagier",
     }
 }
 
@@ -94,6 +119,8 @@ pub fn label(art: ResourceKind) -> &'static str {
         ResourceKind::Wood => "Holzarbeiter",
         ResourceKind::Stone => "Steinarbeiter",
         ResourceKind::Ore => "Erzarbeiter",
+        ResourceKind::Lehm => "Lehmstecher",
+        ResourceKind::Kristall => "Kristallmagier",
     }
 }
 
@@ -103,6 +130,8 @@ pub fn rohstoff(kind: BuildingKind) -> Option<ResourceKind> {
         BuildingKind::Lumberjack => Some(ResourceKind::Wood),
         BuildingKind::Quarry => Some(ResourceKind::Stone),
         BuildingKind::Mine => Some(ResourceKind::Ore),
+        BuildingKind::Lehmgrube => Some(ResourceKind::Lehm),
+        BuildingKind::Kristallturm => Some(ResourceKind::Kristall),
         _ => None,
     }
 }
@@ -113,6 +142,8 @@ fn tuer(b: &Building) -> Vec3 {
     let vorne = match b.kind {
         BuildingKind::Lumberjack => 3.4,
         BuildingKind::Quarry => 2.4,
+        BuildingKind::Lehmgrube => 2.6,
+        BuildingKind::Kristallturm => 1.6,
         _ => 0.9,
     };
     b.position + b.rotation() * vec3(0.0, 0.0, vorne)
@@ -125,6 +156,14 @@ fn am_haus(b: &Building, k: u32) -> (Vec3, Vec3) {
     let (stand, ziel) = match b.kind {
         BuildingKind::Lumberjack => (vec3(-4.2 + versatz * 0.3, 0.0, 1.2 + versatz), vec3(-5.2, 0.0, 1.2 + versatz)),
         BuildingKind::Quarry => (vec3(versatz * 2.0, 0.0, -1.2), vec3(versatz * 2.0, 0.0, -2.4)),
+        // Am Lehmwall hinter der Grube
+        BuildingKind::Lehmgrube => (vec3(versatz * 1.5, 0.0, -2.3), vec3(versatz * 1.5, 0.0, -3.5)),
+        // Um den Kristallsockel neben dem Turm
+        BuildingKind::Kristallturm => {
+            let w = (k as f32 - 1.0) * 1.2;
+            let sockel = vec3(3.3, 0.0, 1.2);
+            (sockel + vec3(-w.cos(), 0.0, w.sin()) * 1.9, sockel)
+        }
         _ => (vec3(versatz * 0.5, 0.0, -0.8), vec3(versatz * 0.5, 0.0, -2.5)),
     };
     (b.position + b.rotation() * stand, b.position + b.rotation() * ziel)
@@ -211,6 +250,7 @@ impl Arbeiterschaft {
         for a in &mut self.arbeiter {
             let Some(b) = buildings.iter().find(|b| b.id == a.gebaeude) else { continue };
             a.zeit -= dt;
+            let art = a.art;
             match a.tun {
                 Tun::Warten => {
                     if a.zeit <= 0.0 {
@@ -218,7 +258,7 @@ impl Arbeiterschaft {
                     }
                 }
                 Tun::Gehen | Tun::Tragen => {
-                    let tempo = if a.tun == Tun::Tragen { TEMPO_TRAGEN } else { TEMPO };
+                    let tempo = tempo(art, a.tun == Tun::Tragen);
                     if a.gehen(dt * tempo, terrain) {
                         if a.tun == Tun::Tragen {
                             a.tun = Tun::Abladen;
@@ -318,7 +358,7 @@ impl Arbeiter {
             .iter()
             .filter(|(id, r)| r.spec.kind == self.art && r.is_present() && !belegt.contains(id))
             .map(|(&id, r)| (id, r, flach(r.spec.transform.position).distance(flach(von))))
-            .filter(|&(_, _, d)| d <= SUCHWEITE)
+            .filter(|&(_, _, d)| d <= suchweite(self.art))
             .min_by(|a, b| a.2.total_cmp(&b.2));
         match naechster {
             Some((id, r, _)) => {
@@ -326,7 +366,14 @@ impl Arbeiter {
                 // Vom Weg her an den Rohstoff treten; Abstand so, dass Axt bzw. Hacke gerade trifft
                 // (Treffpunkt laut art/lib/arbeiter.py: Axt 1,24 m, Hacke und Hammer 1,18 m vor den Füßen)
                 let richtung = (flach(self.position) - mitte).normalize_or(Vec2::X);
-                let abstand = r.radius() + if self.art == ResourceKind::Wood { 1.1 } else { 0.9 };
+                let abstand = r.radius()
+                    + match self.art {
+                        ResourceKind::Wood => 1.1,
+                        ResourceKind::Lehm => 0.45,
+                        // Der Magier zaubert aus etwas Abstand
+                        ResourceKind::Kristall => 1.7,
+                        _ => 0.9,
+                    };
                 self.ziel = Some(id);
                 belegt.insert(id);
                 self.weg = weg(b, self.position, { let p = mitte + richtung * abstand; vec3(p.x, 0.0, p.y) });
@@ -380,6 +427,8 @@ fn kern(b: &Building) -> (Vec2, f32) {
     let (hinten, radius) = match b.kind {
         BuildingKind::Lumberjack => (0.0, 3.3),
         BuildingKind::Quarry => (4.2, 3.6),
+        BuildingKind::Lehmgrube => (3.6, 3.4),
+        BuildingKind::Kristallturm => (1.6, 2.7),
         _ => (3.6, 3.2),
     };
     (flach(b.position + b.rotation() * vec3(0.0, 0.0, -hinten)), radius)
@@ -426,6 +475,8 @@ struct Figur {
     shown: Vec3,
     blick: f32,
     tun: Tun,
+    /// Zeit bis zum nächsten Funken des Zauberstrahls (Kristallmagier)
+    funken: f32,
 }
 
 /// Was Clients von den Arbeitern sehen: Modelle anlegen, nachführen, animieren, entfernen.
@@ -475,7 +526,7 @@ impl ArbeiterAnsicht {
                     .with_material(Material::Figur { rim: 0.35 });
                 entity.joints = animator.palette();
                 let entity = ctx.scene.spawn(entity);
-                self.figuren.insert(state.id, Figur { entity, animator, art: state.art, shown: state.position, blick: state.blick, tun: Tun::Warten });
+                self.figuren.insert(state.id, Figur { entity, animator, art: state.art, shown: state.position, blick: state.blick, tun: Tun::Warten, funken: 0.0 });
             }
             let Some(figur) = self.figuren.get_mut(&state.id) else { continue };
             // Weich nachführen (Schnappschüsse kommen nur alle paar Bilder)
@@ -504,13 +555,18 @@ impl ArbeiterAnsicht {
                     figur.animator.set_visible("Werkzeug", !traegt);
                     figur.animator.set_visible("Werkzeug_Ruecken", traegt);
                 }
-                figur.animator.set_speed(match figur.tun {
+                figur.animator.set_speed(match (figur.tun, figur.art) {
+                    // Die Magier gleiten: kein Schritt, der zum Tempo passen muss
+                    (_, ResourceKind::Kristall) => 1.0,
                     // Schrittweite der Clips: Laufen 1,75 m/s, Tragen 1,06 m/s bei Tempo 1
-                    Tun::Gehen => TEMPO / 1.75,
-                    Tun::Tragen => TEMPO_TRAGEN / 1.06,
+                    (Tun::Gehen, _) => TEMPO / 1.75,
+                    (Tun::Tragen, _) => TEMPO_TRAGEN / 1.06,
                     _ => 1.0,
                 });
                 figur.animator.update(dt);
+                if figur.art == ResourceKind::Kristall {
+                    zauber_funken(ctx, figur, dt);
+                }
             }
             let Some(entity) = ctx.scene.try_get_mut(figur.entity) else { continue };
             entity.visible = sichtbar;
@@ -523,6 +579,51 @@ impl ArbeiterAnsicht {
             }
             let _ = figur.art;
         }
+    }
+}
+
+/// Funken der Kristallmagier: beim Arbeiten ein Strahl vom Stab zum Vorkommen, beim Tragen
+/// glitzern die schwebenden Kristalle, beim Gleiten eine feine Spur.
+fn zauber_funken(ctx: &mut Context, figur: &mut Figur, dt: f32) {
+    figur.funken -= dt;
+    if figur.funken > 0.0 {
+        return;
+    }
+    let vorne = vec3(figur.blick.sin(), 0.0, figur.blick.cos());
+    let blau = vec3(0.35, 0.75, 1.0);
+    let funke = |position: Vec3, richtung: Vec3, speed: f32, size: f32, life: f32, gravity: f32| Burst {
+        position,
+        count: 1,
+        color: blau,
+        color_variation: 0.25,
+        speed,
+        direction: richtung,
+        size,
+        life,
+        gravity,
+        glow: 3.0,
+        grow: 0.0,
+        round: true,
+    };
+    match figur.tun {
+        Tun::Arbeiten => {
+            figur.funken = 0.05;
+            let stab = figur.shown + vorne * 0.9 + Vec3::Y * 2.1;
+            let ziel = figur.shown + vorne * 2.3 + Vec3::Y * 0.7;
+            let lauf = (ctx.time.elapsed * 3.0).fract();
+            for k in 0..4 {
+                let t = (k as f32 + lauf) / 4.0;
+                ctx.particles.burst(funke(stab.lerp(ziel, t), (ziel - stab).normalize_or_zero() * 0.5, 0.4, 0.09, 0.35, 0.0));
+            }
+            ctx.particles.burst(Burst { count: 2, ..funke(ziel, Vec3::Y * 0.5, 1.6, 0.07, 0.6, 1.0) });
+        }
+        Tun::Tragen | Tun::Gehen => {
+            let tragen = figur.tun == Tun::Tragen;
+            figur.funken = if tragen { 0.12 } else { 0.2 };
+            let at = if tragen { figur.shown + vorne * 0.34 + Vec3::Y * 1.3 } else { figur.shown + Vec3::Y * 0.2 };
+            ctx.particles.burst(funke(at, Vec3::Y * 0.2, 0.3, 0.06, 0.8, -0.2));
+        }
+        _ => figur.funken = 0.3,
     }
 }
 
@@ -543,6 +644,35 @@ mod tests {
             zweig: 0,
             ziel: Default::default(),
         }
+    }
+
+    #[test]
+    fn lehmgrube_und_kristallturm_schicken_ihre_arbeiter() {
+        let terrain = Terrain::generate(Vec2::ZERO, 200.0, 50, |_| 5.0);
+        let mut lehm = haus(BuildingKind::Lehmgrube);
+        lehm.id = 3;
+        let mut turm = haus(BuildingKind::Kristallturm);
+        turm.id = 5;
+        turm.position = vec3(60.0, 0.0, 0.0);
+        let buildings = vec![lehm, turm];
+        let mut schaft = Arbeiterschaft::default();
+        let mut geliefert = 0;
+        for _ in 0..(60 * 90) {
+            for e in schaft.takt(1.0 / 60.0, &buildings, &BTreeMap::new(), &terrain) {
+                if let Ereignis::Lieferung { menge, .. } = e {
+                    geliefert += menge;
+                }
+            }
+        }
+        let arten: Vec<ResourceKind> = schaft.states().iter().map(|s| s.art).collect();
+        assert_eq!(arten.iter().filter(|&&a| a == ResourceKind::Lehm).count(), JE_GEBAEUDE as usize);
+        assert_eq!(arten.iter().filter(|&&a| a == ResourceKind::Kristall).count(), JE_GEBAEUDE as usize);
+        assert!(geliefert > 0, "nichts geliefert");
+        // Die Magier gleiten schneller und suchen weiter als die übrigen Arbeiter
+        assert!(tempo(ResourceKind::Kristall, false) > tempo(ResourceKind::Lehm, false));
+        assert!(suchweite(ResourceKind::Kristall) > suchweite(ResourceKind::Lehm));
+        // Kristalle baut kein Spieler von Hand ab
+        assert!(!ResourceKind::Kristall.von_hand() && ResourceKind::Lehm.von_hand());
     }
 
     #[test]

@@ -512,8 +512,8 @@ impl Playground {
         let Some(id) = self.aim else { return };
         let Some(session) = &mut self.session else { return };
         let Some(kind) = session.world().resources.get(&id).map(|r| r.spec.kind) else { return };
-        // Bäume nur mit der Axt, Vorkommen nur mit der Spitzhacke
-        if tool != kind.tool() {
+        // Bäume nur mit der Axt, Vorkommen nur mit der Spitzhacke; Kristalle gar nicht von Hand
+        if tool != kind.tool() || !kind.von_hand() {
             return;
         }
         let ticks = if kind.needs_pickaxe() { crate::world::MINE_COOLDOWN_TICKS } else { crate::world::HARVEST_COOLDOWN_TICKS };
@@ -2413,13 +2413,24 @@ impl Game for Playground {
             use crate::bauten::{Building, BuildingKind};
             let kind = BuildingKind::ALL.into_iter().find(|k| k.file_name().starts_with(&name)).unwrap_or(BuildingKind::Lumberjack);
             if let Some(local) = session.local_player() {
-                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 200, stone: 200, ore: 20, ..Default::default() });
+                session.world_mut().inventories.insert(local, crate::protocol::Inventory { wood: 200, stone: 200, ore: 20, lehm: 50, ..Default::default() });
             }
             let world = session.world();
             let spawn = vec2(world.spawn.x, world.spawn.z);
-            // Freien Platz nahe beim Start suchen
+            // Rohstoffgebäude neben das nächste passende Vorkommen, sonst nahe beim Start
+            let vorkommen = crate::arbeiter::rohstoff(kind).and_then(|art| {
+                world
+                    .resources
+                    .values()
+                    .filter(|r| r.spec.kind == art)
+                    .map(|r| vec2(r.spec.transform.position.x, r.spec.transform.position.z))
+                    .filter(|p| crate::bauten::check_site(world, kind, *p + vec2(30.0, 0.0), None).is_ok() || p.distance(spawn) > 60.0)
+                    .min_by(|a, b| a.distance(spawn).total_cmp(&b.distance(spawn)))
+            });
+            let (mitte, anfang) = vorkommen.map_or((spawn, 45.0), |p| (p, 18.0));
+            // Freien Platz suchen
             let site = (0..480).find_map(|i| {
-                let at = spawn + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (45.0 + (i / 24) as f32 * 8.0);
+                let at = mitte + Vec2::from_angle((i % 24) as f32 / 24.0 * std::f32::consts::TAU) * (anfang + (i / 24) as f32 * 8.0);
                 crate::bauten::check_site(world, kind, at, None).ok().map(|y| (at, y))
             });
             if let (Some((at, y)), Some(local)) = (site, session.local_player()) {

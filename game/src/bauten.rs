@@ -27,11 +27,16 @@ pub enum BuildingKind {
     Tower(TowerKind),
     /// Falle direkt auf der Heerstraße
     Falle(FallenArt),
+    /// Lehmgrube: Lehmstecher bauen Lehmvorkommen ab
+    Lehmgrube,
+    /// Kristallturm: Kristallmagier lösen Kristalle aus den magischen Vorkommen
+    Kristallturm,
 }
 
 impl BuildingKind {
     /// Die Wirtschaftsgebäude (Reiter „Gebäude“ im Baumenü)
-    pub const ALL: [BuildingKind; 4] = [BuildingKind::Dorfhalle, BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine];
+    pub const ALL: [BuildingKind; 6] =
+        [BuildingKind::Dorfhalle, BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Lehmgrube, BuildingKind::Mine, BuildingKind::Kristallturm];
 
     pub fn tower(self) -> Option<TowerKind> {
         match self {
@@ -53,6 +58,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => "Holzfäller",
             BuildingKind::Quarry => "Steinbruch",
             BuildingKind::Mine => "Erzmine",
+            BuildingKind::Lehmgrube => "Lehmgrube",
+            BuildingKind::Kristallturm => "Kristallturm",
             BuildingKind::Tower(t) => t.label(),
             BuildingKind::Falle(f) => f.label(),
         }
@@ -73,6 +80,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => "Blockhütte mit Holzschuppen. Der Holzfäller schlägt Holz für dich.",
             BuildingKind::Quarry => "Felswand mit Tretradkran und Werkstatt. Bricht Steinquader für dich.",
             BuildingKind::Mine => "Stollen mit Förderturm und Rennofen. Fördert Eisenerz für dich.",
+            BuildingKind::Lehmgrube => "Lehmwall mit Trockenschuppen und Ziegelofen. Lehmstecher holen Lehm aus den Vorkommen in der Nähe.",
+            BuildingKind::Kristallturm => "Schlanker Magierturm mit schwebendem Kristall. Kristallmagier gleiten zu den leuchtenden Vorkommen und lösen die Kristalle mit Magie.",
             BuildingKind::Tower(t) => t.description(),
             BuildingKind::Falle(f) => f.description(),
         }
@@ -85,6 +94,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => "holzfaeller".into(),
             BuildingKind::Quarry => "steinbruch".into(),
             BuildingKind::Mine => "erzmine".into(),
+            BuildingKind::Lehmgrube => "lehmgrube".into(),
+            BuildingKind::Kristallturm => "kristallturm".into(),
             BuildingKind::Tower(t) => format!("turm_{}_{}", t.file(), level.clamp(1, MAX_STUFE)),
             BuildingKind::Falle(f) => f.file().into(),
         }
@@ -105,6 +116,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => vec![(Item::Wood, 20), (Item::Stone, 8)],
             BuildingKind::Quarry => vec![(Item::Wood, 25), (Item::Stone, 10)],
             BuildingKind::Mine => vec![(Item::Wood, 30), (Item::Stone, 20)],
+            BuildingKind::Lehmgrube => vec![(Item::Wood, 20), (Item::Stone, 6)],
+            BuildingKind::Kristallturm => vec![(Item::Gold, 80), (Item::Wood, 25), (Item::Stone, 30), (Item::Ore, 10), (Item::Lehm, 20)],
             BuildingKind::Tower(t) => t.kosten(1),
             BuildingKind::Falle(f) => f.kosten(),
         }
@@ -114,8 +127,8 @@ impl BuildingKind {
     pub fn upgrade_cost(self, level: u8) -> Vec<(Item, u32)> {
         match self {
             BuildingKind::Tower(t) if level <= MAX_STUFE => t.kosten(level),
-            BuildingKind::Dorfhalle if level == 2 => vec![(Item::Gold, 120), (Item::Wood, 40), (Item::Stone, 30), (Item::Ore, 8)],
-            BuildingKind::Dorfhalle if level == 3 => vec![(Item::Gold, 300), (Item::Wood, 60), (Item::Stone, 60), (Item::Ore, 25)],
+            BuildingKind::Dorfhalle if level == 2 => vec![(Item::Gold, 120), (Item::Wood, 40), (Item::Stone, 30), (Item::Lehm, 15), (Item::Ore, 8)],
+            BuildingKind::Dorfhalle if level == 3 => vec![(Item::Gold, 300), (Item::Wood, 60), (Item::Stone, 60), (Item::Lehm, 35), (Item::Ore, 25)],
             _ => Vec::new(),
         }
     }
@@ -127,6 +140,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => "einen Holzfäller".into(),
             BuildingKind::Quarry => "einen Steinbruch".into(),
             BuildingKind::Mine => "eine Erzmine".into(),
+            BuildingKind::Lehmgrube => "eine Lehmgrube".into(),
+            BuildingKind::Kristallturm => "einen Kristallturm".into(),
             BuildingKind::Tower(t) => t.with_article(),
             BuildingKind::Falle(f) => f.with_article(),
         }
@@ -138,6 +153,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => Some(Item::Wood),
             BuildingKind::Quarry => Some(Item::Stone),
             BuildingKind::Mine => Some(Item::Ore),
+            BuildingKind::Lehmgrube => Some(Item::Lehm),
+            BuildingKind::Kristallturm => Some(Item::Kristall),
             BuildingKind::Tower(_) | BuildingKind::Falle(_) | BuildingKind::Dorfhalle => None,
         }
     }
@@ -149,6 +166,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => 7.4,
             BuildingKind::Quarry => 8.0,
             BuildingKind::Mine => 7.4,
+            BuildingKind::Lehmgrube => 7.4,
+            BuildingKind::Kristallturm => 7.0,
             BuildingKind::Tower(TowerKind::Catapult) => 3.3 * TURM_GROESSE,
             BuildingKind::Tower(TowerKind::Barracks | TowerKind::Treasury) => 2.9 * TURM_GROESSE,
             BuildingKind::Tower(_) => 2.6 * TURM_GROESSE,
@@ -164,6 +183,8 @@ impl BuildingKind {
             BuildingKind::Lumberjack => 30.0,
             BuildingKind::Quarry => 36.0,
             BuildingKind::Mine => 42.0,
+            BuildingKind::Lehmgrube => 30.0,
+            BuildingKind::Kristallturm => 50.0,
             BuildingKind::Tower(_) if level > 1 => 8.0,
             BuildingKind::Tower(_) => 14.0,
             BuildingKind::Falle(_) => 5.0,
@@ -205,6 +226,12 @@ impl BuildingKind {
                 ([4.6, 2.5, 0.9], [2.2, 5.0, 2.2]),
                 ([-3.6, 1.2, 1.5], [2.0, 2.4, 2.0]),
             ],
+            BuildingKind::Lehmgrube => vec![
+                ([0.0, 1.2, -4.6], [9.0, 2.4, 3.2]),
+                ([4.6, 0.5, -1.0], [4.0, 1.0, 3.8]),
+                ([4.4, 1.1, -0.4], [2.4, 2.2, 2.4]),
+            ],
+            BuildingKind::Kristallturm => vec![([0.0, 5.0, -1.6], [4.4, 10.0, 4.4]), ([-3.3, 0.6, 1.2], [0.5, 1.2, 0.5])],
             BuildingKind::Tower(t) => {
                 let h = kopf_hoehe(level) + TURM_GROESSE;
                 let breite = if t == TowerKind::Catapult { 4.4 } else { 3.3 } * TURM_GROESSE;
@@ -223,8 +250,8 @@ pub fn bauradius(level: u8) -> f32 {
 /// Was die Stufen der Dorfhalle freischalten (für Menü und Fenster).
 pub fn dorfhalle_freischaltung(level: u8) -> &'static str {
     match level {
-        1 => "Holzfäller und Steinbruch",
-        2 => "Erzmine, 95 m Bauradius, mehr Gold je Welle",
+        1 => "Holzfäller, Steinbruch und Lehmgrube",
+        2 => "Erzmine, Kristallturm, 95 m Bauradius, mehr Gold je Welle",
         _ => "120 m Bauradius, am meisten Gold je Welle",
     }
 }
@@ -356,10 +383,13 @@ pub fn siedlung_pruefen(world: &crate::world::World, kind: BuildingKind, at: Vec
             }
             Ok(())
         }
-        BuildingKind::Lumberjack | BuildingKind::Quarry | BuildingKind::Mine => {
+        BuildingKind::Lumberjack | BuildingKind::Quarry | BuildingKind::Mine | BuildingKind::Lehmgrube | BuildingKind::Kristallturm => {
             let Some(halle) = eigene else { return Err("Erst eine Dorfhalle bauen") };
             if kind == BuildingKind::Mine && halle.level < 2 {
                 return Err("Die Erzmine braucht ein Rathaus (Dorfhalle Stufe 2)");
+            }
+            if kind == BuildingKind::Kristallturm && halle.level < 2 {
+                return Err("Der Kristallturm braucht ein Rathaus (Dorfhalle Stufe 2)");
             }
             let mitte = vec2(halle.position.x, halle.position.z);
             if mitte.distance(at) + kind.radius() * 0.5 > bauradius(halle.level) {
