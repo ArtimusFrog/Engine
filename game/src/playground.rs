@@ -149,6 +149,8 @@ pub struct Playground {
     demo_fight: bool,
     /// Nur zum Testen: vor ein Lager der Wildnis (`--demo-lager N`) bzw. an den Runenbrunnen (`--demo-brunnen`)
     demo_lager: Option<usize>,
+    /// Nur für Screenshots: `--demo-pilzling [bilder]` – nach so vielen Bildern zündet der nächste Pilzling
+    demo_zuenden: Option<u32>,
     /// Nur für Screenshots: `--demo-dungeon d e [raum]` (e = -1: vor dem Eingang)
     demo_dungeon: Option<(usize, i32, Option<usize>)>,
     /// Nur zum Testen: dabei regelmäßig die Fähigkeit N (0–2) aufs Lager einsetzen (`--demo-angriff N`)
@@ -243,6 +245,7 @@ impl Playground {
             demo_troops: false,
             demo_fight: false,
             demo_lager: None,
+            demo_zuenden: None,
             demo_dungeon: None,
             demo_angriff: None,
             demo_brunnen: false,
@@ -2089,6 +2092,11 @@ impl Game for Playground {
         if let Some(i) = args.iter().position(|a| a == "--demo-lager") {
             self.demo_lager = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
         }
+        if args.iter().any(|a| a == "--demo-pilzling") {
+            // Der Pilzkreis wird gesucht, sobald die Welt steht
+            self.demo_lager = Some(usize::MAX);
+            self.demo_zuenden = Some(args.iter().position(|a| a == "--demo-pilzling").and_then(|i| args.get(i + 1)).and_then(|n| n.parse().ok()).unwrap_or(40));
+        }
         if let Some(i) = args.iter().position(|a| a == "--demo-dungeon") {
             let zahl = |k: usize| args.get(i + k).and_then(|n| n.parse::<i32>().ok());
             self.demo_dungeon = Some((zahl(1).unwrap_or(0).max(0) as usize, zahl(2).unwrap_or(0), zahl(3).map(|r| r.max(0) as usize)));
@@ -2543,14 +2551,38 @@ impl Game for Playground {
                 }
             }
         }
+        if let (Some(bilder), Some(session)) = (&mut self.demo_zuenden, &mut self.session) {
+            if *bilder == 0 {
+                if let Some(local) = session.local_player() {
+                    if let Some(p) = session.world().player_position(ctx, local) {
+                        session.world_mut().wildnis.zuenden(p, local);
+                    }
+                }
+                self.demo_zuenden = None;
+            } else {
+                *bilder -= 1;
+            }
+        }
         if let (Some(index), Some(session)) = (self.demo_lager, &mut self.session) {
             if let Some(local) = session.local_player() {
                 self.demo_lager = None;
                 let world = session.world();
+                // Pilzling-Demo: den Pilzkreis auf die offene Wiese vor dem Startplatz holen
+                let index = if index == usize::MAX {
+                    let index = world.wildnis.lager.iter().position(|l| l.art().name == "Pilzkreis").unwrap_or(0);
+                    let wiese = vec2(world.spawn.x, world.spawn.z) + vec2(10.0, 6.0);
+                    let world = session.world_mut();
+                    let terrain = world.terrain.clone();
+                    world.wildnis.verlegen(index, wiese, &|p| terrain.height_at(p.x, p.y));
+                    index
+                } else {
+                    index
+                };
+                let world = session.world();
                 if let Some(lager) = world.wildnis.lager.get(index.min(world.wildnis.lager.len().saturating_sub(1))) {
                     let mitte = lager.mitte;
                     let weg = (mitte - vec2(world.spawn.x, world.spawn.z)).normalize_or(Vec2::X);
-                    let stand = mitte - weg * if self.demo_angriff.is_some() { 9.0 } else { 24.0 };
+                    let stand = mitte - weg * if self.demo_angriff.is_some() || self.demo_zuenden.is_some() { 9.0 } else { 24.0 };
                     let y = world.terrain.height_at(stand.x, stand.y) + 1.0;
                     let character = world.players[&local].character;
                     ctx.physics.teleport_character(character, vec3(stand.x, y, stand.y));

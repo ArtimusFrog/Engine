@@ -786,10 +786,17 @@ impl Authority {
         let (terrain, dungeons) = (&world.terrain, &world.dungeons);
         let angriffe = world.wildnis.tick(Physics::FIXED_DT, &spieler, &|p| bodenhoehe(terrain, dungeons, p));
         for a in angriffe {
-            let entry = (a.kind, a.von, a.ziel);
-            self.strikes.push(entry);
-            world.strikes.push(entry);
+            if !a.explosion {
+                let entry = (a.kind, a.von, a.ziel);
+                self.strikes.push(entry);
+                world.strikes.push(entry);
+            }
             self.spieler_schaden(ctx, world, a.spieler, a.schaden, a.kind.label());
+        }
+        for ort in std::mem::take(&mut world.wildnis.explosionen) {
+            let ereignis = Ereignis::Sporenexplosion(ort);
+            world.ereignisse.push(ereignis);
+            self.ereignisse.push(ereignis);
         }
         world.wildnis.besetzt.clear();
         for g in std::mem::take(&mut world.wildnis.gefallen) {

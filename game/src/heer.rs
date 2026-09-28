@@ -464,6 +464,8 @@ pub mod zustand {
     pub const GETEERT: u16 = 1024;
     /// In Eis gefangen (Frostnova): der nächste Treffer zerschmettert es
     pub const GEFROREN: u16 = 2048;
+    /// Pilzling glüht auf und wird gleich platzen
+    pub const ZUENDET: u16 = 4096;
 }
 
 /// Was alle Rechner von einer Einheit wissen müssen.
@@ -1982,6 +1984,8 @@ struct Figur {
     flash: f32,
     fallen: f32,
     flags: u16,
+    /// Pilzling: wie weit die Zündschnur schon abgebrannt ist (0..1)
+    zuend_zeit: f32,
     /// Schaden, der noch als Zahl erscheinen soll, und wie lange schon gesammelt wird
     offen: f32,
     sammeln: f32,
@@ -2107,6 +2111,7 @@ impl HeerAnsicht {
                         trefferkugel: state.trefferkugel,
                         flash: 0.0,
                         fallen: 0.0,
+                        zuend_zeit: 0.0,
                         flags: state.flags,
                         boss: state.boss,
                         offen: 0.0,
@@ -2289,7 +2294,10 @@ impl HeerAnsicht {
             let fall = figur.fallen * figur.fallen;
             entity.transform.position = figur.shown - Vec3::Y * (fall * up * 0.6 + (figur.fallen - 0.5).max(0.0) * 1.2);
             entity.transform.rotation = Quat::from_rotation_y(figur.facing) * Quat::from_rotation_z(fall * std::f32::consts::FRAC_PI_2 * 0.95);
-            entity.transform.scale = Vec3::splat(figur.groesse);
+            // Ein zündender Pilzling bläht sich pulsierend auf
+            figur.zuend_zeit = if state.flags & zustand::ZUENDET != 0 { (figur.zuend_zeit + dt / crate::wildnis::ZUENDZEIT).min(1.0) } else { 0.0 };
+            let blaehen = 1.0 + figur.zuend_zeit * (0.1 + 0.08 * (ctx.time.elapsed * (10.0 + 18.0 * figur.zuend_zeit)).sin());
+            entity.transform.scale = Vec3::splat(figur.groesse * blaehen);
             // Farbe: Treffer blitzen rot, Getarnte fast schwarz, Unverwundbare weiß, Wut rot, Frost bläulich
             use zustand::*;
             let puls = 0.5 + 0.5 * (ctx.time.elapsed * 6.0).sin();
@@ -2305,6 +2313,14 @@ impl HeerAnsicht {
             }
             if state.flags & WUT != 0 {
                 farbe *= vec4(1.5, 0.6, 0.5, 1.0);
+            }
+            if state.flags & ZUENDET != 0 {
+                // Immer schnelleres Pulsieren von Orange nach grellem Weißgelb
+                let takt = (ctx.time.elapsed * (10.0 + 18.0 * figur.zuend_zeit)).sin() * 0.5 + 0.5;
+                farbe = vec4(1.6, 0.8, 0.35, 1.0).lerp(vec4(3.2, 2.6, 1.2, 1.0), takt);
+                if near {
+                    ctx.lights.push(PointLight { position: figur.shown + Vec3::Y * 0.7, color: vec3(1.0, 0.55, 0.2) * (2.0 + 3.0 * takt), radius: 5.0 });
+                }
             }
             if state.flags & UNVERWUNDBAR != 0 {
                 farbe = Vec4::ONE.lerp(vec4(2.5, 2.5, 2.8, 1.0), 0.5 + 0.5 * puls);

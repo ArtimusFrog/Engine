@@ -34,6 +34,15 @@ pub mod gebiet {
 const BESETZEN_ABSTAND: f32 = 60.0;
 /// Solange liegen Besiegte am Boden.
 const STERBEN: f32 = 2.5;
+/// Pilzling: so wahrscheinlich zündet er, wenn er getroffen wird; so lange glüht er, bevor er
+/// platzt; so nah muss er dafür an sein Ziel; so weit reicht die Sporenwolke; so viel Schaden
+pub const ZUENDEN_CHANCE: f32 = 0.4;
+pub const ZUENDZEIT: f32 = 3.5;
+const ZUENDEN_NAH: f32 = 1.6;
+/// So lange steht er nach dem Zünden glühend still, bevor er losrennt (Sekunden)
+const AUFLEUCHTEN: f32 = 0.7;
+pub const SPOREN_RADIUS: f32 = 3.5;
+const SPOREN_SCHADEN: f32 = 26.0;
 
 /// Wer in einem Lager haust.
 pub struct LagerArt {
@@ -238,6 +247,8 @@ struct Wilder {
     dying: Option<f32>,
     attacking: f32,
     laeuft: bool,
+    /// Pilzling glüht und rennt los: Restzeit bis zur Explosion
+    zuendet: Option<f32>,
 }
 
 impl Wilder {
@@ -293,6 +304,8 @@ pub struct WildAngriff {
     pub ziel: Vec3,
     pub spieler: PlayerId,
     pub schaden: f32,
+    /// Eine Explosion (kein Hieb und kein Geschoss zu zeigen)
+    pub explosion: bool,
 }
 
 pub struct Wildnis {
@@ -305,6 +318,8 @@ pub struct Wildnis {
     rng: Rng,
     uhr: f32,
     pub gefallen: Vec<WildGefallen>,
+    /// Geplatzte Pilzlinge seit dem letzten Abholen (Ort)
+    pub explosionen: Vec<Vec3>,
     /// Neu besetzte Lager seit dem letzten Abholen (Name, Ort)
     pub besetzt: Vec<(&'static str, Vec2)>,
 }
@@ -320,6 +335,7 @@ impl Wildnis {
             rng: Rng::new(0x_57_11D),
             uhr: 0.0,
             gefallen: Vec::new(),
+            explosionen: Vec::new(),
             besetzt: Vec::new(),
         };
         for i in 0..wildnis.lager.len() {
@@ -451,6 +467,7 @@ impl Wildnis {
                 dying: None,
                 attacking: 0.0,
                 laeuft: false,
+                zuendet: None,
             });
         }
         self.wilde.extend(neu);
@@ -523,7 +540,37 @@ impl Wildnis {
             w.attacking -= dt;
             w.laeuft = false;
             w.frost = (w.frost - dt).max(0.0);
-            if w.stun > 0.0 {
+            if let Some(rest) = &mut w.zuendet {
+                *rest -= dt;
+                let nah = ZUENDZEIT - *rest > AUFLEUCHTEN + 0.3
+                    && w.ziel.and_then(finde).is_some_and(|p| vec2(p.x, p.z).distance(vec2(w.position.x, w.position.z)) <= ZUENDEN_NAH);
+                if *rest <= 0.0 || nah {
+                    // Platzen: Sporenwolke trifft alle Spieler im Umkreis, der Pilzling vergeht
+                    let mitte = w.center();
+                    for &(id, p) in spieler {
+                        let abstand = p.distance(mitte);
+                        if abstand <= SPOREN_RADIUS {
+                            let schaden = SPOREN_SCHADEN * staerke(lager.art().gefahr).1 * (1.0 - 0.5 * abstand / SPOREN_RADIUS);
+                            angriffe.push(WildAngriff { kind: w.kind, von: mitte, ziel: p, spieler: id, schaden, explosion: true });
+                        }
+                    }
+                    self.explosionen.push(mitte);
+                    w.health = 0.0;
+                    w.dying = Some(STERBEN);
+                    w.zuendet = None;
+                    self.gefallen.push(WildGefallen {
+                        von: w.letzter.clone(),
+                        kind: w.kind,
+                        anfuehrer: w.anfuehrer,
+                        gefahr: lager.art().gefahr,
+                        ort: w.position,
+                        lager: lager.art().name,
+                        boss: false,
+                    });
+                    continue;
+                }
+            }
+            if w.stun > 0.0 && w.zuendet.is_none() {
                 w.stun -= dt;
                 continue;
             }
@@ -546,9 +593,12 @@ impl Wildnis {
             }
             // Streuner ohne Ziel schlendern
             let schlendern = if lager.streift && w.ziel.is_none() { 0.42 } else { 1.0 };
-            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0) * schlendern;
+            let tempo = w.kind.speed() * 1.3 * (1.0 - w.slow.0) * schlendern * if w.zuendet.is_some() { 2.2 } else { 1.0 };
             let hier = vec2(w.position.x, w.position.z);
             let (weg, zu) = match w.ziel.and_then(finde) {
+                // Glühend rennt er stur auf sein Ziel zu
+                Some(p) if w.zuendet.is_some_and(|rest| ZUENDZEIT - rest < AUFLEUCHTEN) => (None, Some(vec2(p.x, p.z))),
+                Some(p) if w.zuendet.is_some() => (Some(vec2(p.x, p.z)), Some(vec2(p.x, p.z))),
                 Some(p) => {
                     let ziel = vec2(p.x, p.z);
                     let (reichweite, pause) = w.kind.attack();
@@ -558,7 +608,7 @@ impl Wildnis {
                         if w.cooldown <= 0.0 {
                             w.cooldown = pause;
                             w.attacking = 0.7;
-                            angriffe.push(WildAngriff { kind: w.kind, von: w.center(), ziel: p, spieler: w.ziel.unwrap_or_default(), schaden: w.schlag });
+                            angriffe.push(WildAngriff { kind: w.kind, von: w.center(), ziel: p, spieler: w.ziel.unwrap_or_default(), schaden: w.schlag, explosion: false });
                         }
                         (None, Some(ziel))
                     } else {
@@ -696,7 +746,13 @@ impl Wildnis {
     /// Schaden an einem Bewohner. `spieler`: wer getroffen hat (das Lager nimmt ihn ins Visier).
     /// Liefert die Art, wenn er dabei fällt.
     pub fn damage(&mut self, id: u16, treffer: Treffer, von: &str, spieler: Option<PlayerId>) -> Option<EnemyKind> {
+        let wurf = self.rng.range(0.0, 1.0);
         let w = self.wilde.iter_mut().find(|w| w.id == id && w.lebt())?;
+        // Ein getroffener Pilzling kann zünden: er glüht auf und rennt auf den Angreifer los
+        if w.kind == EnemyKind::Pilzling && w.zuendet.is_none() && spieler.is_some() && wurf < ZUENDEN_CHANCE {
+            w.zuendet = Some(ZUENDZEIT);
+            w.ziel = spieler;
+        }
         let mut schaden = treffer.schaden * w.kind.factor(treffer.art, 0.0);
         // Eingefroren: der nächste Treffer zerschmettert das Eis
         if w.frost > 0.0 && treffer.schaden > 0.0 {
@@ -740,6 +796,35 @@ impl Wildnis {
             boss: w.anfuehrer && lager.art().boss,
         });
         Some(w.kind)
+    }
+
+    /// Nur für Screenshots: einen Trupp samt Bewohnern an einen anderen Ort versetzen.
+    pub fn verlegen(&mut self, index: usize, mitte: Vec2, boden: &dyn Fn(Vec2) -> f32) {
+        let Some(lager) = self.lager.get_mut(index) else { return };
+        lager.mitte = mitte;
+        lager.anker = mitte;
+        lager.hoehe = boden(mitte);
+        lager.rast = 60.0;
+        for w in self.wilde.iter_mut().filter(|w| w.lager == index) {
+            let p = mitte + w.versatz;
+            w.heim = p;
+            w.position = vec3(p.x, boden(p), p.y);
+        }
+    }
+
+    /// Nur für Screenshots: den nächsten Pilzling zünden lassen.
+    pub fn zuenden(&mut self, bei: Vec3, ziel: PlayerId) -> bool {
+        let Some(w) = self
+            .wilde
+            .iter_mut()
+            .filter(|w| w.lebt() && w.kind == EnemyKind::Pilzling)
+            .min_by(|a, b| a.position.distance(bei).total_cmp(&b.position.distance(bei)))
+        else {
+            return false;
+        };
+        w.zuendet = Some(ZUENDZEIT);
+        w.ziel = Some(ziel);
+        true
     }
 
     /// Lebende Bewohner im Umkreis (Mitte der Trefferkugel).
@@ -827,6 +912,9 @@ impl Wildnis {
                 }
                 if w.frost > 0.0 {
                     flags |= zustand::GEFROREN;
+                }
+                if w.zuendet.is_some() {
+                    flags |= zustand::ZUENDET;
                 }
                 EnemyState {
                     id: w.id,
@@ -944,6 +1032,42 @@ mod tests {
                 assert!(!arten.is_empty() && arten.iter().all(|&i| ARTEN[i].gebiet & g != 0 && !ARTEN[i].dungeon), "Gefahr {gefahr}, Gegend {g}: {arten:?}");
             }
         }
+    }
+
+    #[test]
+    fn pilzling_zuendet_rennt_los_und_platzt() {
+        let pilzkreis = ARTEN.iter().position(|a| a.name == "Pilzkreis").unwrap();
+        let mut w = Wildnis::new(vec![Lager::streifend(vec2(0.0, 0.0), 5.0, pilzkreis)], &|_| 5.0);
+        let spieler = [(7u64, vec3(10.0, 5.0, 0.0))];
+        // Treffen, bis einer zündet (40 % je Treffer)
+        let ids: Vec<u16> = w.states().iter().map(|s| s.id).collect();
+        let mut gezuendet = None;
+        for _ in 0..40 {
+            for &id in &ids {
+                w.damage(id, Treffer { schaden: 0.1, art: DamageKind::Arcane, ..Default::default() }, "anna", Some(7));
+                if w.states().iter().any(|s| s.id == id && s.flags & zustand::ZUENDET != 0) {
+                    gezuendet = Some(id);
+                    break;
+                }
+            }
+            if gezuendet.is_some() {
+                break;
+            }
+        }
+        let id = gezuendet.expect("kein Pilzling zündet");
+        let start = w.states().iter().find(|s| s.id == id).unwrap().position;
+        let mut explosion = Vec::new();
+        for _ in 0..(ZUENDZEIT * 60.0) as usize + 5 {
+            explosion.extend(w.tick(1.0 / 60.0, &spieler, &|_| 5.0).into_iter().filter(|a| a.explosion));
+            if !explosion.is_empty() {
+                break;
+            }
+        }
+        assert!(!explosion.is_empty(), "keine Explosion am Spieler");
+        assert!(explosion.iter().all(|a| a.spieler == 7 && a.schaden > 10.0));
+        assert_eq!(w.explosionen.len(), 1);
+        assert!(w.gefallen.iter().any(|g| g.kind == EnemyKind::Pilzling && g.von == "anna"), "keine Beute für den Angreifer");
+        let _ = start;
     }
 
     #[test]

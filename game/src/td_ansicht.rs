@@ -183,6 +183,71 @@ pub fn ereignis(ctx: &mut Context, sounds: &mut Vec<SoundEvent>, felder: &mut Ve
             ring(ctx, at - Vec3::Y * 2.0, 8.0, vec3(0.7, 0.66, 0.6), 0.0, 3.0);
             funken(ctx, at - Vec3::Y * 2.0, 60, vec3(0.7, 0.65, 0.58), 8.0, 0.5, 1.2, 0.5, 0.0);
         }
+        Ereignis::Sporenexplosion(at) => {
+            // Greller Blitz, rote und weiße Hutfetzen, eine dichte gelbgrüne Sporenwolke
+            ctx.particles.burst_glow(Burst {
+                position: at,
+                count: 40,
+                color: vec3(1.0, 0.8, 0.35),
+                color_variation: 0.2,
+                speed: 7.0,
+                direction: Vec3::ZERO,
+                size: 0.28,
+                life: 0.45,
+                gravity: 0.0,
+                glow: 6.0,
+                grow: 1.5,
+                round: true,
+            });
+            for (farbe, n) in [(vec3(0.85, 0.12, 0.08), 26), (vec3(0.96, 0.94, 0.88), 14)] {
+                ctx.particles.burst(Burst {
+                    position: at + Vec3::Y * 0.3,
+                    count: n,
+                    color: farbe,
+                    color_variation: 0.1,
+                    speed: 7.5,
+                    direction: Vec3::Y * 0.8,
+                    size: 0.12,
+                    life: 1.1,
+                    gravity: 9.0,
+                    glow: 0.0,
+                    grow: 0.0,
+                    round: false,
+                });
+            }
+            // Leuchtender, durchscheinender Sporennebel und einzelne helle Sporen, die langsam sinken
+            ctx.particles.burst_glow(Burst {
+                position: at,
+                count: 45,
+                color: vec3(0.32, 0.42, 0.1),
+                color_variation: 0.3,
+                speed: 2.8,
+                direction: Vec3::ZERO,
+                size: 0.3,
+                life: 1.8,
+                gravity: -0.2,
+                glow: 1.2,
+                grow: 2.2,
+                round: true,
+            });
+            ctx.particles.burst_glow(Burst {
+                position: at + Vec3::Y * 0.4,
+                count: 60,
+                color: vec3(0.9, 1.0, 0.45),
+                color_variation: 0.2,
+                speed: 3.5,
+                direction: Vec3::Y * 0.4,
+                size: 0.05,
+                life: 2.4,
+                gravity: 0.6,
+                glow: 3.0,
+                grow: 0.0,
+                round: true,
+            });
+            ring(ctx, at - Vec3::Y * 0.5, crate::wildnis::SPOREN_RADIUS, vec3(0.8, 0.85, 0.4), 1.5, 0.5);
+            sounds.push(SoundEvent::Impact { at, animal: false, killed: true });
+            sounds.push(SoundEvent::Thunder { volume: 0.25 });
+        }
         Ereignis::Frostfeld(at, radius) => {
             ring(ctx, at, radius, vec3(0.6, 0.85, 1.0), 2.5, 0.6);
             felder.push((at, radius, 1.4, FROST));

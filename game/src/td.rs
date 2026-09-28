@@ -252,6 +252,8 @@ pub enum Ereignis {
     Flammenatem(Vec3, Vec2),
     /// Schattendrache steigt auf
     Auffliegen(Vec3),
+    /// Ein Pilzling platzt in einer Sporenwolke
+    Sporenexplosion(Vec3),
 }
 
 /// Befehle der Spieler zur Verteidigung.
