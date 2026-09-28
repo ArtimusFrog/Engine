@@ -502,9 +502,15 @@ impl Authority {
                 // Eine Stelle am Boden unter dem Fadenkreuz
                 let Form::Flaeche { reichweite, radius } = art.form() else { return };
                 let Some(origin) = world.cast_origin(ctx, player, target) else { return };
-                let richtung = (target - origin).normalize_or(Vec3::NEG_Z);
-                // Der Punkt unter dem Fadenkreuz (höchstens so weit wie die Reichweite), darunter der Boden
-                let punkt = if origin.distance(target) <= reichweite { target } else { world.spell_target(ctx, origin, richtung, reichweite, Some(player)).0 };
+                let _ = origin;
+                // Die Mitte des Zielkreises (waagerecht höchstens so weit wie die Reichweite), darunter der Boden
+                let weg = vec2(target.x - center.x, target.z - center.z);
+                let punkt = if weg.length() <= reichweite + 0.5 {
+                    target
+                } else {
+                    let p = vec2(center.x, center.z) + weg.normalize_or(Vec2::Y) * reichweite;
+                    vec3(p.x, world.terrain.height_at(p.x, p.y) + 1.0, p.y)
+                };
                 let boden = ctx.physics.raycast(punkt + Vec3::Y * 4.0, Vec3::NEG_Y, 40.0, Some(character)).map_or_else(|| world.terrain.height_at(punkt.x, punkt.z), |(_, d)| punkt.y + 4.0 - d);
                 let mitte = vec3(punkt.x, boden, punkt.z);
                 let ziel = mitte + Vec3::Y * 0.6;

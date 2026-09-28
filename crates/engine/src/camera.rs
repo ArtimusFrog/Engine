@@ -1,5 +1,5 @@
 use glam::camera::rh;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::app::Context;
 use crate::input::{KeyCode, MouseButton};
@@ -56,11 +56,14 @@ pub struct OrbitController {
     pub avoid_walls: bool,
     /// Maus nach oben = nach unten schauen (wie im Flugzeug).
     pub invert_y: bool,
+    /// Schulterblick: um so viele Meter nach rechts und oben versetzt kreist die Kamera – die
+    /// Bildmitte (Fadenkreuz) liegt dann neben der Figur statt auf ihr.
+    pub schulter: Vec2,
 }
 
 impl Default for OrbitController {
     fn default() -> Self {
-        OrbitController { distance: 6.0, min_distance: 2.0, max_distance: 20.0, sensitivity: 0.0025, avoid_walls: true, invert_y: false }
+        OrbitController { distance: 6.0, min_distance: 2.0, max_distance: 20.0, sensitivity: 0.0025, avoid_walls: true, invert_y: false, schulter: Vec2::ZERO }
     }
 }
 
@@ -76,13 +79,21 @@ impl OrbitController {
         self.distance = (self.distance * 0.9f32.powf(ctx.input.scroll())).clamp(self.min_distance, self.max_distance);
 
         let back = -ctx.camera.forward();
+        // Drehpunkt neben der Figur (Schulterblick), aber nicht in eine Wand hinein
+        let mut pivot = target;
+        if self.schulter != Vec2::ZERO {
+            let versatz = ctx.camera.right() * self.schulter.x + Vec3::Y * self.schulter.y;
+            let laenge = versatz.length();
+            let weit = if self.avoid_walls { ctx.physics.raycast(target, versatz / laenge, laenge + 0.3, ignore).map_or(laenge, |(_, d)| (d - 0.3).max(0.0)) } else { laenge };
+            pivot = target + versatz / laenge * weit;
+        }
         let mut distance = self.distance;
         if self.avoid_walls {
-            if let Some((_, hit)) = ctx.physics.raycast(target, back, distance, ignore) {
+            if let Some((_, hit)) = ctx.physics.raycast(pivot, back, distance, ignore) {
                 distance = (hit - 0.2).max(0.3);
             }
         }
-        ctx.camera.position = target + back * distance;
+        ctx.camera.position = pivot + back * distance;
     }
 }
 

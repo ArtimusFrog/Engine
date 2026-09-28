@@ -41,6 +41,7 @@ mod settings;
 mod ui;
 mod viewer;
 mod waffen;
+mod zielkreis;
 mod wetter;
 mod wildnis;
 mod world;

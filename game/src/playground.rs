@@ -104,6 +104,8 @@ pub struct Playground {
     aim_enemy: Option<(crate::heer::EnemyKind, u8, u16)>,
     /// Verteidigungsfenster (T) offen
     td_open: bool,
+    /// Zielkreis am Boden für Fähigkeiten mit Flächenschaden
+    zielkreis: crate::zielkreis::Zielkreis,
     /// Handelsfenster des Händlers (E auf dem Marktplatz) offen
     handel_offen: bool,
     /// Siedlungsradien anzeigen (R)
@@ -225,6 +227,7 @@ impl Playground {
             noclip: false,
             aim_enemy: None,
             td_open: false,
+            zielkreis: Default::default(),
             handel_offen: false,
             radius_an: false,
             bericht_seit: (0, 0.0),
@@ -274,6 +277,8 @@ impl Playground {
         self.settings.apply(ctx);
         self.orbit.sensitivity = 0.0025 * self.settings.mouse_sensitivity;
         self.orbit.invert_y = self.settings.invert_y;
+        // Schulterblick: die Figur steht links, das Fadenkreuz rechts neben ihr
+        self.orbit.schulter = vec2(0.75, 0.5);
         self.fly.sensitivity = self.orbit.sensitivity;
     }
 
@@ -373,6 +378,52 @@ impl Playground {
         Some((point, animal))
     }
 
+    /// Wo eine Fähigkeit mit Zielfläche einschlägt: die Stelle unter dem Fadenkreuz, waagerecht
+    /// höchstens `reichweite` von der Figur entfernt, am Boden.
+    fn flaechen_ziel(&self, ctx: &Context, reichweite: f32) -> Option<Vec3> {
+        let session = self.session.as_ref()?;
+        let world = session.world();
+        let fuesse = world.player_position(ctx, session.local_player()?)? - Vec3::Y * 0.9;
+        let (punkt, _) = self.spell_aim(ctx)?;
+        let weg = vec2(punkt.x - fuesse.x, punkt.z - fuesse.z);
+        if weg.length() <= reichweite && (punkt.y - world.terrain.height_at(punkt.x, punkt.z)).abs() < 3.0 {
+            return Some(punkt);
+        }
+        let p = vec2(fuesse.x, fuesse.z) + weg.normalize_or(Vec2::Y) * weg.length().min(reichweite);
+        Some(vec3(p.x, world.terrain.height_at(p.x, p.y), p.y))
+    }
+
+    /// Was der Zielkreis zeigen soll (Mitte am Boden, Radius, Fähigkeit): bei Flächen die Stelle
+    /// des Einschlags, bei Geschossen mit Explosion den Einschlag, bei Wirkungen um die Figur sie selbst.
+    fn ziel_vorschau(&self, ctx: &Context) -> Option<(Vec3, f32, crate::faehigkeiten::Faehigkeit)> {
+        use crate::faehigkeiten::{Faehigkeit, Form};
+        let Tool::Faehigkeit(platz) = self.tool() else { return None };
+        let art = Faehigkeit::von(self.klasse(), platz);
+        let session = self.session.as_ref()?;
+        let fuesse = session.world().player_position(ctx, session.local_player()?)? - Vec3::Y * 0.9;
+        match art.form() {
+            Form::Flaeche { reichweite, radius } => Some((self.flaechen_ziel(ctx, reichweite)?, radius, art)),
+            Form::Geschoss { flaeche, .. } if flaeche > 0.0 => Some((self.flaechen_ziel(ctx, art.reichweite())?, flaeche, art)),
+            Form::UmSich { radius } => Some((fuesse, radius, art)),
+            _ => None,
+        }
+    }
+
+    /// Zielkreis zeigen, solange eine passende Fähigkeit gewählt ist und gespielt wird.
+    fn update_zielkreis(&mut self, ctx: &mut Context) {
+        let aktiv = self.screen == Screen::Playing && ctx.cursor_locked && self.build_mode.is_none() && !self.free_camera;
+        let vorschau = if aktiv { self.ziel_vorschau(ctx) } else { None };
+        let (Some((mitte, radius, art)), Some(session)) = (vorschau, &self.session) else {
+            self.zielkreis.verstecken(ctx);
+            return;
+        };
+        let fach = (self.tool().slot().saturating_sub(2)).min(3);
+        let bereit = ctx.time.elapsed >= self.bereit_ab[fach];
+        let terrain = &session.world().terrain;
+        let farbe = art.farbe();
+        self.zielkreis.zeigen(ctx, mitte, radius, farbe, bereit, &|p| terrain.height_at(p.x, p.y));
+    }
+
     /// Werkzeug in der Hand (aus der Auswahlleiste).
     fn tool(&self) -> Tool {
         Tool::HOTBAR.get(self.hotbar_slot).copied().unwrap_or_default()
@@ -393,7 +444,12 @@ impl Playground {
             return;
         }
         let art = crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz);
-        let Some((target, _)) = self.spell_aim(ctx) else { return };
+        // Flächen landen genau im Zielkreis (Mitte am Boden), alles andere fliegt zum Fadenkreuz
+        let ziel = match art.form() {
+            crate::faehigkeiten::Form::Flaeche { reichweite, .. } => self.flaechen_ziel(ctx, reichweite).map(|p| (p + Vec3::Y * 0.3, None)),
+            _ => self.spell_aim(ctx),
+        };
+        let Some((target, _)) = ziel else { return };
         let waffe = self.session.as_ref().map_or(0, |s| s.local_inventory().waffe);
         let ruestung = self.session.as_ref().map_or([0; 3], |s| s.local_inventory().ruestung);
         let (_, _, f_abklingen, _) = crate::waffen::faktoren(waffe, ruestung, self.klasse(), art);
@@ -1120,6 +1176,14 @@ impl Playground {
                     }
                 }
                 self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
+                // Rechtsklick bei gewählter Fläche: Zielen abbrechen, zurück zum Standardangriff
+                if ctx.cursor_locked && ctx.input.mouse_pressed(MouseButton::Right) {
+                    if let Tool::Faehigkeit(platz) = self.tool() {
+                        if matches!(crate::faehigkeiten::Faehigkeit::von(self.klasse(), platz).form(), crate::faehigkeiten::Form::Flaeche { .. }) {
+                            self.hotbar_slot = Tool::ANGRIFF.slot();
+                        }
+                    }
+                }
                 // Rechte Maustaste halten geht auch (mit dem passenden Werkzeug).
                 if ctx.cursor_locked && ctx.input.mouse(MouseButton::Right) {
                     self.harvest_aimed(ctx);
@@ -2122,6 +2186,10 @@ impl Game for Playground {
         if self.demo_cast {
             self.hotbar_slot = Tool::ANGRIFF.slot();
         }
+        // Nur für Screenshots: diesen Platz der Auswahlleiste wählen (`--demo-platz 6` zeigt den Zielkreis der Ultimativen)
+        if let Some(platz) = args.iter().position(|a| a == "--demo-platz").and_then(|i| args.get(i + 1)).and_then(|n| n.parse::<usize>().ok()) {
+            self.hotbar_slot = platz.clamp(1, Tool::HOTBAR.len()) - 1;
+        }
         // Nur zum Testen: an das nächste Vorkommen stellen und abbauen (`--demo-abbauen [erz|stein]`).
         // Nur für Screenshots: Karte offen bzw. ein paar Chatzeilen
         if let Some(position) = args.iter().position(|a| a == "--demo-karte") {
@@ -2324,6 +2392,7 @@ impl Game for Playground {
         self.update_radien(ctx);
         self.handle_game_keys(ctx);
         self.update_build_preview(ctx);
+        self.update_zielkreis(ctx);
 
         if self.screen == Screen::Gallery {
             let back = ctx.input.key_pressed(KeyCode::Escape) || self.gallery.as_ref().is_some_and(|g| g.wants_back());
