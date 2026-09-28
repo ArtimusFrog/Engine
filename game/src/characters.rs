@@ -161,6 +161,8 @@ pub struct Puppet {
     stopp: f32,
     /// Anteil der Fähigkeits-Animation an den Beinen (1 im Stand, 0 beim Laufen)
     beine: f32,
+    /// Angelegte Rüstung (Kopf, Brust, Füße; 0 = nichts)
+    ruestung: Option<[u8; 3]>,
 }
 
 impl Puppet {
@@ -208,7 +210,9 @@ impl Puppet {
             hand_leer: false,
             stopp: 0.0,
             beine: 1.0,
+            ruestung: None,
         };
+        puppet.set_ruestung([0; 3]);
         puppet.set_tool(Tool::default());
         puppet.spitze_berechnen();
         puppet
@@ -231,6 +235,22 @@ impl Puppet {
         self.waffe = waffe;
         self.zeigen();
         self.spitze_berechnen();
+    }
+
+    /// Zeigt die angelegte Rüstung (eigene, verformbare Teile im Modell); ein Kopfteil ersetzt den
+    /// Hut bzw. Helm der Figur.
+    pub fn set_ruestung(&mut self, ids: [u8; 3]) {
+        if self.ruestung == Some(ids) {
+            return;
+        }
+        self.ruestung = Some(ids);
+        let Some(animator) = &mut self.animator else { return };
+        let getragen: Vec<&str> = crate::ruestung::getragen(ids, self.class).map(|r| r.datei).collect();
+        for r in &crate::ruestung::RUESTUNGEN {
+            animator.set_visible(r.datei, getragen.contains(&r.datei));
+        }
+        let kopfteil = crate::ruestung::getragen(ids, self.class).any(|r| r.platz.index() == 0);
+        animator.set_visible("Kopfbedeckung", !kopfteil);
     }
 
     /// Knoten der Waffe in der Hand (Startwaffe „Stab“ bzw. „Hammer“).

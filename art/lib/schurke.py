@@ -314,6 +314,8 @@ def schurke(seed=41, name="Schurke"):
     f.als_starr("Axt", "Hand.R", anfang)
 
     _skelett(f)
+    import anlegen
+    f.ruestungen = anlegen.fuer_klasse("schurke")
     return f.fertig(_schurken_animationen)
 
 

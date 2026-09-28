@@ -411,6 +411,7 @@ def zwerg(seed=21, name="Zwerg"):
                    glatt=True)
 
     # ================= Helm: Stahlkuppel mit Goldkamm, Wangenschutz, Nasenschutz, große Hörner =================
+    helm_anfang = len(f.teile)
     helm = []
     for i, (dz, rx, ry) in enumerate(((0.0, 0.122, 0.13), (0.012, 0.124, 0.132), (0.05, 0.12, 0.127), (0.09, 0.104, 0.11), (0.125, 0.078, 0.083),
                                       (0.15, 0.046, 0.05), (0.162, 0.012, 0.012))):
@@ -452,6 +453,8 @@ def zwerg(seed=21, name="Zwerg"):
             dicke = 0.045 - 0.01 * t
             f.loft("Hornring", [(mitte - richtung * 0.012, q1, q2, dicke, dicke), (mitte + richtung * 0.012, q1, q2, dicke, dicke)], 16,
                    lambda i, k, p: gold, kopf_gewicht, oben_zu=True, unten_zu=True, glatt=True)
+
+    f.als_gruppe("Kopfbedeckung", helm_anfang)
 
     # ================= Rundschild auf dem Rücken =================
     schild_mitte = Vector((0.0, 0.3, 0.86))
@@ -552,6 +555,8 @@ def zwerg(seed=21, name="Zwerg"):
         f.knochen_dazu(f"Unterschenkel.{sn}", _spiegel(KNIE, seite), _spiegel(KNOECHEL, seite), f"Oberschenkel.{sn}", HAENGT)
         f.knochen_dazu(f"Fuss.{sn}", _spiegel(KNOECHEL, seite), _spiegel(ZEHEN, seite), f"Unterschenkel.{sn}", (0, 0, 1))
 
+    import anlegen
+    f.ruestungen = anlegen.fuer_klasse("zwerg")
     return f.fertig(_zwerg_animationen)
 
 

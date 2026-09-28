@@ -2209,6 +2209,15 @@ impl Game for Playground {
                         let platz = args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(3);
                         self.inventory_ui.demo(platz);
                     }
+                    // Nur für Screenshots: `--demo-ruestung a,b,c` legt diese Teile an (Dateinamen)
+                    if let Some(namen) = args.iter().position(|a| a == "--demo-ruestung").and_then(|i| args.get(i + 1)) {
+                        for name in namen.split(',') {
+                            if let Some(r) = crate::ruestung::RUESTUNGEN.iter().find(|r| r.datei == name) {
+                                inventory.ruestungen |= 1 << r.id;
+                                inventory.ruestung[r.platz.index()] = r.id;
+                            }
+                        }
+                    }
                 }
             }
             self.inventory_open = open_inventory;

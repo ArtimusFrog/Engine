@@ -1389,6 +1389,7 @@ impl World {
             if let Some(puppet) = self.puppets.get_mut(id) {
                 puppet.set_tool(avatar.tool);
                 puppet.set_waffe(crate::waffen::ausgeruestet(avatar.waffe, avatar.class).map(|w| w.datei));
+                puppet.set_ruestung(avatar.ruestung);
             }
         }
         self.update_zauber(ctx);

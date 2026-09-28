@@ -141,13 +141,21 @@ def bauen(f, art):
             f.kugel("Perle", Vector((math.sin(w) * 0.114, -math.cos(w) * 0.124, 0.03)), (0.008, 0.008, 0.008), stein, OHNE, 8, 4)
     elif art in ("kapuze", "maske_schatten"):
         stoff = _f("#5A4632") if art == "kapuze" else _f("#221E2A")
-        _schale(f, "Kapuze", Vector((0, 0.01, 0.0)), 0.14, 0.15, 0.2, (35, 325), (-10, 90), lambda poly: stoff * (0.85 + 0.2 * max(0.0, poly.normal.z)), OHNE)
-        _schale(f, "Kapuze innen", Vector((0, 0.01, 0.0)), 0.135, 0.145, 0.195, (35, 325), (-10, 90), lambda poly: stoff * 0.4, OHNE, innen=True)
+        # Getragen (anlegen.py) reicht die Kapuze an den Seiten bis zum Kinn und lässt das Gesicht frei
+        offen, tief = ((48, 312), -55) if getattr(f, "angelegt", False) else ((35, 325), -10)
+        _schale(f, "Kapuze", Vector((0, 0.01, 0.0)), 0.14, 0.15, 0.2, offen, (tief, 90), lambda poly: stoff * (0.85 + 0.2 * max(0.0, poly.normal.z)), OHNE)
+        _schale(f, "Kapuze innen", Vector((0, 0.01, 0.0)), 0.135, 0.145, 0.195, offen, (tief, 90), lambda poly: stoff * 0.4, OHNE, innen=True)
         _glocke(f, "Kragen", [(Vector((0, 0.01, 0.0)), 0.14, 0.15), (Vector((0, 0.02, -0.08)), 0.2, 0.18)], (0, 360), lambda poly: stoff * 0.9, OHNE, seg=30)
         if art == "maske_schatten":
-            _platte(f, "Maske", Vector((0, -0.14, 0.06)), 0.1, 0.1, 0.012, X, -Y, lambda i, k, p: _f("#101014"), OHNE, spitz=0.1, wolbung=1.2)
+            # Getragen liegt die Maske dicht vor dem Gesicht (anlegen.py)
+            vorn, hoehe = (-0.108, 0.015) if getattr(f, "angelegt", False) else (-0.14, 0.06)
+            if getattr(f, "angelegt", False):
+                # quer über die Augenpartie, unten spitz
+                _platte(f, "Maske", Vector((0, vorn, hoehe - 0.01)), 0.09, 0.075, 0.012, Z, -Y, lambda i, k, p: _f("#101014"), OHNE, spitz=0.35, wolbung=1.2)
+            else:
+                _platte(f, "Maske", Vector((0, vorn, hoehe)), 0.11, 0.1, 0.012, X, -Y, lambda i, k, p: _f("#101014"), OHNE, spitz=0.1, wolbung=1.2)
             for s in (1, -1):
-                f.kugel("Auge", Vector((0.035 * s, -0.155, 0.065)), (0.016, 0.006, 0.008), _f("#B070FF"), OHNE, 10, 6)
+                f.kugel("Auge", Vector((0.035 * s, vorn - 0.015, hoehe + 0.005)), (0.016, 0.006, 0.008), _f("#B070FF"), OHNE, 10, 6)
     elif art in ("robe_adept", "robe_erzmagier"):
         haupt, zier = (_f("#3E5FA8"), _f("#E8D48A")) if art == "robe_adept" else (_f("#2A1E4E"), _f("#D8AE4A"))
 

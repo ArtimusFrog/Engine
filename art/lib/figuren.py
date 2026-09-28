@@ -48,6 +48,10 @@ class Figur:
         self.knochen = []
         # Starre Anbauteile (Waffen, Werkzeuge): (Name, Knochen, Objekte)
         self.starr = []
+        # Verformbare, im Spiel ausblendbare Teile (z. B. der Hut, wenn ein Helm getragen wird)
+        self.gruppen = []
+        # Rüstungsteile (art/lib/ruestung.py), die an die Figur angepasst und angehängt werden
+        self.ruestungen = []
 
     def als_starr(self, gruppe, knochen, anfang):
         """Alle Teile ab Index `anfang` werden ein starres Anbauteil am Knochen (z. B. etwas in der
@@ -55,6 +59,13 @@ class Figur:
         objekte = self.teile[anfang:]
         del self.teile[anfang:]
         self.starr.append((gruppe, knochen, objekte))
+
+    def als_gruppe(self, gruppe, anfang):
+        """Alle Teile ab Index `anfang` bleiben verformbar, werden aber ein eigener Knoten, den das
+        Spiel ausblenden kann (z. B. der Hut unter einem Helm)."""
+        objekte = self.teile[anfang:]
+        del self.teile[anfang:]
+        self.gruppen.append((gruppe, objekte))
 
     # --- Teile ------------------------------------------------------------
     def _objekt(self, bm, name, farbe_von, gewichte_von, glatt=False):
@@ -277,11 +288,39 @@ class Figur:
             teil.matrix_parent_inverse = (armatur.matrix_world @ bone.matrix_local @ Matrix.Translation((0, bone.length, 0))).inverted()
             dreiecke_teil = sum(len(p.vertices) - 2 for p in teil.data.polygons)
             print(f"ANBAUTEIL {gruppe} an {knochen}: {dreiecke_teil} Dreiecke")
+        # Ausblendbare verformbare Teile: eigene Objekte am Skelett
+        for gruppe, objekte in self.gruppen:
+            teil = vereinen(objekte, gruppe)
+            teil.data.materials.clear()
+            teil.data.materials.append(mat)
+            am_skelett(teil, armatur)
+        if self.ruestungen:
+            import anlegen
+            anlegen.alle(self, haupt, armatur, mat)
         animationen(armatur)
         ruhepose(armatur)
         dreiecke = sum(len(p.vertices) - 2 for p in haupt.data.polygons)
         print(f"FIGUR {self.name}: {dreiecke} Dreiecke, {len(self.knochen)} Knochen")
         return haupt
+
+
+def vereinen(objekte, name):
+    """Objekte zu einem zusammenfügen (Gewichtsgruppen bleiben erhalten)."""
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objekte:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objekte[0]
+    bpy.ops.object.join()
+    teil = objekte[0]
+    teil.name = name
+    teil.data.name = name
+    return teil
+
+
+def am_skelett(obj, armatur):
+    obj.parent = armatur
+    mod = obj.modifiers.new("Skelett", "ARMATURE")
+    mod.object = armatur
 
 
 def _mischen(*paare):
@@ -807,7 +846,8 @@ def magier(seed=12, name="Magier"):
             punkte = [start, start + Vector((s * 0.018, 0.003, -0.004)), start.lerp(ende, 0.6) + Vector((s * 0.01, -0.006, 0.004)), ende]
             f.straehne("Schnurrbart", punkte, 0.0075, 0.0012, bart * r.uniform(0.92, 1.03), kopf_gewicht, 6, 0.4, 0.8)
 
-    # ================= Hut =================
+    # ================= Hut (ausblendbar, wenn ein Helm getragen wird) =================
+    hut_anfang = len(f.teile)
     krempe = [(Vector((0, 0.005, 1.835)), X, Y, 0.125, 0.13), (Vector((0, 0.005, 1.83)), X, Y, 0.24, 0.24, faltig(0.03, 1.0)),
               (Vector((0, 0.005, 1.81)), X, Y, 0.27, 0.265, faltig(0.04, 1.0)), (Vector((0, 0.01, 1.765)), X, Y, 0.37, 0.36, faltig(0.08, 1.0)),
               (Vector((0, 0.01, 1.75)), X, Y, 0.365, 0.355, faltig(0.08, 1.0)), (Vector((0, 0.005, 1.795)), X, Y, 0.26, 0.255, faltig(0.04, 1.0)),
@@ -834,6 +874,7 @@ def magier(seed=12, name="Magier"):
     hut_gewicht = lambda co: _mischen(("Kopf", 1 - weich(2.0, 2.15, co.z)), ("Hut", weich(2.0, 2.15, co.z)))
     f.loft("Hut", kegel, 44, hut_farbe, hut_gewicht, oben_zu=True, glatt=True)
     f.kugel("Hutspange", (0.06, -0.11, 1.86), (0.018, 0.008, 0.018), silber, kopf_gewicht, 12, 6, glatt=False)
+    f.als_gruppe("Kopfbedeckung", hut_anfang)
 
     # ================= Stab =================
     stab_anfang = len(f.teile)
@@ -896,6 +937,8 @@ def magier(seed=12, name="Magier"):
         f.knochen_dazu(f"Unterschenkel.{sn}", _spiegel(KNIE, seite), _spiegel(KNOECHEL, seite), f"Oberschenkel.{sn}", HAENGT)
         f.knochen_dazu(f"Fuss.{sn}", _spiegel(KNOECHEL, seite), _spiegel(ZEHEN, seite), f"Unterschenkel.{sn}", (0, 0, 1))
 
+    import anlegen
+    f.ruestungen = anlegen.fuer_klasse("magier")
     return f.fertig(_magier_animationen)
 
 

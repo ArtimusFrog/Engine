@@ -473,6 +473,8 @@ def bogenschuetze(seed=31, name="Bogenschuetze"):
         f.knochen_dazu(f"Unterschenkel.{sn}", _spiegel(KNIE, seite), _spiegel(KNOECHEL, seite), f"Oberschenkel.{sn}", HAENGT)
         f.knochen_dazu(f"Fuss.{sn}", _spiegel(KNOECHEL, seite), _spiegel(ZEHEN, seite), f"Unterschenkel.{sn}", (0, 0, 1))
 
+    import anlegen
+    f.ruestungen = anlegen.fuer_klasse("bogenschuetze")
     return f.fertig(_bogen_animationen)
 
 

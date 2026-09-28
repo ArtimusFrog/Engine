@@ -275,6 +275,14 @@ impl Viewer {
                     animator.set_visible(&name, nur.split(',').any(|n| n == name));
                 }
             }
+            // Rüstung ist ausgeblendet; `--ruestung a,b` legt Teile an (ein Kopfteil ersetzt den Hut)
+            let ruestung = std::env::args().skip_while(|a| a != "--ruestung").nth(1).unwrap_or_default();
+            let angelegt: Vec<&str> = ruestung.split(',').filter(|n| !n.is_empty()).collect();
+            let kopfteil = angelegt.iter().any(|n| crate::ruestung::RUESTUNGEN.iter().any(|r| r.datei == *n && r.platz.index() == 0));
+            for name in model.skin_attachments().iter().map(|n| n.to_string()).collect::<Vec<_>>() {
+                let sichtbar = if name == "Kopfbedeckung" { !kopfteil } else { angelegt.contains(&name.as_str()) };
+                animator.set_visible(&name, sichtbar);
+            }
             let mesh = animator.skinned_mesh(texture);
             let id = ctx.assets.add_mesh(mesh.clone());
             // Spielfiguren im Helden-Look wie im Spiel

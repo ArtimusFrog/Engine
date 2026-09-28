@@ -138,6 +138,9 @@ pub struct Model {
     pub materials: Vec<MaterialInfo>,
     /// Reihenfolge, in der Knoten ausgewertet werden (Eltern vor Kindern).
     order: Vec<usize>,
+    /// Weitere verformbare Teile neben dem Körper (Rüstung, Hut): je Knoten ein eigener Satz
+    /// Knochenmatrizen im GPU-Mesh, damit man sie ausblenden kann.
+    extra_skins: Vec<usize>,
 }
 
 impl Model {
@@ -283,7 +286,18 @@ impl Model {
             }
         }
 
-        Ok(Model { nodes, parts, joints, clips, images, materials, order })
+        // Der Körper ist das verformbare Teil mit den meisten Eckpunkten; alle anderen verformbaren
+        // Knoten (Rüstungsteile, Hüte) lassen sich ein- und ausblenden.
+        let mut groesse: Vec<(usize, usize)> = Vec::new();
+        for part in parts.iter().filter(|p| p.skinned) {
+            match groesse.iter_mut().find(|(n, _)| *n == part.node) {
+                Some((_, g)) => *g += part.positions.len(),
+                None => groesse.push((part.node, part.positions.len())),
+            }
+        }
+        let koerper = groesse.iter().max_by_key(|(_, g)| *g).map(|(n, _)| *n);
+        let extra_skins = groesse.iter().map(|(n, _)| *n).filter(|&n| Some(n) != koerper).collect();
+        Ok(Model { nodes, parts, joints, clips, images, materials, order, extra_skins })
     }
 
     pub fn node(&self, name: &str) -> Option<usize> {
@@ -414,19 +428,30 @@ impl Model {
         names
     }
 
+    /// Namen der ausblendbaren verformbaren Teile (Rüstung, Hut).
+    pub fn skin_attachments(&self) -> Vec<&str> {
+        self.extra_skins.iter().map(|&n| self.nodes[n].name.as_str()).collect()
+    }
+
     /// Höhe des Modells in Ruhehaltung (für die Skalierung auf eine Wunschgröße).
     /// Das ganze Modell in Ruhelage, mit Knochen und Gewichten je Eckpunkt – die Grafikkarte
     /// verformt es mit `Animator::palette`. Einmal hochladen, beliebig viele Figuren teilen es.
     pub fn skinned_gpu_mesh(&self, texture: Option<TextureId>) -> MeshData {
         let mut mesh = MeshData { texture, ..Default::default() };
         let skeleton = self.joints.len() as u32;
+        let starre = self.parts.iter().filter(|p| !p.skinned).count() as u32;
         let mut rigid = 0u32;
         for part in &self.parts {
             let base = mesh.vertices.len() as u32;
+            // Ausblendbare verformbare Teile nutzen einen eigenen Satz Knochen hinter den starren Teilen
+            let versatz = match self.extra_skins.iter().position(|&n| n == part.node) {
+                Some(k) => skeleton + starre + k as u32 * skeleton,
+                None => 0,
+            };
             for i in 0..part.positions.len() {
                 mesh.vertices.push(Vertex { position: part.positions[i].into(), normal: part.normals[i].into(), color: part.colors[i], uv: part.uvs[i] });
                 mesh.skin.push(if part.skinned {
-                    SkinVertex { joints: part.joints[i].map(u32::from), weights: part.weights[i] }
+                    SkinVertex { joints: part.joints[i].map(|j| u32::from(j) + versatz), weights: part.weights[i] }
                 } else {
                     SkinVertex { joints: [skeleton + rigid, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] }
                 });
@@ -768,8 +793,16 @@ impl Animator {
     /// schrumpfen auf einen Punkt.
     pub fn palette(&self) -> Vec<Mat4> {
         let mut out: Vec<Mat4> = self.model.joints.iter().map(|&(node, inverse)| self.globals[node] * inverse).collect();
+        let skelett = out.len();
         for part in self.model.parts.iter().filter(|p| !p.skinned) {
             out.push(if self.is_hidden(part.node) { Mat4::from_scale(Vec3::ZERO) } else { self.globals[part.node] });
+        }
+        for &node in &self.model.extra_skins {
+            if self.is_hidden(node) {
+                out.extend(std::iter::repeat_n(Mat4::from_scale(Vec3::ZERO), skelett));
+            } else {
+                out.extend_from_within(..skelett);
+            }
         }
         out
     }
