@@ -133,6 +133,18 @@ impl Session {
         }
     }
 
+    /// Mit dem Händler handeln.
+    pub fn handel(&mut self, ctx: &mut Context, befehl: crate::handel::HandelBefehl) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_handel(befehl);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.handel(ctx, &mut self.world, local, befehl) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Eine erbeutete Waffe ausrüsten (0 = Startwaffe).
     pub fn ausruesten(&mut self, waffe: u8) {
         let local = self.local_player();

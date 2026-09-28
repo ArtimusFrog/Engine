@@ -339,7 +339,7 @@ def _kopf(f, haut, lippe, wange, haar, bart_art, russ=False):
 # ---------------------------------------------------------------------------
 # Körper: Stiefel, Hose, Rumpf, Arme, Hände (Farben je Arbeiter)
 # ---------------------------------------------------------------------------
-def _koerper(f, haut, hose, hose_farbe, oben_farbe, stiefel, sohle, handschuh, aermel, aermel_farbe, hochgekrempelt):
+def _koerper(f, haut, hose, hose_farbe, oben_farbe, stiefel, sohle, handschuh, aermel, aermel_farbe, hochgekrempelt, hand_ziel=2000):
     # Stiefel und Hose
     for seite in (1, -1):
         sn = "L" if seite > 0 else "R"
@@ -382,8 +382,8 @@ def _koerper(f, haut, hose, hose_farbe, oben_farbe, stiefel, sohle, handschuh, a
         q1, q2 = _achsen(e_, h_)
         stulpe = [(e_.lerp(h_, t), q1, q2, rad, rad) for t, rad in ((0.82, 0.045), (0.95, 0.05), (1.05, 0.052))]
         f.loft("Stulpe", stulpe, 16, lambda i, k, p: handschuh * 0.9, _arm(seite), teilung=2, glatt=True)
-    f.metaball("HandR", _faust(GRIFF_R, Z, -1, 0.0095), 0.003, 2000, lambda poly: handschuh, lambda co: {"Hand.R": 1.0}, glatt=True)
-    f.metaball("HandL", _faust(GRIFF_L, Y, 1, 0.0095), 0.003, 2000, lambda poly: handschuh, lambda co: {"Hand.L": 1.0}, glatt=True)
+    f.metaball("HandR", _faust(GRIFF_R, Z, -1, 0.0095), 0.003, hand_ziel, lambda poly: handschuh, lambda co: {"Hand.R": 1.0}, glatt=True)
+    f.metaball("HandL", _faust(GRIFF_L, Y, 1, 0.0095), 0.003, hand_ziel, lambda poly: handschuh, lambda co: {"Hand.L": 1.0}, glatt=True)
 
 
 def _skelett(f):

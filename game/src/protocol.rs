@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0023;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0024;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -257,6 +257,8 @@ pub enum ClientMessage {
     RuestungAnlegen(u8, u8),
     /// Durch einen Durchgang eines Dungeons gehen (Index in `World::durchgaenge`)
     Durchgang(u16),
+    /// Mit dem Händler auf dem Marktplatz handeln
+    Handel(crate::handel::HandelBefehl),
 }
 
 /// Was im Inventar angelegt werden soll (Klick oder auf einen Ausrüstungsplatz gezogen).

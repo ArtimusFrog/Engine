@@ -394,6 +394,160 @@ impl InventoryUi {
         close
     }
 
+    /// Fenster des Händlers (links): Tagesangebot, Baumaterial und alles, was man verkaufen kann.
+    /// Liefert den gewünschten Handel und ob das Fenster geschlossen werden soll.
+    pub fn haendler_fenster(&mut self, ctx: &egui::Context, inventory: &Inventory, class: crate::protocol::CharacterClass, tag: u32) -> (Option<crate::handel::HandelBefehl>, bool) {
+        use crate::handel::{HandelBefehl, Ware};
+        self.icons(ctx);
+        let icons = self.icons.as_ref().expect("Symbole geladen");
+        let mut befehl = None;
+        let mut close = false;
+        const SPALTEN: usize = 6;
+        let width = MARGIN * 2.0 + SPALTEN as f32 * SLOT + (SPALTEN - 1) as f32 * GAP;
+        // Was man verkaufen kann: Ausrüstung, die nicht angelegt ist, und Gegenstände mit Ankaufpreis
+        let getragen = getragene_dinge(inventory, class);
+        let mut verkaeuflich: Vec<Ware> = crate::waffen::WAFFEN
+            .iter()
+            .filter(|w| inventory.waffen & (1u32 << w.id) != 0)
+            .map(|w| Ware::Waffe(w.id))
+            .chain(crate::ruestung::RUESTUNGEN.iter().filter(|r| inventory.ruestungen & (1u32 << r.id) != 0).map(|r| Ware::Ruestung(r.id)))
+            .filter(|&w| !getragen.contains(&Some(ding_von(w))))
+            .collect();
+        verkaeuflich.extend(Item::ALL.into_iter().filter(|&i| crate::handel::ankauf(i).is_some() && inventory.count(i) > 0).map(Ware::Gegenstand));
+        let reihen = verkaeuflich.len().div_ceil(SPALTEN).clamp(1, 4);
+        let angebot_hoehe = 64.0 + 46.0;
+        let height = MARGIN + HEADER + 22.0 + angebot_hoehe + 22.0 + SLOT + 26.0 + 22.0 + reihen as f32 * (SLOT + GAP) + FOOTER;
+
+        egui::Area::new(egui::Id::new("haendler_fenster")).anchor(Align2::LEFT_CENTER, [22.0, 0.0]).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+            let painter = ui.painter().clone();
+            frame(&painter, rect);
+            let title_center = egui::pos2(rect.center().x, rect.top() + MARGIN + 16.0);
+            spaced_text(&painter, title_center + egui::vec2(0.0, 1.5), "HÄNDLER", 23.0, Color32::from_black_alpha(200));
+            spaced_text(&painter, title_center, "HÄNDLER", 23.0, GOLD_LIGHT);
+            painter.text(title_center + egui::vec2(0.0, 20.0), Align2::CENTER_CENTER, "Marktplatz der Burg · Tagesangebot wechselt jeden Morgen", FontId::proportional(12.5), MUTED);
+            let close_center = egui::pos2(rect.right() - MARGIN - 8.0, rect.top() + MARGIN + 10.0);
+            let response = ui.interact(Rect::from_center_size(close_center, egui::vec2(24.0, 24.0)), egui::Id::new("haendler_schliessen"), egui::Sense::click());
+            close_button(&painter, close_center, response.hovered());
+            if response.on_hover_text("Schließen (E oder Esc)").clicked() {
+                close = true;
+            }
+            divider(&painter, rect.left() + MARGIN, rect.right() - MARGIN, rect.top() + MARGIN + HEADER - 8.0);
+            // Eigenes Gold
+            let gold_zeile = rect.top() + MARGIN + HEADER + 4.0;
+            let gold_rect = Rect::from_min_size(egui::pos2(rect.center().x - 60.0, gold_zeile - 2.0), egui::vec2(22.0, 22.0));
+            icons.paint(&painter, gold_rect, Item::Gold);
+            painter.text(gold_rect.right_center() + egui::vec2(6.0, 0.0), Align2::LEFT_CENTER, format!("{} Gold", inventory.gold), FontId::proportional(16.0), GOLD_LIGHT);
+
+            let abschnitt = |y: f32, text: &str| {
+                painter.text(egui::pos2(rect.left() + MARGIN, y), Align2::LEFT_CENTER, text, FontId::proportional(14.0), GOLD);
+            };
+            // ---------- Tagesangebot ----------
+            let mut y = gold_zeile + 30.0;
+            abschnitt(y, "Angebot des Tages");
+            y += 14.0;
+            let angebot = crate::handel::angebot(tag, class);
+            let breite = 64.0;
+            let abstand = (width - MARGIN * 2.0 - angebot.len() as f32 * breite) / (angebot.len().max(2) - 1) as f32;
+            for (n, &ware) in angebot.iter().enumerate() {
+                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + n as f32 * (breite + abstand), y), egui::vec2(breite, breite));
+                let d = ding_von(ware);
+                let hat = match ware {
+                    Ware::Waffe(id) => inventory.waffen & (1u32 << id) != 0,
+                    Ware::Ruestung(id) => inventory.ruestungen & (1u32 << id) != 0,
+                    Ware::Gegenstand(_) => false,
+                };
+                let preis = crate::handel::wert(ware).unwrap_or(0);
+                let leistbar = inventory.gold >= preis;
+                let response = ui.interact(slot_rect, egui::Id::new(("haendler_angebot", n)), egui::Sense::click());
+                slot_frame(&painter, slot_rect, response.hovered() && !hat, true);
+                if let Some(s) = d.seltenheit() {
+                    painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(s)), StrokeKind::Inside);
+                }
+                icons.paint_file(&painter, slot_rect.shrink(4.0), d.datei(class), if hat { Color32::from_gray(80) } else { Color32::WHITE });
+                if hat {
+                    painter.text(slot_rect.right_top() + egui::vec2(-4.0, 2.0), Align2::RIGHT_TOP, "✔", FontId::proportional(14.0), GOLD_LIGHT);
+                }
+                let farbe = if hat { MUTED } else if leistbar { GOLD_LIGHT } else { Color32::from_rgb(220, 90, 70) };
+                painter.text(egui::pos2(slot_rect.center().x, slot_rect.bottom() + 11.0), Align2::CENTER_CENTER, format!("{preis} Gold"), FontId::proportional(13.0), farbe);
+                if response.clicked() && !hat && leistbar {
+                    befehl = Some(HandelBefehl::Kaufen(ware, 1));
+                }
+                let hinweis = if hat {
+                    "Hast du schon".to_string()
+                } else if leistbar {
+                    format!("Klick: kaufen für {preis} Gold")
+                } else {
+                    format!("Zu wenig Gold ({preis} nötig)")
+                };
+                response.on_hover_ui(|ui| ding_tooltip(ui, icons, d, class, Some(&hinweis)));
+            }
+            y += angebot_hoehe - 14.0;
+            // ---------- Baumaterial ----------
+            abschnitt(y, "Baumaterial · Klick: 10 Stück, Rechtsklick: 1");
+            y += 12.0;
+            for (n, &item) in crate::handel::ROHSTOFFE.iter().enumerate() {
+                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + n as f32 * (SLOT * 2.0 + GAP), y), egui::vec2(SLOT, SLOT));
+                let preis = crate::handel::verkauf(item).unwrap_or(0);
+                let response = ui.interact(slot_rect.union(slot_rect.translate(egui::vec2(SLOT, 0.0))), egui::Id::new(("haendler_rohstoff", n)), egui::Sense::click());
+                slot_frame(&painter, slot_rect, response.hovered(), true);
+                icons.paint(&painter, slot_rect.shrink(1.5), item);
+                painter.text(slot_rect.right_center() + egui::vec2(6.0, -8.0), Align2::LEFT_CENTER, item.label(), FontId::proportional(13.0), PARCHMENT);
+                painter.text(slot_rect.right_center() + egui::vec2(6.0, 9.0), Align2::LEFT_CENTER, format!("{preis} Gold"), FontId::proportional(12.5), GOLD_LIGHT);
+                if response.clicked() && inventory.gold >= preis * 10 {
+                    befehl = Some(HandelBefehl::Kaufen(Ware::Gegenstand(item), 10));
+                } else if response.secondary_clicked() && inventory.gold >= preis {
+                    befehl = Some(HandelBefehl::Kaufen(Ware::Gegenstand(item), 1));
+                }
+                response.on_hover_text(format!("{}: {preis} Gold je Stück · 10 Stück {} Gold", item.label(), preis * 10));
+            }
+            y += SLOT + 26.0;
+            // ---------- Verkaufen ----------
+            divider(&painter, rect.left() + MARGIN, rect.right() - MARGIN, y - 12.0);
+            abschnitt(y, "Verkaufen · Klick: 10 Stück bzw. das Teil, Rechtsklick: alle");
+            y += 14.0;
+            if verkaeuflich.is_empty() {
+                painter.text(egui::pos2(rect.center().x, y + SLOT * 0.5), Align2::CENTER_CENTER, "Nichts, was der Händler ankauft (angelegte Ausrüstung behält man)", FontId::proportional(13.0), MUTED);
+            }
+            for (n, &ware) in verkaeuflich.iter().take(SPALTEN * 4).enumerate() {
+                let (spalte, reihe) = (n % SPALTEN, n / SPALTEN);
+                let slot_rect = Rect::from_min_size(egui::pos2(rect.left() + MARGIN + spalte as f32 * (SLOT + GAP), y + reihe as f32 * (SLOT + GAP)), egui::vec2(SLOT, SLOT));
+                let response = ui.interact(slot_rect, egui::Id::new(("haendler_verkauf", n)), egui::Sense::click());
+                slot_frame(&painter, slot_rect, response.hovered(), true);
+                let preis = crate::handel::ankauf_ausruestung(ware).unwrap_or(0);
+                match ware {
+                    Ware::Gegenstand(item) => {
+                        icons.paint(&painter, slot_rect.shrink(1.5), item);
+                        count_label(&painter, slot_rect.right_bottom() - egui::vec2(4.0, 2.0), inventory.count(item), 14.0);
+                        let n = inventory.count(item);
+                        if response.clicked() {
+                            befehl = Some(HandelBefehl::Verkaufen(ware, 10.min(n)));
+                        } else if response.secondary_clicked() {
+                            befehl = Some(HandelBefehl::Verkaufen(ware, n));
+                        }
+                        response.on_hover_text(format!("{}: {preis} Gold je Stück · alle {n}: {} Gold", item.label(), preis * n));
+                    }
+                    _ => {
+                        let d = ding_von(ware);
+                        if let Some(s) = d.seltenheit() {
+                            painter.rect_stroke(slot_rect.shrink(1.0), 4.0, Stroke::new(2.0, seltenheit_farbe(s)), StrokeKind::Inside);
+                        }
+                        icons.paint_file(&painter, slot_rect.shrink(3.0), d.datei(class), if d.passt(class) { Color32::WHITE } else { Color32::from_gray(120) });
+                        if response.clicked() || response.secondary_clicked() {
+                            befehl = Some(HandelBefehl::Verkaufen(ware, 1));
+                        }
+                        let hinweis = format!("Klick: verkaufen für {preis} Gold");
+                        response.on_hover_ui(|ui| ding_tooltip(ui, icons, d, class, Some(&hinweis)));
+                    }
+                }
+            }
+            let footer_top = rect.bottom() - FOOTER + 6.0;
+            divider(&painter, rect.left() + MARGIN, rect.right() - MARGIN, footer_top);
+            key_hint(&painter, egui::pos2(rect.right() - MARGIN, footer_top + 22.0), "E", "Schließen");
+        });
+        (befehl, close)
+    }
+
     /// Auswahlleiste unten in der Mitte: Werkzeuge und die drei Fähigkeiten der Figur, der gewählte
     /// Platz leuchtet. `abklingen`: Restzeit der Fähigkeiten in Sekunden (0 = bereit);
     /// `punkte`: je Fähigkeit (gefüllt, von) – arkane Ladungen bzw. Stand der Kombo.
@@ -786,6 +940,15 @@ impl Ding {
             Ding::Waffe(_) => crate::protocol::Anlegen::Waffe(0),
             Ding::Ruestung(_) => crate::protocol::Anlegen::Ruestung(self.platz() as u8 - 1, 0),
         }
+    }
+}
+
+/// Ware des Händlers als Ausrüstungsgegenstand (Gegenstände gibt es hier nicht).
+fn ding_von(ware: crate::handel::Ware) -> Ding {
+    match ware {
+        crate::handel::Ware::Ruestung(id) => Ding::Ruestung(id),
+        crate::handel::Ware::Waffe(id) => Ding::Waffe(id),
+        crate::handel::Ware::Gegenstand(_) => Ding::Waffe(0),
     }
 }
 

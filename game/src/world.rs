@@ -174,6 +174,8 @@ pub struct World {
     wildlife: Option<crate::leben::Wildlife>,
     /// Zwei Ritter, die vor dem Schlossportal patrouillieren (nur mit Fenster).
     wachen: Option<crate::wachen::Wachen>,
+    /// Der Händler auf dem Marktplatz (nur mit Fenster)
+    haendler: Option<crate::handel::HaendlerFigur>,
     /// Wolken, Regen, Gewitter, Regenbogen, Polarlicht (aus Tag und Uhrzeit).
     pub weather: crate::wetter::Weather,
     /// Magische Kristallvorkommen (Mitte am Boden): leuchten und funkeln.
@@ -309,6 +311,7 @@ impl World {
             zauberbild: Default::default(),
             wildlife: None,
             wachen: None,
+            haendler: None,
             weather: Default::default(),
             buildings: Vec::new(),
             bau: Default::default(),
@@ -1261,6 +1264,13 @@ impl World {
         }
         if let Some(wachen) = &mut self.wachen {
             messen("wachen", || wachen.update(ctx, &self.day));
+        }
+        if self.haendler.is_none() && !ctx.is_headless() {
+            self.haendler = crate::handel::HaendlerFigur::new(ctx);
+        }
+        if let Some(haendler) = &mut self.haendler {
+            let spieler: Vec<Vec3> = self.players.values().map(|a| ctx.physics.character_position(a.character) - Vec3::Y * 0.9).collect();
+            haendler.update(ctx, &spieler);
         }
         for kind in self.bau.update(ctx, &self.buildings, &mut self.sound_events) {
             let text = match kind.produces() {

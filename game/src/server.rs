@@ -1006,6 +1006,24 @@ impl Authority {
         Ok(())
     }
 
+    /// Handel mit dem Händler auf dem Marktplatz: nur in seiner Nähe; das Tagesangebot richtet
+    /// sich nach dem Spieltag und der Figur.
+    pub fn handel(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, befehl: crate::handel::HandelBefehl) -> Result<(), String> {
+        let avatar = world.players.get(&player).ok_or("Unbekannter Spieler")?;
+        let class = avatar.class;
+        let fuesse = ctx.physics.character_position(avatar.character) - Vec3::Y * 0.9;
+        if !crate::handel::in_reichweite(fuesse) {
+            return Err("Zu weit vom Händler entfernt".into());
+        }
+        let tag = world.day.day;
+        let inventory = world.inventories.entry(player).or_default();
+        let text = crate::handel::handeln(inventory, befehl, class, tag)?;
+        let inventory = *inventory;
+        self.send_inventory(player, inventory);
+        self.nachricht_an(world, player, text);
+        Ok(())
+    }
+
     /// Eine Nachricht nur an einen Spieler (der Gastgeber sieht sie im eigenen Chat).
     fn nachricht_an(&mut self, world: &mut World, player: PlayerId, text: String) {
         if player == HOST_PLAYER || self.net.is_none() {
@@ -1586,6 +1604,7 @@ impl Authority {
         let mut ausruesten: Vec<(ClientId, u8)> = Vec::new();
         let mut anlegen: Vec<(ClientId, u8, u8)> = Vec::new();
         let mut durchgaenge: Vec<(ClientId, u16)> = Vec::new();
+        let mut handel: Vec<(ClientId, crate::handel::HandelBefehl)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -1598,6 +1617,7 @@ impl Authority {
                     Some(ClientMessage::Ausruesten(waffe)) => ausruesten.push((id, waffe)),
                     Some(ClientMessage::RuestungAnlegen(platz, teil)) => anlegen.push((id, platz, teil)),
                     Some(ClientMessage::Durchgang(index)) => durchgaenge.push((id, index)),
+                    Some(ClientMessage::Handel(befehl)) => handel.push((id, befehl)),
                     _ => {}
                 }
             }
@@ -1650,6 +1670,12 @@ impl Authority {
         }
         for (id, index) in durchgaenge {
             let result = self.durchgang(ctx, world, id, index);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, befehl) in handel {
+            let result = self.handel(ctx, world, id, befehl);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }

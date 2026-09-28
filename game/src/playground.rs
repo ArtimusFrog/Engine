@@ -104,6 +104,8 @@ pub struct Playground {
     aim_enemy: Option<(crate::heer::EnemyKind, u8, u16)>,
     /// Verteidigungsfenster (T) offen
     td_open: bool,
+    /// Handelsfenster des Händlers (E auf dem Marktplatz) offen
+    handel_offen: bool,
     /// Siedlungsradien anzeigen (R)
     radius_an: bool,
     /// Wie viele Auswertungen schon da waren und seit wann die neueste gezeigt wird
@@ -156,6 +158,8 @@ pub struct Playground {
     /// Nur zum Testen: dabei regelmäßig die Fähigkeit N (0–2) aufs Lager einsetzen (`--demo-angriff N`)
     demo_angriff: Option<u8>,
     demo_brunnen: bool,
+    /// Nur für Screenshots: `--demo-haendler [fenster]` – vor den Händler stellen (und handeln)
+    demo_haendler: Option<bool>,
     /// Nur zum Testen: Beute vor die Figur legen (`--demo-beute`)
     demo_beute: bool,
     /// Nur zum Testen: alle zehn Türme an die Südstraße stellen (`--demo-tuerme`)
@@ -221,6 +225,7 @@ impl Playground {
             noclip: false,
             aim_enemy: None,
             td_open: false,
+            handel_offen: false,
             radius_an: false,
             bericht_seit: (0, 0.0),
             demo_fallen: false,
@@ -249,6 +254,7 @@ impl Playground {
             demo_dungeon: None,
             demo_angriff: None,
             demo_brunnen: false,
+            demo_haendler: None,
             demo_beute: false,
             demo_towers: false,
             demo_turmschuss: None,
@@ -454,6 +460,34 @@ impl Playground {
         session.world().durchgang_bei(p - Vec3::Y * 0.9).map(|(i, d)| (i, d.text.clone()))
     }
 
+    /// Steht die eigene Figur beim Händler?
+    fn beim_haendler(&self, ctx: &Context) -> bool {
+        let Some(session) = self.session.as_ref() else { return false };
+        let Some(local) = session.local_player() else { return false };
+        session.world().player_position(ctx, local).is_some_and(|p| crate::handel::in_reichweite(p - Vec3::Y * 0.9))
+    }
+
+    /// Das Handelsfenster des Händlers (links), siehe `inventar.rs`. Schließt sich, wenn man weggeht.
+    fn handel_fenster(&mut self, ctx: &mut Context, egui_ctx: &egui::Context) {
+        if !self.beim_haendler(ctx) {
+            self.handel_offen = false;
+            self.refresh_cursor(ctx);
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        let inventory = session.local_inventory();
+        let tag = session.world().day.day;
+        let class = self.klasse();
+        let (befehl, close) = self.inventory_ui.haendler_fenster(egui_ctx, &inventory, class, tag);
+        if let (Some(befehl), Some(session)) = (befehl, &mut self.session) {
+            session.handel(ctx, befehl);
+        }
+        if close {
+            self.handel_offen = false;
+            self.refresh_cursor(ctx);
+        }
+    }
+
     /// Was E hier mit Runen tun würde: am Runenbrunnen schmieden oder in einen Schutzstein einsetzen.
     fn runen_hier(&self, ctx: &Context) -> Option<crate::protocol::RunenBefehl> {
         let session = self.session.as_ref()?;
@@ -494,6 +528,7 @@ impl Playground {
 
     fn toggle_inventory(&mut self, ctx: &mut Context) {
         self.inventory_open = !self.inventory_open;
+        self.handel_offen = false;
         self.map_open = false;
         self.build_menu_open = false;
         self.build_mode = None;
@@ -907,6 +942,7 @@ impl Playground {
             && !self.admin_open
             && self.building_window.is_none()
             && !self.td_open
+            && !self.handel_offen
             && !self.map_open
             && !self.chat.open
             && !ctx.is_headless();
@@ -926,6 +962,19 @@ impl Playground {
                 }
                 if escape && self.map_open {
                     self.toggle_map(ctx);
+                    return;
+                }
+                // E beim Händler: Handelsfenster auf und zu (Esc schließt auch)
+                if self.handel_offen && (escape || ctx.input.key_pressed(KeyCode::KeyE)) {
+                    self.handel_offen = false;
+                    self.refresh_cursor(ctx);
+                    return;
+                }
+                if ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none() && self.building_window.is_none() && self.beute_hier(ctx).is_none() && self.beim_haendler(ctx) {
+                    self.handel_offen = true;
+                    self.inventory_open = false;
+                    self.map_open = false;
+                    self.refresh_cursor(ctx);
                     return;
                 }
                 // E: Beute vom Boden aufheben (hat Vorrang)
@@ -1788,6 +1837,14 @@ impl Playground {
             painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), Color32::BLACK);
             painter.text(mitte, Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), farbe);
         }
+        // Beim Händler
+        if !self.handel_offen && self.beute_hier(ctx).is_none() && self.beim_haendler(ctx) {
+            let mitte = egui_ctx.content_rect().center() + egui::vec2(0.0, 92.0);
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            let zeile = "Händler · E: Handeln";
+            painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, zeile, egui::FontId::proportional(20.0), Color32::BLACK);
+            painter.text(mitte, Align2::CENTER_CENTER, zeile, egui::FontId::proportional(20.0), Color32::from_rgb(255, 214, 140));
+        }
         // Vor einem Durchgang eines Dungeons
         if let Some((_, text)) = self.durchgang_hier(ctx).filter(|_| self.beute_hier(ctx).is_none()) {
             let mitte = egui_ctx.content_rect().center() + egui::vec2(0.0, 92.0);
@@ -2102,6 +2159,9 @@ impl Game for Playground {
             self.demo_dungeon = Some((zahl(1).unwrap_or(0).max(0) as usize, zahl(2).unwrap_or(0), zahl(3).map(|r| r.max(0) as usize)));
         }
         self.demo_brunnen = args.iter().any(|a| a == "--demo-brunnen");
+        if let Some(i) = args.iter().position(|a| a == "--demo-haendler") {
+            self.demo_haendler = Some(args.get(i + 1).is_some_and(|a| a == "fenster"));
+        }
         self.demo_beute = args.iter().any(|a| a == "--demo-beute");
 
         if let Some(i) = args.iter().position(|a| a == "--demo-angriff") {
@@ -2653,6 +2713,32 @@ impl Game for Playground {
                 session.world_mut().inventories.entry(local).or_default().runenfragmente = 4;
             }
         }
+        let class = self.klasse();
+        if let (Some(fenster), Some(session)) = (self.demo_haendler, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_haendler = None;
+                let ort = crate::handel::ort();
+                let vorne = crate::island::burg_welt(vec2(-47.25, 37.9)) - vec2(ort.x, ort.z);
+                let vorne = vec3(vorne.x, 0.0, vorne.y).normalize();
+                let stand = ort + vorne * 1.6 + vec3(-vorne.z, 0.0, vorne.x) * 3.2 + Vec3::Y * 1.2;
+                let character = session.world().players[&local].character;
+                ctx.physics.teleport_character(character, stand);
+                self.demo_crystal = Some(Some(ort + Vec3::Y * 1.3));
+                self.demo_yaw_offset = 0.0;
+                let inventory = session.world_mut().inventories.entry(local).or_default();
+                inventory.gold = 640;
+                for (item, n) in [(Item::Wood, 46), (Item::Stone, 18), (Item::Pelt, 7), (Item::Wool, 5), (Item::Runenfragment, 2)] {
+                    inventory.add_item(item, n);
+                }
+                for w in crate::waffen::WAFFEN.iter().filter(|w| w.klasse == class).take(3) {
+                    inventory.waffen |= 1 << w.id;
+                }
+                for r in crate::ruestung::RUESTUNGEN.iter().filter(|r| r.klasse == class).take(2) {
+                    inventory.ruestungen |= 1 << r.id;
+                }
+                self.handel_offen = fenster;
+            }
+        }
         if let (true, Some(session)) = (self.demo_fight, &mut self.session) {
             if let Some(local) = session.local_player() {
                 self.demo_fight = false;
@@ -2805,6 +2891,7 @@ impl Game for Playground {
             Screen::Settings => self.settings_menu(ctx, egui_ctx),
             Screen::Connecting => self.lade_bildschirm(ctx, egui_ctx),
             Screen::Paused => self.pause_menu(ctx, egui_ctx),
+            Screen::Playing if self.handel_offen => self.handel_fenster(ctx, egui_ctx),
             Screen::Playing if self.inventory_open => self.inventory_window(ctx, egui_ctx),
             Screen::Playing if self.build_menu_open => self.build_menu(ctx, egui_ctx),
             Screen::Playing if self.admin_open => self.admin_panel(ctx, egui_ctx),

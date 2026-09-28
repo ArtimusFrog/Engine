@@ -9,6 +9,7 @@ mod characters;
 mod dungeon;
 mod chat;
 mod faehigkeiten;
+mod handel;
 mod client;
 mod inventar;
 mod hauptmenue;
