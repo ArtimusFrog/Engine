@@ -6,6 +6,7 @@ mod arbeiter;
 mod asset_files;
 mod blender;
 mod characters;
+mod dungeon;
 mod chat;
 mod faehigkeiten;
 mod client;

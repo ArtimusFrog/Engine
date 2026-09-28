@@ -24,39 +24,49 @@ const STERBEN: f32 = 2.5;
 /// Wer in einem Lager haust.
 pub struct LagerArt {
     pub name: &'static str,
-    /// 1 = harmlos, 3 = gefährlich (mehr Leben, härtere Schläge, bessere Beute)
+    /// 1 = harmlos, 3 = gefährlich, 4–5 nur tief in Dungeons (mehr Leben, härtere Schläge, bessere Beute)
     pub gefahr: u8,
     pub einheiten: &'static [EnemyKind],
     pub anfuehrer: EnemyKind,
+    /// Faktor auf die Leben (große Bosse der Festung sind für Dungeons zu zäh)
+    pub leben: f32,
+    /// Nur in Dungeons (`dungeon.rs`), nicht in der Wildnis
+    pub dungeon: bool,
+    /// Der Anführer ist ein Endgegner: sichere, wertvolle Beute
+    pub boss: bool,
+}
+
+const fn wild(name: &'static str, gefahr: u8, einheiten: &'static [EnemyKind], anfuehrer: EnemyKind) -> LagerArt {
+    LagerArt { name, gefahr, einheiten, anfuehrer, leben: 1.0, dungeon: false, boss: false }
+}
+
+const fn tief(name: &'static str, gefahr: u8, einheiten: &'static [EnemyKind], anfuehrer: EnemyKind, leben: f32, boss: bool) -> LagerArt {
+    LagerArt { name, gefahr, einheiten, anfuehrer, leben, dungeon: true, boss }
 }
 
 /// Eigene Bewohner der Wildnis – deutlich schwächer als die Truppen der Festung.
-pub const ARTEN: [LagerArt; 5] = [
-    LagerArt {
-        name: "Spinnennest",
-        gefahr: 1,
-        einheiten: &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne],
-        anfuehrer: EnemyKind::Waldspinne,
-    },
-    LagerArt { name: "Plündererlager", gefahr: 1, einheiten: &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Pluenderer], anfuehrer: EnemyKind::Pluenderer },
-    LagerArt {
-        name: "Banditenlager",
-        gefahr: 2,
-        einheiten: &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Bandit, EnemyKind::Banditenschuetze],
-        anfuehrer: EnemyKind::Bandit,
-    },
-    LagerArt {
-        name: "Plündererbande",
-        gefahr: 2,
-        einheiten: &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer],
-        anfuehrer: EnemyKind::Bandit,
-    },
-    LagerArt {
-        name: "Banditenfestung",
-        gefahr: 3,
-        einheiten: &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer, EnemyKind::Bandit],
-        anfuehrer: EnemyKind::Bandit,
-    },
+pub const ARTEN: [LagerArt; 17] = [
+    wild("Spinnennest", 1, &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Waldspinne),
+    wild("Plündererlager", 1, &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Pluenderer], EnemyKind::Pluenderer),
+    wild("Banditenlager", 2, &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Bandit, EnemyKind::Banditenschuetze], EnemyKind::Bandit),
+    wild("Plündererbande", 2, &[EnemyKind::Pluenderer, EnemyKind::Pluenderer, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer], EnemyKind::Bandit),
+    wild("Banditenfestung", 3, &[EnemyKind::Bandit, EnemyKind::Banditenschuetze, EnemyKind::Pluenderer, EnemyKind::Bandit], EnemyKind::Bandit),
+    // ---------- Spinnengrotte ----------
+    tief("Spinnenbrut", 2, &[EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Spinnling, 1.0, false),
+    tief("Harpyiennest", 3, &[EnemyKind::Harpy, EnemyKind::Harpy, EnemyKind::Waldspinne, EnemyKind::Waldspinne], EnemyKind::Harpy, 1.0, false),
+    tief("Thron der Spinnenkönigin", 4, &[EnemyKind::Spinnling, EnemyKind::Spinnling, EnemyKind::Waldspinne, EnemyKind::Waldspinne, EnemyKind::Waldspinne],
+         EnemyKind::Spinnenkoenigin, 0.16, true),
+    // ---------- Gruft der Vergessenen ----------
+    tief("Knochenhalle", 2, &[EnemyKind::Skeleton, EnemyKind::Skeleton, EnemyKind::Skeleton], EnemyKind::Skeleton, 1.0, false),
+    tief("Geistergang", 3, &[EnemyKind::Ghost, EnemyKind::Skeleton, EnemyKind::Ghost], EnemyKind::Warlock, 1.0, false),
+    tief("Zirkel der Totenbeschwörer", 3, &[EnemyKind::Warlock, EnemyKind::Skeleton, EnemyKind::Skeleton, EnemyKind::Assassin], EnemyKind::Warlock, 1.0, false),
+    tief("Grab des Lichkönigs", 4, &[EnemyKind::Skeleton, EnemyKind::Ghost, EnemyKind::Skeleton, EnemyKind::Warlock], EnemyKind::Lich, 0.18, true),
+    // ---------- Schmiede der Tiefe ----------
+    tief("Höllenrudel", 3, &[EnemyKind::Wolf, EnemyKind::Wolf, EnemyKind::Wolf, EnemyKind::Wolf], EnemyKind::Wolf, 1.0, false),
+    tief("Halle der Golems", 3, &[EnemyKind::Felsling, EnemyKind::Felsling, EnemyKind::Felsling], EnemyKind::Golem, 0.5, false),
+    tief("Wacht der Dunklen Ritter", 4, &[EnemyKind::Knight, EnemyKind::Pikeman, EnemyKind::Knight, EnemyKind::Archer], EnemyKind::Knight, 0.8, false),
+    tief("Trollhöhle", 4, &[EnemyKind::Felsling, EnemyKind::Felsling, EnemyKind::Wolf], EnemyKind::Troll, 0.16, true),
+    tief("Thron des Dämonenfürsten", 5, &[EnemyKind::Knight, EnemyKind::Wolf, EnemyKind::Wolf, EnemyKind::Warlock], EnemyKind::Daemon, 0.14, true),
 ];
 
 /// Leben, Schlagkraft und Beute je Gefahrenstufe.
@@ -64,7 +74,9 @@ fn staerke(gefahr: u8) -> (f32, f32) {
     match gefahr {
         1 => (1.0, 1.0),
         2 => (1.25, 1.1),
-        _ => (1.6, 1.25),
+        3 => (1.6, 1.25),
+        4 => (2.0, 1.4),
+        _ => (2.5, 1.55),
     }
 }
 
@@ -82,7 +94,7 @@ pub fn fragment_chance(gefahr: u8, anfuehrer: bool) -> f32 {
 
 /// Gold für einen Besiegten.
 pub fn gold(gefahr: u8, anfuehrer: bool) -> u32 {
-    let grund = [4, 7, 11][(gefahr.clamp(1, 3) - 1) as usize];
+    let grund = [4, 7, 11, 16, 22][(gefahr.clamp(1, 5) - 1) as usize];
     if anfuehrer {
         grund * 4
     } else {
@@ -99,11 +111,18 @@ pub struct Lager {
     pub art: usize,
     /// Seit wann alle Bewohner besiegt sind
     leer_seit: Option<f32>,
+    /// In Dungeons: der Raum (min, max), den die Bewohner nicht verlassen
+    pub bereich: Option<(Vec2, Vec2)>,
 }
 
 impl Lager {
     pub fn art(&self) -> &'static LagerArt {
         &ARTEN[self.art]
+    }
+
+    /// Ein Raum in einem Dungeon.
+    pub fn im_dungeon(mitte: Vec2, hoehe: f32, art: usize, bereich: (Vec2, Vec2)) -> Lager {
+        Lager { mitte, hoehe, art, leer_seit: None, bereich: Some(bereich) }
     }
 
     /// Bis hierhin (Meter vom Lager) verfolgen die Bewohner einen Spieler.
@@ -113,7 +132,29 @@ impl Lager {
 
     /// Wer näher kommt, wird bemerkt.
     fn wachsam(&self) -> f32 {
+        if self.bereich.is_some() {
+            return 18.0;
+        }
         12.0 + 3.0 * self.art().gefahr as f32
+    }
+
+    /// Ist ein Spieler im Revier (in Dungeons: im Raum bzw. in der Tür, sonst an der Leine)?
+    fn im_revier(&self, p: Vec3) -> bool {
+        match self.bereich {
+            Some((a, b)) => {
+                let q = vec2(p.x, p.z);
+                q.cmpge(a - Vec2::splat(3.0)).all() && q.cmple(b + Vec2::splat(3.0)).all() && (p.y - self.hoehe).abs() < 6.0
+            }
+            None => p.distance(vec3(self.mitte.x, self.hoehe, self.mitte.y)) <= self.leine(),
+        }
+    }
+
+    /// Im Dungeon bleiben die Bewohner in ihrem Raum.
+    fn begrenzen(&self, p: Vec2, radius: f32) -> Vec2 {
+        match self.bereich {
+            Some((a, b)) => p.clamp(a + Vec2::splat(radius.min(2.0)), b - Vec2::splat(radius.min(2.0))),
+            None => p,
+        }
     }
 }
 
@@ -185,6 +226,8 @@ pub struct WildGefallen {
     pub gefahr: u8,
     pub ort: Vec3,
     pub lager: &'static str,
+    /// Ein Endgegner (sichere, wertvolle Beute)
+    pub boss: bool,
 }
 
 /// Ein Angriff auf einen Spieler.
@@ -259,9 +302,9 @@ impl Wildnis {
             }
             // Gefahr: außen harmlos, zur Festung hin gefährlich
             let gefahr = if r > radius * 0.64 { 1 } else if r > radius * 0.44 { 2 } else { 3 };
-            let passend: Vec<usize> = (0..ARTEN.len()).filter(|&i| ARTEN[i].gefahr == gefahr).collect();
+            let passend: Vec<usize> = (0..ARTEN.len()).filter(|&i| ARTEN[i].gefahr == gefahr && !ARTEN[i].dungeon).collect();
             let art = passend[lager.len() % passend.len()];
-            lager.push(Lager { mitte: p, hoehe: h, art, leer_seit: None });
+            lager.push(Lager { mitte: p, hoehe: h, art, leer_seit: None, bereich: None });
         }
         lager
     }
@@ -285,7 +328,8 @@ impl Wildnis {
             };
             let id = self.next_id;
             self.next_id = if self.next_id == u16::MAX { WILD_ID } else { self.next_id + 1 };
-            let max_health = kind.max_health() * leben * if anfuehrer { 2.2 } else { 1.0 };
+            let heim = lager.begrenzen(heim, 1.5);
+            let max_health = kind.max_health() * leben * art.leben * if anfuehrer { 2.2 } else { 1.0 };
             neu.push(Wilder {
                 id,
                 kind,
@@ -347,7 +391,6 @@ impl Wildnis {
                 continue;
             }
             let lager = &self.lager[w.lager];
-            let lager_mitte = vec3(lager.mitte.x, lager.hoehe, lager.mitte.y);
             // Brand, Betäubung, Verlangsamung
             if w.burn.1 > 0.0 {
                 w.burn.1 -= dt;
@@ -362,6 +405,7 @@ impl Wildnis {
                         gefahr: lager.art().gefahr,
                         ort: w.position,
                         lager: lager.art().name,
+                        boss: w.anfuehrer && lager.art().boss,
                     });
                     continue;
                 }
@@ -381,17 +425,17 @@ impl Wildnis {
             // Ziel prüfen: noch da und nicht zu weit vom Lager?
             if let Some(ziel) = w.ziel {
                 match finde(ziel) {
-                    Some(p) if p.distance(lager_mitte) <= lager.leine() => {}
+                    Some(p) if lager.im_revier(p) => {}
                     _ => w.ziel = None,
                 }
             }
             if w.ziel.is_none() {
-                w.ziel = alarm[w.lager].filter(|&z| finde(z).is_some_and(|p| p.distance(lager_mitte) <= lager.leine()));
+                w.ziel = alarm[w.lager].filter(|&z| finde(z).is_some_and(|p| lager.im_revier(p)));
             }
             if w.ziel.is_none() {
                 w.ziel = spieler
                     .iter()
-                    .filter(|(_, p)| p.distance(w.position) < lager.wachsam() && p.distance(lager_mitte) <= lager.leine())
+                    .filter(|(_, p)| p.distance(w.position) < lager.wachsam() && lager.im_revier(*p))
                     .min_by(|a, b| a.1.distance(w.position).total_cmp(&b.1.distance(w.position)))
                     .map(|s| s.0);
             }
@@ -427,7 +471,7 @@ impl Wildnis {
             if let Some(nach) = weg {
                 let d = nach - hier;
                 let schritt = (tempo * dt).min(d.length());
-                let neu = hier + d.normalize_or_zero() * schritt;
+                let neu = lager.begrenzen(hier + d.normalize_or_zero() * schritt, w.radius());
                 w.position = vec3(neu.x, boden(neu), neu.y);
                 w.laeuft = true;
                 if d.length_squared() > 0.01 {
@@ -524,6 +568,7 @@ impl Wildnis {
             gefahr: lager.art().gefahr,
             ort: w.position,
             lager: lager.art().name,
+            boss: w.anfuehrer && lager.art().boss,
         });
         Some(w.kind)
     }
@@ -643,7 +688,7 @@ mod tests {
     use super::*;
 
     fn wildnis() -> Wildnis {
-        let lager = vec![Lager { mitte: vec2(0.0, 0.0), hoehe: 0.0, art: 1, leer_seit: None }];
+        let lager = vec![Lager { mitte: vec2(0.0, 0.0), hoehe: 0.0, art: 1, leer_seit: None, bereich: None }];
         Wildnis::new(lager, &|_| 0.0)
     }
 

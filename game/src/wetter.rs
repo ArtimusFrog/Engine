@@ -88,11 +88,13 @@ pub struct Weather {
     pub thunder: Option<(f32, f32)>,
     /// Nur für Screenshots: dieses Wetter statt des berechneten.
     pub force: Option<WeatherState>,
+    /// Die Kamera ist unter Tage (in einem Dungeon): kein Regen, keine Blitze
+    pub unter_tage: bool,
 }
 
 impl Default for Weather {
     fn default() -> Self {
-        Weather { current: WeatherState::default(), rng: Rng::new(0x3E_7732), flash: 0.0, next_flash: 1.0, thunder: None, force: None }
+        Weather { current: WeatherState::default(), rng: Rng::new(0x3E_7732), flash: 0.0, next_flash: 1.0, thunder: None, force: None, unter_tage: false }
     }
 }
 
@@ -154,7 +156,7 @@ impl Weather {
         env.sky.sun_visible *= 1.0 - overcast * 0.9;
 
         // Blitze bei Gewitter: kurz alles hell, Donner mit Verzögerung
-        if c.storm && !headless {
+        if c.storm && !headless && !self.unter_tage {
             self.next_flash -= dt;
             if self.next_flash <= 0.0 {
                 self.next_flash = self.rng.range(5.0, 14.0);
@@ -172,7 +174,7 @@ impl Weather {
         }
 
         // Regentropfen rund um die Kamera (schnell fallende, leicht durchsichtige Striche)
-        if c.rain > 0.02 && !ctx.is_headless() {
+        if c.rain > 0.02 && !ctx.is_headless() && !self.unter_tage {
             let camera = ctx.camera.position;
             let drops = (c.rain * 90.0 * dt * 60.0) as u32;
             for _ in 0..drops {

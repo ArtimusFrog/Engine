@@ -103,6 +103,10 @@ impl Replica {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Ausruesten(waffe)));
     }
 
+    pub fn send_durchgang(&mut self, index: u16) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Durchgang(index)));
+    }
+
     pub fn send_ruestung(&mut self, platz: u8, teil: u8) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::RuestungAnlegen(platz, teil)));
     }

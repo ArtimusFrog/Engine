@@ -121,6 +121,18 @@ impl Session {
         }
     }
 
+    /// Durch einen Durchgang eines Dungeons gehen (Eingang, Treppe, Ausgang).
+    pub fn durchgang(&mut self, ctx: &mut Context, index: u16) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_durchgang(index);
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.durchgang(ctx, &mut self.world, local, index) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Eine erbeutete Waffe ausrüsten (0 = Startwaffe).
     pub fn ausruesten(&mut self, waffe: u8) {
         let local = self.local_player();
@@ -866,6 +878,69 @@ mod tests {
             session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
         }
         assert!(!session.world().treffer.is_empty(), "Lager greift nicht an");
+    }
+
+    #[test]
+    fn dungeon_betreten_kaempfen_und_boss_beute() {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Gimli".into(), class: CharacterClass::Zwerg };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let local = session.local_player().unwrap();
+        let dungeons = session.world().dungeons.len();
+        assert_eq!(dungeons, 3, "nicht drei Dungeons auf der Insel");
+        let character = session.world().players[&local].character;
+        let schritt = |ctx: &mut Context, session: &mut Session, n: usize| {
+            for _ in 0..n {
+                ctx.time.tick += 1;
+                session.fixed_update(ctx, PlayerInput::default()).unwrap();
+            }
+        };
+        // Vor den Eingang der Gruft stellen und mit E hinein
+        let eingang = session.world().dungeons[1].eingang;
+        ctx.physics.teleport_character(character, eingang + Vec3::Y * 1.2);
+        schritt(&mut ctx, &mut session, 2);
+        let (index, _) = session.world().durchgang_bei(session.world().player_position(&ctx, local).unwrap() - Vec3::Y * 0.9).expect("kein Durchgang am Eingang");
+        session.durchgang(&mut ctx, index);
+        schritt(&mut ctx, &mut session, 30);
+        let p = session.world().player_position(&ctx, local).unwrap();
+        assert_eq!(crate::dungeon::wo(&session.world().dungeons, p), Some((1, 0)), "nicht in Ebene 1 der Gruft: {p}");
+        assert!((p.y - crate::dungeon::BODEN_Y - 0.9).abs() < 0.5, "steht nicht auf dem Boden: {p}");
+        // Hinab bis in die letzte Ebene (über die Treppen)
+        for e in 1..4 {
+            let runter = session.world().dungeons[1].ebenen[e - 1].runter.unwrap();
+            ctx.physics.teleport_character(character, runter + Vec3::Y * 1.2);
+            schritt(&mut ctx, &mut session, 2);
+            let (index, d) = session.world().durchgang_bei(runter).expect("keine Treppe");
+            assert!(d.text.contains("Hinab"), "{}", d.text);
+            session.durchgang(&mut ctx, index);
+            schritt(&mut ctx, &mut session, 20);
+            let p = session.world().player_position(&ctx, local).unwrap();
+            assert_eq!(crate::dungeon::wo(&session.world().dungeons, p), Some((1, e)));
+        }
+        // Im Raum des Lichkönigs: die Bewohner bemerken den Zwerg und greifen an
+        let grab = session.world().wildnis.lager.iter().position(|l| l.art().boss && l.art().name.contains("Lich")).expect("kein Grab des Lichkönigs");
+        let mitte = session.world().wildnis.lager[grab].mitte;
+        ctx.physics.teleport_character(character, vec3(mitte.x, crate::dungeon::BODEN_Y + 1.2, mitte.y));
+        session.world_mut().treffer.clear();
+        schritt(&mut ctx, &mut session, 240);
+        assert!(!session.world().treffer.is_empty(), "niemand greift im Dungeon an");
+        // Den Boss besiegen: sichere epische oder legendäre Beute
+        let lich = session
+            .world()
+            .wildnis
+            .states()
+            .into_iter()
+            .find(|s| s.kind == crate::heer::EnemyKind::Lich)
+            .expect("kein Lichkönig");
+        assert!((lich.position.y - crate::dungeon::BODEN_Y).abs() < 1.0, "Lich schwebt nicht am Boden: {}", lich.position);
+        let treffer = crate::wildnis::Treffer { schaden: 1e7, art: crate::tuerme::DamageKind::Arcane, ..Default::default() };
+        session.world_mut().wildnis.damage(lich.id, treffer, "gimli", Some(local));
+        schritt(&mut ctx, &mut session, 1);
+        let beute: Vec<crate::beute::Fund> = session.world().beute.values().filter(|b| b.ort.distance(lich.position) < 3.0).map(|b| b.fund).collect();
+        let waffe = beute.iter().find_map(|f| if let crate::beute::Fund::Waffe(id) = f { crate::waffen::waffe(*id) } else { None }).expect("keine Waffe vom Boss");
+        assert!(waffe.seltenheit >= crate::waffen::Seltenheit::Episch && waffe.klasse == CharacterClass::Zwerg);
+        assert!(beute.iter().any(|f| matches!(f, crate::beute::Fund::Ruestung(_))), "kein Rüstungsteil vom Boss");
+        assert!(session.world().beute.values().all(|b| (b.ort.y - crate::dungeon::BODEN_Y).abs() < 0.1), "Beute liegt nicht auf dem Dungeonboden");
     }
 
     #[test]

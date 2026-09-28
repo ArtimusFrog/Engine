@@ -15,7 +15,7 @@ use crate::save::{player_key, WorldSave};
 use crate::td::{Ereignis, TdBefehl, TdStand};
 use crate::faehigkeiten::Faehigkeit;
 use crate::wildnis::Treffer;
-use crate::world::{World, HARVEST_COOLDOWN_TICKS, HEILEN_ANTEIL, HEILEN_NACH, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
+use crate::world::{bodenhoehe, World, HARVEST_COOLDOWN_TICKS, HEILEN_ANTEIL, HEILEN_NACH, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -290,7 +290,7 @@ impl Authority {
         // wird wieder auf die Oberfläche gesetzt.
         for avatar in world.players.values().filter(|a| !a.noclip) {
             let position = ctx.physics.character_position(avatar.character);
-            let ground = world.terrain.height_at(position.x, position.z);
+            let ground = bodenhoehe(&world.terrain, &world.dungeons, vec2(position.x, position.z));
             if position.y < -30.0 {
                 ctx.physics.teleport_character(avatar.character, world.startpunkt(&avatar.name));
             } else if position.y < ground - 2.0 {
@@ -783,8 +783,8 @@ impl Authority {
             .filter(|(_, a)| !a.noclip && a.leben > 0.0)
             .map(|(&id, a)| (id, ctx.physics.character_position(a.character)))
             .collect();
-        let terrain = &world.terrain;
-        let angriffe = world.wildnis.tick(Physics::FIXED_DT, &spieler, &|p| terrain.height_at(p.x, p.y));
+        let (terrain, dungeons) = (&world.terrain, &world.dungeons);
+        let angriffe = world.wildnis.tick(Physics::FIXED_DT, &spieler, &|p| bodenhoehe(terrain, dungeons, p));
         for a in angriffe {
             let entry = (a.kind, a.von, a.ziel);
             self.strikes.push(entry);
@@ -801,6 +801,33 @@ impl Authority {
                 let ereignis = Ereignis::Heilung(g.ort + Vec3::Y);
                 world.ereignisse.push(ereignis);
                 self.ereignisse.push(ereignis);
+            }
+            if g.boss {
+                // Ein Endgegner: sicher eine epische oder legendäre Waffe und ein Rüstungsteil
+                let class = world.players.values().find(|a| player_key(&a.name) == g.von).map_or(CharacterClass::Mage, |a| a.class);
+                let seltenheit = if self.rng.chance(0.35 + 0.15 * (g.gefahr as f32 - 4.0)) { crate::waffen::Seltenheit::Legendaer } else { crate::waffen::Seltenheit::Episch };
+                let waffen: Vec<u8> = crate::waffen::WAFFEN.iter().filter(|w| w.klasse == class && w.seltenheit == seltenheit).map(|w| w.id).collect();
+                let ruestungen: Vec<u8> = crate::ruestung::RUESTUNGEN.iter().filter(|r| r.klasse == class && r.seltenheit >= crate::waffen::Seltenheit::Episch).map(|r| r.id).collect();
+                let mut namen = Vec::new();
+                if !waffen.is_empty() {
+                    let id = waffen[(self.rng.next_u32() % waffen.len() as u32) as usize];
+                    self.beute_ablegen(world, g.ort, Fund::Waffe(id));
+                    namen.extend(crate::waffen::waffe(id).map(|w| w.name));
+                }
+                if !ruestungen.is_empty() {
+                    let id = ruestungen[(self.rng.next_u32() % ruestungen.len() as u32) as usize];
+                    self.beute_ablegen(world, g.ort, Fund::Ruestung(id));
+                    namen.extend(crate::ruestung::ruestung(id).map(|r| r.name));
+                }
+                self.beute_ablegen(world, g.ort, Fund::Gegenstand(Item::Gold, crate::wildnis::gold(g.gefahr, true) * 3));
+                self.beute_ablegen(world, g.ort, Fund::Gegenstand(Item::Runenfragment, 2));
+                let text = format!("{} ist besiegt! Beute: {}", g.kind.label(), namen.join(" und "));
+                world.chat_events.push(crate::world::ChatLine::notice(text.clone()));
+                self.broadcast(ServerMessage::Notice(text));
+                let ereignis = Ereignis::Heilung(g.ort + Vec3::Y);
+                world.ereignisse.push(ereignis);
+                self.ereignisse.push(ereignis);
+                continue;
             }
             if self.rng.chance(crate::waffen::waffen_chance(g.gefahr, g.anfuehrer)) {
                 // Eine Waffe für die Klasse dessen, der den letzten Treffer hatte
@@ -836,7 +863,7 @@ impl Authority {
         let winkel = self.rng.range(0.0, std::f32::consts::TAU);
         let weite = self.rng.range(0.4, 1.4);
         let p = vec2(ort.x + winkel.cos() * weite, ort.z + winkel.sin() * weite);
-        let boden = world.terrain.height_at(p.x, p.y);
+        let boden = bodenhoehe(&world.terrain, &world.dungeons, p);
         let id = self.beute_naechste;
         self.beute_naechste += 1;
         let beute = crate::beute::Bodenbeute { id, ort: vec3(p.x, boden, p.y), fund };
@@ -956,6 +983,18 @@ impl Authority {
         inventory.ruestung[platz] = id;
         let inventory = *inventory;
         self.send_inventory(player, inventory);
+        Ok(())
+    }
+
+    /// Durch einen Durchgang eines Dungeons: wer nah genug steht, kommt am Ziel heraus.
+    pub fn durchgang(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, index: u16) -> Result<(), String> {
+        let avatar = world.players.get(&player).ok_or("Unbekannter Spieler")?;
+        let d = world.durchgaenge.get(index as usize).ok_or("Diesen Durchgang gibt es nicht")?;
+        let fuesse = ctx.physics.character_position(avatar.character) - Vec3::Y * 0.9;
+        if vec2(d.ort.x, d.ort.z).distance(vec2(fuesse.x, fuesse.z)) > crate::dungeon::DURCHGANG_WEITE + 1.0 || (d.ort.y - fuesse.y).abs() > 4.0 {
+            return Err("Zu weit vom Durchgang entfernt".into());
+        }
+        ctx.physics.teleport_character(avatar.character, d.ziel + Vec3::Y * 1.2);
         Ok(())
     }
 
@@ -1095,8 +1134,8 @@ impl Authority {
                 self.send_inventory(player, inventory);
             }
             AdminCommand::LagerNeu => {
-                let terrain = &world.terrain;
-                world.wildnis.alle_neu(&|p| terrain.height_at(p.x, p.y));
+                let (terrain, dungeons) = (&world.terrain, &world.dungeons);
+                world.wildnis.alle_neu(&|p| bodenhoehe(terrain, dungeons, p));
                 world.wildnis.besetzt.clear();
             }
         }
@@ -1503,6 +1542,7 @@ impl Authority {
         let mut aufheben: Vec<(ClientId, u32)> = Vec::new();
         let mut ausruesten: Vec<(ClientId, u8)> = Vec::new();
         let mut anlegen: Vec<(ClientId, u8, u8)> = Vec::new();
+        let mut durchgaenge: Vec<(ClientId, u16)> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -1514,6 +1554,7 @@ impl Authority {
                     Some(ClientMessage::Aufheben(beute)) => aufheben.push((id, beute)),
                     Some(ClientMessage::Ausruesten(waffe)) => ausruesten.push((id, waffe)),
                     Some(ClientMessage::RuestungAnlegen(platz, teil)) => anlegen.push((id, platz, teil)),
+                    Some(ClientMessage::Durchgang(index)) => durchgaenge.push((id, index)),
                     _ => {}
                 }
             }
@@ -1560,6 +1601,12 @@ impl Authority {
         }
         for (id, platz, teil) in anlegen {
             let result = self.ruestung_anlegen(world, id, platz, teil);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for (id, index) in durchgaenge {
+            let result = self.durchgang(ctx, world, id, index);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }

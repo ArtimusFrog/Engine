@@ -231,6 +231,18 @@ pub struct World {
     /// Beute am Boden (vom Server gemeldet) und ihre Darstellung
     pub beute: BTreeMap<u32, crate::beute::Bodenbeute>,
     beute_ansicht: crate::beute::BeuteAnsicht,
+    /// Die drei Dungeons (Grundriss auf allen Rechnern gleich), ihre Durchgänge (E) und was davon
+    /// zu sehen ist
+    pub dungeons: Vec<crate::dungeon::Dungeon>,
+    pub durchgaenge: Vec<crate::dungeon::Durchgang>,
+    dungeon_ansicht: crate::dungeon::DungeonAnsicht,
+    /// Die Kamera ist gerade in einem Dungeon
+    pub unter_tage: bool,
+}
+
+/// Bodenhöhe: im Dungeon dessen Boden, sonst das Gelände.
+pub fn bodenhoehe(terrain: &Terrain, dungeons: &[crate::dungeon::Dungeon], p: Vec2) -> f32 {
+    crate::dungeon::boden(dungeons, p).unwrap_or_else(|| terrain.height_at(p.x, p.y))
 }
 
 impl World {
@@ -256,8 +268,20 @@ impl World {
             .chain([(vec2(island.spawn.x, island.spawn.z), 130.0)])
             .chain(island.places.labels.iter().map(|&(_, p)| (p, 45.0)))
             .collect();
-        let lager = crate::wildnis::Wildnis::plaetze(&island.terrain, &meiden, &island.strassen, 9);
-        let wildnis = crate::wildnis::Wildnis::new(lager, &|p| island.terrain.height_at(p.x, p.y));
+        let mut lager = crate::wildnis::Wildnis::plaetze(&island.terrain, &meiden, &island.strassen, 9);
+        // Die Dungeons: Eingänge weit weg von allem, drinnen je Raum ein Lager, das seinen Raum hütet
+        let meiden_dungeon: Vec<(Vec2, f32)> =
+            meiden.iter().copied().chain(lager.iter().map(|l| (l.mitte, 70.0))).chain([(island::BURG_ORT, 190.0)]).collect();
+        let eingaenge = crate::dungeon::eingaenge_suchen(&island.terrain, &meiden_dungeon, &island.strassen);
+        let dungeons = crate::dungeon::planen(&eingaenge);
+        lager.extend(
+            crate::dungeon::lager(&dungeons)
+                .into_iter()
+                .map(|(mitte, art, bereich)| crate::wildnis::Lager::im_dungeon(mitte, crate::dungeon::BODEN_Y, art, bereich)),
+        );
+        crate::dungeon::kollision(ctx, &dungeons);
+        let durchgaenge = crate::dungeon::durchgaenge(&dungeons);
+        let wildnis = crate::wildnis::Wildnis::new(lager, &|p| bodenhoehe(&island.terrain, &dungeons, p));
         let mut world = World {
             players: HashMap::new(),
             objects: BTreeMap::new(),
@@ -312,10 +336,14 @@ impl World {
             gefallen: Vec::new(),
             beute: BTreeMap::new(),
             beute_ansicht: Default::default(),
+            dungeons,
+            durchgaenge,
+            dungeon_ansicht: Default::default(),
+            unter_tage: false,
         };
         // Lager der Wildnis: Feuer, Zelte, Kisten (mit Kollision) und ihr Name auf der Karte
         if !ctx.is_headless() {
-            let lager: Vec<(Vec2, &'static str)> = world.wildnis.lager.iter().map(|l| (l.mitte, l.art().name)).collect();
+            let lager: Vec<(Vec2, &'static str)> = world.wildnis.lager.iter().filter(|l| l.bereich.is_none()).map(|l| (l.mitte, l.art().name)).collect();
             for (mitte, name) in lager {
                 crate::orte::build_wildlager(ctx, &world.terrain, mitte, &mut world.places);
                 world.places.labels.push((name, mitte));
@@ -367,11 +395,16 @@ impl World {
             let terrain = &world.terrain;
             crate::strassenbild::bauen(ctx, &|p| terrain.height_at(p.x, p.y), &strassen, &mut world.places.lights);
         }
-        let lagerplaetze: Vec<Vec2> = world.wildnis.lager.iter().map(|l| l.mitte).collect();
+        // Die Eingänge der Dungeons auf der Karte
+        for d in &world.dungeons {
+            world.places.labels.push((d.name, vec2(d.eingang.x, d.eingang.z)));
+        }
+        let lagerplaetze: Vec<Vec2> =
+            world.wildnis.lager.iter().map(|l| l.mitte).collect();
         for (id, spec) in island.resources {
             // In den Lagern der Wildnis steht nichts im Weg
             let p = spec.transform.position;
-            if lagerplaetze.iter().any(|m| m.distance(vec2(p.x, p.z)) < 12.0) {
+            if lagerplaetze.iter().any(|m| m.distance(vec2(p.x, p.z)) < 12.0) || world.dungeons.iter().any(|d| vec2(d.eingang.x, d.eingang.z).distance(vec2(p.x, p.z)) < 17.0) {
                 continue;
             }
             let health = spec.max_health;
@@ -783,6 +816,16 @@ impl World {
             .min_by(|a, b| a.ort.distance(ort).total_cmp(&b.ort.distance(ort)))
     }
 
+    /// Der nächste Durchgang eines Dungeons in Reichweite (für E und den Hinweis); `ort` = Füße.
+    pub fn durchgang_bei(&self, ort: Vec3) -> Option<(u16, &crate::dungeon::Durchgang)> {
+        self.durchgaenge
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| vec2(d.ort.x, d.ort.z).distance(vec2(ort.x, ort.z)) <= crate::dungeon::DURCHGANG_WEITE && (d.ort.y - ort.y).abs() < 3.0)
+            .min_by(|a, b| a.1.ort.distance(ort).total_cmp(&b.1.ort.distance(ort)))
+            .map(|(i, d)| (i as u16, d))
+    }
+
     /// Ein Spieler wurde getroffen (für roten Rand und Klang).
     pub fn spieler_getroffen(&mut self, player: PlayerId, schaden: u16) {
         self.treffer.push((player, schaden));
@@ -1181,7 +1224,11 @@ impl World {
     /// getroffene Rohstoffe wackeln lassen.
     pub fn update_visuals(&mut self, ctx: &mut Context) {
         self.day.apply(&mut ctx.env);
+        self.weather.unter_tage = self.unter_tage;
         self.weather.apply(ctx, self.day.day, self.day.hour);
+        if !ctx.is_headless() {
+            self.unter_tage = self.dungeon_ansicht.update(ctx, &self.dungeons);
+        }
         // Im düsteren Land um die Schattenfestung: fahles Licht, violetter Dunst
         let d = island::duester(vec2(ctx.camera.position.x, ctx.camera.position.z));
         if d > 0.0 {
@@ -1198,7 +1245,9 @@ impl World {
             self.sound_events.push(SoundEvent::Thunder { volume });
         }
         use crate::messung::messen;
-        messen("glühwürmchen", || self.fireflies(ctx));
+        if !self.unter_tage {
+            messen("glühwürmchen", || self.fireflies(ctx));
+        }
         messen("kristalle", || self.crystal_glow(ctx));
         messen("feuer", || self.campfires(ctx));
         messen("lichter", || self.place_lights(ctx));
@@ -1206,7 +1255,7 @@ impl World {
             let (forests, beaches) = crate::island::wildlife_spots(&self.terrain);
             self.wildlife = Some(crate::leben::Wildlife::new(ctx, &forests, &beaches));
         }
-        if let Some(wildlife) = &mut self.wildlife {
+        if let Some(wildlife) = self.wildlife.as_mut().filter(|_| !self.unter_tage) {
             let terrain = &self.terrain;
             messen("kleinleben", || wildlife.update(ctx, &|x, z| terrain.height_at(x, z), &|p| crate::island::is_meadow(terrain, p)));
         }

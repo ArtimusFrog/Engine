@@ -149,6 +149,8 @@ pub struct Playground {
     demo_fight: bool,
     /// Nur zum Testen: vor ein Lager der Wildnis (`--demo-lager N`) bzw. an den Runenbrunnen (`--demo-brunnen`)
     demo_lager: Option<usize>,
+    /// Nur für Screenshots: `--demo-dungeon d e [raum]` (e = -1: vor dem Eingang)
+    demo_dungeon: Option<(usize, i32, Option<usize>)>,
     /// Nur zum Testen: dabei regelmäßig die Fähigkeit N (0–2) aufs Lager einsetzen (`--demo-angriff N`)
     demo_angriff: Option<u8>,
     demo_brunnen: bool,
@@ -241,6 +243,7 @@ impl Playground {
             demo_troops: false,
             demo_fight: false,
             demo_lager: None,
+            demo_dungeon: None,
             demo_angriff: None,
             demo_brunnen: false,
             demo_beute: false,
@@ -439,6 +442,13 @@ impl Playground {
         let session = self.session.as_ref()?;
         let p = session.world().player_position(ctx, session.local_player()?)?;
         session.world().beute_bei(p - Vec3::Y * 0.9).copied()
+    }
+
+    /// Der Durchgang eines Dungeons, vor dem die eigene Figur steht (Index, Text).
+    fn durchgang_hier(&self, ctx: &Context) -> Option<(u16, String)> {
+        let session = self.session.as_ref()?;
+        let p = session.world().player_position(ctx, session.local_player()?)?;
+        session.world().durchgang_bei(p - Vec3::Y * 0.9).map(|(i, d)| (i, d.text.clone()))
     }
 
     /// Was E hier mit Runen tun würde: am Runenbrunnen schmieden oder in einen Schutzstein einsetzen.
@@ -920,6 +930,15 @@ impl Playground {
                     if let Some(id) = self.beute_hier(ctx).map(|b| b.id) {
                         if let Some(session) = &mut self.session {
                             session.aufheben(ctx, id);
+                        }
+                        return;
+                    }
+                }
+                // E an einem Dungeon: hinein, Treppe hinauf/hinab, hinaus
+                if ctx.input.key_pressed(KeyCode::KeyE) && self.build_mode.is_none() && self.building_window.is_none() {
+                    if let Some((index, _)) = self.durchgang_hier(ctx) {
+                        if let Some(session) = &mut self.session {
+                            session.durchgang(ctx, index);
                         }
                         return;
                     }
@@ -1766,6 +1785,14 @@ impl Playground {
             painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), Color32::BLACK);
             painter.text(mitte, Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(18.0), farbe);
         }
+        // Vor einem Durchgang eines Dungeons
+        if let Some((_, text)) = self.durchgang_hier(ctx).filter(|_| self.beute_hier(ctx).is_none()) {
+            let mitte = egui_ctx.content_rect().center() + egui::vec2(0.0, 92.0);
+            let painter = egui_ctx.layer_painter(egui::LayerId::background());
+            let zeile = format!("E: {text}");
+            painter.text(mitte + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(20.0), Color32::BLACK);
+            painter.text(mitte, Align2::CENTER_CENTER, &zeile, egui::FontId::proportional(20.0), Color32::from_rgb(255, 214, 140));
+        }
         // Am Runenbrunnen oder an einem Schutzstein: was E hier tut
         if self.build_mode.is_none() && self.aim_building.is_none() {
             if let Some(befehl) = self.runen_hier(ctx) {
@@ -2061,6 +2088,10 @@ impl Game for Playground {
         self.demo_fight = args.iter().any(|a| a == "--demo-kampf");
         if let Some(i) = args.iter().position(|a| a == "--demo-lager") {
             self.demo_lager = Some(args.get(i + 1).and_then(|n| n.parse().ok()).unwrap_or(0));
+        }
+        if let Some(i) = args.iter().position(|a| a == "--demo-dungeon") {
+            let zahl = |k: usize| args.get(i + k).and_then(|n| n.parse::<i32>().ok());
+            self.demo_dungeon = Some((zahl(1).unwrap_or(0).max(0) as usize, zahl(2).unwrap_or(0), zahl(3).map(|r| r.max(0) as usize)));
         }
         self.demo_brunnen = args.iter().any(|a| a == "--demo-brunnen");
         self.demo_beute = args.iter().any(|a| a == "--demo-beute");
@@ -2472,6 +2503,35 @@ impl Game for Playground {
                 let ziel = strasse[18];
                 self.demo_crystal = Some(Some(vec3(ziel.x, world.terrain.height_at(ziel.x, ziel.y) + 1.0, ziel.y)));
                 self.demo_yaw_offset = 0.0;
+            }
+        }
+        if let (Some((d, e, raum)), Some(session)) = (self.demo_dungeon, &mut self.session) {
+            if let Some(local) = session.local_player() {
+                self.demo_dungeon = None;
+                let world = session.world();
+                let character = world.players[&local].character;
+                if let Some(dungeon) = world.dungeons.get(d) {
+                    let (stand, ziel) = match dungeon.ebenen.get(e.max(0) as usize).filter(|_| e >= 0) {
+                        None => {
+                            let vor = dungeon.eingang + Quat::from_rotation_y(dungeon.eingang_yaw) * vec3(0.0, 0.0, 14.0);
+                            (vec3(vor.x, world.terrain.height_at(vor.x, vor.z) + 1.0, vor.z), dungeon.eingang + Vec3::Y * 3.0)
+                        }
+                        Some(ebene) => match raum.and_then(|k| ebene.raeume.get(k)) {
+                            Some(r) => {
+                                let (m, h) = (r.mitte(), r.max.y - r.min.y);
+                                let stand = m - vec2(0.0, 0.12 * h);
+                                (vec3(stand.x, crate::dungeon::BODEN_Y + 1.2, stand.y), vec3(m.x, crate::dungeon::BODEN_Y + 1.2, m.y + 0.45 * h))
+                            }
+                            None => {
+                                let m = ebene.raeume[0].mitte();
+                                (ebene.ankunft_oben(), vec3(m.x, crate::dungeon::BODEN_Y + 1.2, m.y))
+                            }
+                        },
+                    };
+                    ctx.physics.teleport_character(character, stand);
+                    self.demo_crystal = Some(Some(ziel));
+                    self.demo_yaw_offset = 0.0;
+                }
             }
         }
         if let (Some(index), Some(session)) = (self.demo_lager, &mut self.session) {
