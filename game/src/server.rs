@@ -19,6 +19,10 @@ use crate::world::{bodenhoehe, World, HARVEST_COOLDOWN_TICKS, MINE_COOLDOWN_TICK
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
+/// Gegner, Tiere und Arbeiter bekommt jeder Spieler nur bis zu dieser Entfernung (m) – sonst
+/// würde jeder Schnappschuss alle ~500 Gegner der Insel enthalten, über 20 KB groß, und im
+/// Internet in viele Bruchstücke zerfallen, von denen leicht eins verloren geht.
+pub const NETZ_SICHTWEITE: f32 = 200.0;
 /// Alle wie viele Takte auch ruhende Objekte mitgeschickt werden.
 const FULL_SNAPSHOT_INTERVAL: u64 = 60;
 /// Mehr gepufferte Eingaben pro Spieler erhöhen nur die Verzögerung.
@@ -1866,7 +1870,7 @@ impl Authority {
             })
             .collect();
 
-        let animals = world
+        let animals: Vec<crate::animals::AnimalState> = world
             .animals
             .iter_mut()
             .enumerate()
@@ -1877,24 +1881,49 @@ impl Authority {
             })
             .collect();
 
-        let snapshot = ServerMessage::Snapshot(Snapshot {
+        let mut snapshot = Snapshot {
             tick: ctx.time.tick as u32,
             players,
             objects,
             hour: world.day.hour,
             day: world.day.day,
-            animals,
-            enemies: world.feinde.clone(),
+            animals: Vec::new(),
+            enemies: Vec::new(),
             strikes: std::mem::take(&mut self.strikes),
             weather: world.weather_choice,
             shots: std::mem::take(&mut self.shots),
             // Statistik nur etwa einmal pro Sekunde mitschicken
             td: if ctx.time.tick % 60 == 0 { self.td_stand(world, true) } else { world.td.clone() },
             ereignisse: std::mem::take(&mut self.ereignisse),
-            arbeiter: world.arbeiter.clone(),
-        });
-        if let Some(net) = &mut self.net {
-            net.broadcast(Channel::Unreliable, encode(&snapshot));
+            arbeiter: Vec::new(),
+        };
+        // Je Spieler nur, was in seiner Nähe ist
+        let protokoll = ctx.time.tick % 600 == 0;
+        let ids: Vec<ClientId> = self.clients.keys().copied().collect();
+        for id in ids {
+            let Some(ort) = world.players.get(&id).map(|a| ctx.physics.character_position(a.character)) else { continue };
+            let nah = |p: Vec3| p.distance_squared(ort) < NETZ_SICHTWEITE * NETZ_SICHTWEITE;
+            snapshot.enemies = world.feinde.iter().filter(|e| nah(e.position)).cloned().collect();
+            snapshot.animals = animals.iter().filter(|a: &&crate::animals::AnimalState| nah(a.position)).cloned().collect();
+            snapshot.arbeiter = world.arbeiter.iter().filter(|a| nah(a.position)).cloned().collect();
+            let message = ServerMessage::Snapshot(snapshot);
+            let bytes = encode(&message);
+            let ServerMessage::Snapshot(s) = message else { unreachable!() };
+            snapshot = s;
+            // Alle 10 s: wie groß der Schnappschuss ist und woraus er besteht (fürs Serverprotokoll)
+            if protokoll {
+                log::info!(
+                    "Schnappschuss an {id}: {} Bytes (Gegner {} von {}, Tiere {}, Arbeiter {})",
+                    bytes.len(),
+                    snapshot.enemies.len(),
+                    world.feinde.len(),
+                    snapshot.animals.len(),
+                    snapshot.arbeiter.len()
+                );
+            }
+            if let Some(net) = &mut self.net {
+                net.send(id, Channel::Unreliable, bytes);
+            }
         }
     }
 

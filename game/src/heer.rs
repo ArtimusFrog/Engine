@@ -2077,7 +2077,8 @@ impl HeerAnsicht {
             }))
             .collect();
         // Weg, was nicht mehr gemeldet wird
-        let gone: Vec<u32> = self.figuren.keys().copied().filter(|id| !anzeigen.iter().any(|s| s.id == *id)).collect();
+        let gemeldet: std::collections::HashSet<u32> = anzeigen.iter().map(|s| s.id).collect();
+        let gone: Vec<u32> = self.figuren.keys().copied().filter(|id| !gemeldet.contains(id)).collect();
         for id in gone {
             if let Some(figur) = self.figuren.remove(&id) {
                 ctx.scene.despawn(figur.entity);

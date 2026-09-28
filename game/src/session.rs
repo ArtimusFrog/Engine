@@ -1159,10 +1159,21 @@ mod tests {
         assert_eq!(server.len(), client.len());
         let moved = server.iter().zip(&start).filter(|(a, s)| a.position.distance(**s) > 1.0).count();
         assert!(moved > 3, "Tiere laufen nicht umher: {moved}");
-        // Der Client zeigt sie leicht verzögert (Interpolation), aber am selben Ort.
+        // Der Client zeigt die Tiere in seiner Nähe leicht verzögert (Interpolation), aber am
+        // selben Ort; weiter entfernte bekommt er nicht mitgeteilt (Sichtweite im Netz).
+        let local = pair.client.session.local_player().unwrap();
+        let ich = pair.server.session.world().player_position(&pair.server_ctx, local).unwrap();
+        let mut nah = 0;
         for (s, c) in server.iter().zip(client) {
-            assert!(s.position.distance(c.position) < 1.5, "Tier weicht ab: Server {:?} / Client {:?}", s.position, c.position);
+            if s.position.distance(ich) < crate::server::NETZ_SICHTWEITE - 20.0 {
+                nah += 1;
+                assert!(s.position.distance(c.position) < 1.5, "Tier weicht ab: Server {:?} / Client {:?}", s.position, c.position);
+            }
         }
+        assert!(nah > 3, "zu wenige Tiere in der Nähe: {nah}");
+        // Gegner ebenso: nur die in der Nähe gehen über das Netz, nicht alle der Insel
+        let (alle, gesehen) = (pair.server.session.world().feinde.len(), pair.client.session.world().feinde.len());
+        assert!(alle > 100 && gesehen < alle / 4, "Client bekommt {gesehen} von {alle} Gegnern");
     }
 
 

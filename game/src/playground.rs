@@ -2205,6 +2205,10 @@ impl Game for Playground {
                 self.settings.character = class;
             }
         }
+        // Nur zum Testen: Spielername für diesen Start (`--name Bodo`), z. B. für mehrere Spieler auf einem Rechner
+        if let Some(name) = args.iter().position(|a| a == "--name").and_then(|i| args.get(i + 1)) {
+            self.settings.name = name.clone();
+        }
         self.demo_chop = args.iter().any(|a| a == "--demo-hacken");
         self.demo_cast = args.iter().any(|a| a == "--demo-zaubern");
         if self.demo_cast {
@@ -2618,9 +2622,9 @@ impl Game for Playground {
                     ziel: Default::default(),
                 };
                 session.world_mut().place_building(ctx, halle);
-                for (i, kind) in [BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine].into_iter().enumerate() {
+                for (i, kind) in [BuildingKind::Lumberjack, BuildingKind::Quarry, BuildingKind::Mine, BuildingKind::Lehmgrube, BuildingKind::Kristallturm].into_iter().enumerate() {
                     let world = session.world();
-                    let seite = [blick.perp(), -blick.perp(), -blick][i];
+                    let seite = [blick.perp(), -blick.perp(), -blick, (blick.perp() - blick).normalize(), (-blick.perp() - blick).normalize()][i];
                     let at = (0..40).map(|k| mitte + seite * 19.0 - blick * (k as f32 * 0.8)).find(|&at| crate::bauten::check_site(world, kind, at, None).is_ok());
                     if let Some(at) = at {
                         let y = crate::bauten::check_site(world, kind, at, None).unwrap_or(hoehe);
