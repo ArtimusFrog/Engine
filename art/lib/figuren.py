@@ -241,6 +241,14 @@ class Figur:
         self.knochen.append((name, tuple(kopf), tuple(ende), eltern, oben))
 
     def fertig(self, animationen):
+        import os
+        if os.environ.get("TEILE_ZAEHLEN"):
+            summe = {}
+            for t in self.teile + [o for _, _, objs in self.starr for o in objs]:
+                name = t.name.split(".")[0]
+                summe[name] = summe.get(name, 0) + sum(len(p.vertices) - 2 for p in t.data.polygons)
+            for name, n in sorted(summe.items(), key=lambda kv: -kv[1])[:10]:
+                print(f"TEIL {name}: {n}")
         bpy.ops.object.select_all(action="DESELECT")
         for teil in self.teile:
             teil.select_set(True)

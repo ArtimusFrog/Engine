@@ -346,6 +346,9 @@ def huelle(f, koerper, name, auswahl, dicke, farbe, glaetten=2):
     bm.free()
     if glaetten:
         _modifikator(kopie, "SMOOTH", factor=0.5, iterations=glaetten)
+    dreiecke = sum(len(p.vertices) - 2 for p in kopie.data.polygons)
+    if dreiecke > 1600:
+        _modifikator(kopie, "DECIMATE", ratio=1600 / dreiecke)
     _modifikator(kopie, "SOLIDIFY", thickness=dicke * 0.8, offset=-1.0)
     for p in kopie.data.polygons:
         p.use_smooth = True

@@ -375,7 +375,7 @@ def _goblin(f, haut, haut_hell, gebueckt=0.0):
         if bh.zellen(p, 30.0) < 0.05 and bh.rausch(p, 5.0) > 0.35:
             c = c * 0.85                                                                     # Warzen
         return bh.schmutz(c, h, 0.45, 0.15)
-    koerper = bh.teil(f, "Haut", formen, 0.0055, 16000, haut_farbe, versatz=haut_versatz, knochen=f.knochen)
+    koerper = bh.teil(f, "Haut", formen, 0.0055, 13000, haut_farbe, versatz=haut_versatz, knochen=f.knochen)
 
     # ----- Augen, Zähne, Ohren, Haare, Krallen -----
     b.augen([k + Vector((0.043 * s, -0.093, 0.0)) for s in (1, -1)], 0.019, farbe("#F2C21C"), schlitz=True, weiss=farbe("#E8E0A8"))
@@ -486,7 +486,7 @@ def goblin_schamane(seed=402):
     schaedel = bh.ball_mesh("Vogelschaedel", [(k + Vector((0, -0.05, 0.125)), (0.06, 0.07, 0.045)), (k + Vector((0, -0.1, 0.12)), (0.035, 0.05, 0.03)),
                                               (k + Vector((0.03, -0.1, 0.132)), (0.014, 0.012, 0.012), True),
                                               (k + Vector((-0.03, -0.1, 0.132)), (0.014, 0.012, 0.012), True)], 0.008)
-    bh.modellieren(schaedel, 0.005, 2500, lambda p, n: 0.0015 * bh.rausch(p, 50.0))
+    bh.modellieren(schaedel, 0.005, 1200, lambda p, n: 0.0015 * bh.rausch(p, 50.0))
     bh.einfaerben(schaedel, lambda p, n, h: bh.schmutz(farbe("#E4DAC2") * (0.9 + 0.1 * bh.rausch(p, 20.0)), h, 0.6, 0.1))
     f._gewichten(schaedel, KOPF)
     bh.aufnehmen(f, schaedel)
@@ -509,20 +509,28 @@ def goblin_schamane(seed=402):
             b.f.kugel("Perle", p, (0.011, 0.011, 0.011), [farbe("#B8322A"), farbe("#DCD4C0"), farbe("#2E6AA8")][i % 3], b.rumpf, 10, 6)
     # Umhang aus Blättern: einzelne überlappende Blätter in Reihen
     blatt, blatt_dunkel, blatt_hell = farbe("#4E7A2A"), farbe("#2E4A18"), farbe("#8AAA3A")
-    for reihe in range(5):
-        z = 0.8 - reihe * 0.095
-        weite = 0.12 + reihe * 0.022
-        n = 9 + reihe
+    blatt_anfang = len(f.teile)
+    for reihe in range(4):
+        z = 0.8 - reihe * 0.12
+        weite = 0.12 + reihe * 0.027
+        n = 7 + reihe
         for j in range(n):
             w = math.radians(70 + 220 * (j + 0.5 * (reihe % 2)) / n)
             mitte = Vector((math.sin(w) * weite, 0.03 + math.cos(w) * -weite * 0.85 * -1, z))
             mitte.y = abs(mitte.y) * 0.9 + 0.02
             aussen = Vector((mitte.x, mitte.y, 0)).normalized()
             c = [blatt, blatt_dunkel, blatt_hell][(j + reihe) % 3]
-            obj = _platte(f, "Blatt", mitte + aussen * 0.01 - Vector((0, 0, 0.04)), 0.13, 0.035, 0.005, Vector((0, 0, -1)) + aussen * 0.25, aussen,
+            obj = _platte(f, "Blatt", mitte + aussen * 0.01 - Vector((0, 0, 0.05)), 0.16, 0.042, 0.005, Vector((0, 0, -1)) + aussen * 0.25, aussen,
                           lambda i2, k2, p, c=c: c, b.rumpf, spitz=0.7, wolbung=0.6)
             bh.glatt_einfaerben(obj, lambda p, n, h, c=c: c * (0.8 + 0.3 * bh.rausch(p, 30.0)))
             bh.gewichte_uebertragen(obj, koerper, lambda kn: kn in ("Brust", "Bauch", "Becken"))
+    # Alle Blätter zu einem Umhang vereinen und sparsamer vernetzen
+    from figuren import vereinen
+    blaetter = f.teile[blatt_anfang:]
+    del f.teile[blatt_anfang:]
+    umhang = vereinen(blaetter, "Blaetterumhang")
+    bh._modifikator(umhang, "DECIMATE", ratio=0.33)
+    f.teile.append(umhang)
 
     def stab():
         g = b.griff(-1)
@@ -794,7 +802,7 @@ def ork_berserker(seed=403):
             if naehe(p, a, b_) < 0.012:
                 c = narbe
         return bh.schmutz(c, h, 0.5, 0.18)
-    koerper = bh.teil(f, "Haut", formen, 0.008, 22000, haut_farbe, versatz=haut_versatz, knochen=f.knochen)
+    koerper = bh.teil(f, "Haut", formen, 0.008, 15500, haut_farbe, versatz=haut_versatz, knochen=f.knochen)
 
     b.augen([k + Vector((0.045 * s, -0.1, 0.005)) for s in (1, -1)], 0.017, farbe("#E07A1A"))
     for s in (1, -1):
@@ -845,7 +853,7 @@ def ork_berserker(seed=403):
     sp = Vector((0, my - ry - 0.04, 1.06))
     schnalle = bh.ball_mesh("Schaedelschnalle", [(sp, (0.055, 0.035, 0.05)), (sp + Vector((0, -0.01, -0.035)), (0.035, 0.03, 0.025)),
                                                  (sp + Vector((0.021, -0.035, 0.005)), (0.014, 0.012, 0.014), True), (sp + Vector((-0.021, -0.035, 0.005)), (0.014, 0.012, 0.014), True)], 0.008)
-    bh.modellieren(schnalle, 0.005, 1500)
+    bh.modellieren(schnalle, 0.005, 700)
     bh.einfaerben(schnalle, lambda p, n, h: bh.schmutz(farbe("#DCD4C0"), h, 0.8, 0.1))
     f._gewichten(schnalle, b.rumpf)
     bh.aufnehmen(f, schnalle)
@@ -1369,7 +1377,7 @@ def minotaurus(seed=407):
             c = maul.lerp(farbe("#5A4034"), weich(-0.4, 0.4, n.z) * 0.4)                   # dunkles Maul
         c = c.lerp(fell_hell * 1.1, weich(0.05, 0.0, (Vector((abs(p.x), p.y, p.z)) - (k + Vector((0.0, -0.1, 0.14)))).length - 0.02) * 0.6)   # Blesse
         return bh.schmutz(c, h, 0.5, 0.15)
-    koerper = bh.teil(f, "Fell", formen, 0.0085, 24000, fell_farbe, versatz=zotteln, knochen=f.knochen)
+    koerper = bh.teil(f, "Fell", formen, 0.0085, 20000, fell_farbe, versatz=zotteln, knochen=f.knochen)
 
     for s in (1, -1):
         b.augen([k + Vector((0.082 * s, -0.078, 0.035))], 0.02, farbe("#B01E14"), blick=Vector((0.5 * s, -1, 0.1)).normalized())
