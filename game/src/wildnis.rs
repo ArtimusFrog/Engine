@@ -43,6 +43,13 @@ const ZUENDEN_NAH: f32 = 1.6;
 const AUFLEUCHTEN: f32 = 0.7;
 pub const SPOREN_RADIUS: f32 = 3.5;
 const SPOREN_SCHADEN: f32 = 26.0;
+
+/// Dungeons passen sich der Zahl der Spieler an, die gerade darin sind: allein deutlich
+/// leichter, je weiterem Spieler mehr Leben und etwas mehr Schaden. (Leben, Schaden)
+pub fn dungeon_faktor(spieler: usize) -> (f32, f32) {
+    let weitere = spieler.max(1) as f32 - 1.0;
+    (0.55 + 0.35 * weitere, 0.6 + 0.15 * weitere)
+}
 /// Keiler und Minotaurus: Ansturm (Anlauf, dann Lauf in gerader Linie)
 const ANLAUF: f32 = 0.55;
 const STURMLAUF: f32 = 1.1;
@@ -240,6 +247,10 @@ struct Wilder {
     health: f32,
     max_health: f32,
     schlag: f32,
+    /// Im Dungeon: Leben und Schlag ohne Anpassung an die Spielerzahl, und für wie viele
+    /// Spieler gerade angepasst ist
+    grund: (f32, f32),
+    fuer_spieler: usize,
     cooldown: f32,
     ziel: Option<PlayerId>,
     stun: f32,
@@ -474,9 +485,11 @@ impl Wildnis {
                 versatz,
                 position: vec3(heim.x, boden(heim), heim.y),
                 facing: self.rng.range(0.0, std::f32::consts::TAU),
-                health: max_health,
-                max_health,
-                schlag: kind.schlag() * schlag * if anfuehrer { 1.3 } else { 1.0 },
+                health: max_health * if lager.bereich.is_some() { dungeon_faktor(1).0 } else { 1.0 },
+                max_health: max_health * if lager.bereich.is_some() { dungeon_faktor(1).0 } else { 1.0 },
+                grund: (max_health, kind.schlag() * schlag * if anfuehrer { 1.3 } else { 1.0 }),
+                fuer_spieler: 1,
+                schlag: kind.schlag() * schlag * if anfuehrer { 1.3 } else { 1.0 } * if lager.bereich.is_some() { dungeon_faktor(1).1 } else { 1.0 },
                 cooldown: self.rng.range(0.5, 1.5),
                 ziel: None,
                 stun: 0.0,
@@ -529,6 +542,24 @@ impl Wildnis {
         }
         self.umherziehen(dt, boden);
         let mut heilen: Vec<(usize, Vec3)> = Vec::new();
+        // Dungeons: je Raum zählen, wie viele Spieler im selben Dungeon sind, und die Bewohner anpassen
+        let mut im_dungeon: Vec<usize> = vec![0; self.lager.len()];
+        for (i, l) in self.lager.iter().enumerate() {
+            if l.bereich.is_some() {
+                im_dungeon[i] = spieler.iter().filter(|(_, p)| (p.y - l.hoehe).abs() < 20.0 && vec2(p.x, p.z).distance(l.mitte) < 320.0).count();
+            }
+        }
+        for w in self.wilde.iter_mut().filter(|w| w.lebt()) {
+            let n = im_dungeon[w.lager];
+            if n > 0 && n != w.fuer_spieler && self.lager[w.lager].bereich.is_some() {
+                let (leben, schlag) = dungeon_faktor(n);
+                let anteil = w.health / w.max_health;
+                w.max_health = w.grund.0 * leben;
+                w.health = w.max_health * anteil;
+                w.schlag = w.grund.1 * schlag;
+                w.fuer_spieler = n;
+            }
+        }
         for w in &mut self.wilde {
             if let Some(seit) = &mut w.dying {
                 *seit += dt;
@@ -1250,6 +1281,18 @@ mod tests {
         w.damage(ork, treffer, "anna", Some(7));
         w.tick(1.0 / 60.0, &[(7u64, vec3(5.0, 5.0, 0.0))], &|_| 5.0);
         assert!(w.states().iter().any(|s| s.id == ork && s.flags & zustand::WUT != 0), "keine Raserei");
+    }
+
+    #[test]
+    fn dungeons_passen_sich_der_spielerzahl_an() {
+        let lager = vec![Lager::im_dungeon(vec2(0.0, 0.0), 60.0, 8, (vec2(-15.0, -15.0), vec2(15.0, 15.0)))];
+        let mut w = Wildnis::new(lager, &|_| 60.0);
+        let allein = w.wilde[0].max_health;
+        let drei = [(1u64, vec3(40.0, 61.0, 0.0)), (2, vec3(41.0, 61.0, 0.0)), (3, vec3(42.0, 61.0, 0.0))];
+        w.tick(1.0 / 60.0, &drei, &|_| 60.0);
+        let zu_dritt = w.wilde[0].max_health;
+        assert!(zu_dritt > allein * 2.0, "zu dritt nicht zäher: {allein} → {zu_dritt}");
+        assert!(dungeon_faktor(1).0 < 0.6 && dungeon_faktor(1).1 < 0.7, "allein nicht leichter");
     }
 
     #[test]

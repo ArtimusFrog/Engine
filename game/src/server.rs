@@ -144,6 +144,8 @@ pub struct Authority {
     /// Beute am Boden: nächste ID und wann sie verschwindet (Takt)
     beute_naechste: u32,
     beute_bis: HashMap<u32, u64>,
+    /// Kontrollpunkte in Dungeons: wo ein Spieler nach einer Niederlage wieder erwacht
+    kontrollpunkte: HashMap<PlayerId, Vec3>,
     /// Serverbrowser: beantwortet Statusanfragen (Name, Spielport, höchste Spielerzahl)
     status: Option<(crate::status::StatusAntwort, String, u16, u16)>,
 }
@@ -171,6 +173,7 @@ impl Authority {
             rng: Rng::new(0xB0_07E),
             beute_naechste: 1,
             beute_bis: HashMap::new(),
+            kontrollpunkte: HashMap::new(),
             status: None,
         }
     }
@@ -754,7 +757,8 @@ impl Authority {
         }
         avatar.leben = avatar.max_leben();
         let (character, name) = (avatar.character, avatar.name.clone());
-        let start = world.startpunkt(&name);
+        // Im Dungeon erwacht man am Anfang der Ebene, die man zuletzt betreten hat
+        let start = self.kontrollpunkte.get(&player).copied().unwrap_or_else(|| world.startpunkt(&name));
         ctx.physics.teleport_character(character, start);
         log::info!("{name} wurde von {von} besiegt");
         world.spieler_gefallen(player, von);
@@ -1002,6 +1006,15 @@ impl Authority {
         Ok(())
     }
 
+    /// Eine Nachricht nur an einen Spieler (der Gastgeber sieht sie im eigenen Chat).
+    fn nachricht_an(&mut self, world: &mut World, player: PlayerId, text: String) {
+        if player == HOST_PLAYER || self.net.is_none() {
+            world.chat_events.push(crate::world::ChatLine::notice(text));
+        } else if let Some(net) = &mut self.net {
+            net.send(player, Channel::Reliable, encode(&ServerMessage::Notice(text)));
+        }
+    }
+
     /// Durch einen Durchgang eines Dungeons: wer nah genug steht, kommt am Ziel heraus.
     pub fn durchgang(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId, index: u16) -> Result<(), String> {
         let avatar = world.players.get(&player).ok_or("Unbekannter Spieler")?;
@@ -1010,7 +1023,21 @@ impl Authority {
         if vec2(d.ort.x, d.ort.z).distance(vec2(fuesse.x, fuesse.z)) > crate::dungeon::DURCHGANG_WEITE + 1.0 || (d.ort.y - fuesse.y).abs() > 4.0 {
             return Err("Zu weit vom Durchgang entfernt".into());
         }
-        ctx.physics.teleport_character(avatar.character, d.ziel + Vec3::Y * 1.2);
+        let character = avatar.character;
+        let ziel = d.ziel;
+        ctx.physics.teleport_character(character, ziel + Vec3::Y * 1.2);
+        // Kontrollpunkt: am Anfang jeder betretenen Ebene; draußen verfällt er
+        match crate::dungeon::wo(&world.dungeons, ziel) {
+            Some((d, e)) => {
+                if self.kontrollpunkte.insert(player, ziel + Vec3::Y * 1.2).is_none_or(|alt| alt.distance(ziel + Vec3::Y * 1.2) > 1.0) {
+                    let text = format!("Kontrollpunkt: {} – Ebene {}", world.dungeons[d].name, e + 1);
+                    self.nachricht_an(world, player, text);
+                }
+            }
+            None => {
+                self.kontrollpunkte.remove(&player);
+            }
+        }
         Ok(())
     }
 

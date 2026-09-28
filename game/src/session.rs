@@ -943,6 +943,22 @@ mod tests {
             let p = session.world().player_position(&ctx, local).unwrap();
             assert_eq!(crate::dungeon::wo(&session.world().dungeons, p), Some((1, e)));
         }
+        // Kontrollpunkt: wer hier fällt, erwacht am Anfang der letzten Ebene statt draußen
+        let anfang = session.world().dungeons[1].ebenen[3].ankunft_oben();
+        session.world_mut().players.get_mut(&local).unwrap().leben = 0.5;
+        let lich = session.world().wildnis.states().into_iter().find(|s| s.kind == crate::heer::EnemyKind::Lich).unwrap();
+        ctx.physics.teleport_character(character, lich.position + Vec3::Y * 1.2 + Vec3::X * 2.0);
+        for _ in 0..400 {
+            ctx.time.tick += 1;
+            session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
+            if !session.world().gefallen.is_empty() {
+                break;
+            }
+        }
+        assert!(!session.world().gefallen.is_empty(), "Zwerg fällt nicht");
+        schritt(&mut ctx, &mut session, 2);
+        let p = session.world().player_position(&ctx, local).unwrap();
+        assert!(p.distance(anfang) < 3.0, "nicht am Kontrollpunkt erwacht: {p} statt {anfang}");
         // Im Raum des Lichkönigs: die Bewohner bemerken den Zwerg und greifen an
         let grab = session.world().wildnis.lager.iter().position(|l| l.art().boss && l.art().name.contains("Lich")).expect("kein Grab des Lichkönigs");
         let mitte = session.world().wildnis.lager[grab].mitte;
