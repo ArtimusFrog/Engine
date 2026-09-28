@@ -133,6 +133,18 @@ impl Session {
         }
     }
 
+    /// Einen Heiltrank trinken.
+    pub fn trinken(&mut self, ctx: &mut Context) {
+        let local = self.local_player();
+        if let Some(replica) = &mut self.replica {
+            replica.send_trinken();
+        } else if let (Some(authority), Some(local)) = (&mut self.authority, local) {
+            if let Err(reason) = authority.trinken(ctx, &mut self.world, local) {
+                self.world.chat_events.push(crate::world::ChatLine::notice(reason));
+            }
+        }
+    }
+
     /// Mit dem Händler handeln.
     pub fn handel(&mut self, ctx: &mut Context, befehl: crate::handel::HandelBefehl) {
         let local = self.local_player();
@@ -916,6 +928,41 @@ mod tests {
             session.fixed_update(&mut ctx, PlayerInput::default()).unwrap();
         }
         assert!(!session.world().treffer.is_empty(), "Lager greift nicht an");
+    }
+
+    #[test]
+    fn heiltraenke_statt_selbstheilung() {
+        let mut ctx = Context::headless();
+        let hello = Hello { name: "Heiler".into(), class: CharacterClass::Mage };
+        let mut session = Session::start_with_save(&mut ctx, Mode::Offline, &hello, None).unwrap();
+        let local = session.local_player().unwrap();
+        let schritt = |ctx: &mut Context, session: &mut Session, n: usize| {
+            for _ in 0..n {
+                ctx.time.tick += 1;
+                session.fixed_update(ctx, PlayerInput::default()).unwrap();
+            }
+        };
+        schritt(&mut ctx, &mut session, 2);
+        assert_eq!(session.local_inventory().heiltraenke, crate::protocol::START_HEILTRAENKE, "kein Startvorrat an Heiltränken");
+        // Verwundet: auch nach einer halben Minute ohne Treffer keine Heilung von selbst
+        let max = session.world().players[&local].max_leben();
+        session.world_mut().players.get_mut(&local).unwrap().leben = max * 0.3;
+        schritt(&mut ctx, &mut session, 30 * 60);
+        let leben = session.world().players[&local].leben;
+        assert!((leben - max * 0.3).abs() < 0.01, "heilt von selbst: {leben}");
+        // Ein Trank heilt sofort, der zweite gleich danach nicht (Abklingzeit)
+        session.trinken(&mut ctx);
+        let leben = session.world().players[&local].leben;
+        assert!((leben - max * (0.3 + crate::protocol::TRANK_HEILUNG)).abs() < 0.01, "Trank heilt nicht: {leben}");
+        assert_eq!(session.local_inventory().heiltraenke, crate::protocol::START_HEILTRAENKE - 1);
+        session.trinken(&mut ctx);
+        assert_eq!(session.local_inventory().heiltraenke, crate::protocol::START_HEILTRAENKE - 1, "Abklingzeit übergangen");
+        schritt(&mut ctx, &mut session, crate::protocol::TRANK_ABKLINGEN as usize + 1);
+        session.trinken(&mut ctx);
+        assert_eq!(session.world().players[&local].leben, max, "zweiter Trank heilt nicht bis voll");
+        // Unverletzt trinkt man nicht
+        session.trinken(&mut ctx);
+        assert_eq!(session.local_inventory().heiltraenke, crate::protocol::START_HEILTRAENKE - 2);
     }
 
     #[test]

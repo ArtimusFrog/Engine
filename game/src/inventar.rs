@@ -484,7 +484,7 @@ impl InventoryUi {
             }
             y += angebot_hoehe - 14.0;
             // ---------- Baumaterial ----------
-            abschnitt(y, "Baumaterial · Klick: 10 Stück, Rechtsklick: 1");
+            abschnitt(y, "Waren · Klick: 10 Stück, Rechtsklick: 1");
             y += 12.0;
             let anzahl = crate::handel::ROHSTOFFE.len();
             let zelle = (width - MARGIN * 2.0) / anzahl as f32;
@@ -494,7 +494,7 @@ impl InventoryUi {
                 let response = ui.interact(slot_rect, egui::Id::new(("haendler_rohstoff", n)), egui::Sense::click());
                 slot_frame(&painter, slot_rect, response.hovered(), true);
                 icons.paint(&painter, slot_rect.shrink(1.5), item);
-                painter.text(egui::pos2(slot_rect.center().x, slot_rect.bottom() + 11.0), Align2::CENTER_CENTER, format!("{} · {preis} Gold", item.label()), FontId::proportional(12.0), GOLD_LIGHT);
+                painter.text(egui::pos2(slot_rect.center().x, slot_rect.bottom() + 11.0), Align2::CENTER_CENTER, format!("{preis} Gold"), FontId::proportional(12.5), GOLD_LIGHT);
                 if response.clicked() && inventory.gold >= preis * 10 {
                     befehl = Some(HandelBefehl::Kaufen(Ware::Gegenstand(item), 10));
                 } else if response.secondary_clicked() && inventory.gold >= preis {
@@ -547,6 +547,39 @@ impl InventoryUi {
             key_hint(&painter, egui::pos2(rect.right() - MARGIN, footer_top + 22.0), "E", "Schließen");
         });
         (befehl, close)
+    }
+
+    /// Heiltränke links neben der Auswahlleiste: Symbol, Anzahl, Taste Q und die Abklingzeit.
+    pub fn trank_leiste(&mut self, ctx: &egui::Context, anzahl: u32, rest: f32) {
+        self.icons(ctx);
+        let icons = self.icons.as_ref().expect("Symbole geladen");
+        // Auswahlleiste: 8 Plätze à 50 + 7 × 5 + 20 = 455 breit, mittig; der Trank sitzt links davon
+        egui::Area::new(egui::Id::new("trankleiste")).anchor(Align2::CENTER_BOTTOM, [-(455.0 / 2.0 + 44.0), -14.0]).interactable(false).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(70.0, 70.0), egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(rect, 8.0, Color32::from_rgb(10, 8, 6));
+            gradient(painter, rect.shrink(2.0), LEATHER_TOP, LEATHER_BOTTOM, false);
+            painter.rect_stroke(rect.shrink(1.0), 7.0, Stroke::new(1.5, GOLD), StrokeKind::Inside);
+            let slot = rect.shrink(10.0);
+            slot_frame(painter, slot, false, anzahl > 0);
+            let tint = if anzahl > 0 { Color32::WHITE } else { Color32::from_gray(80) };
+            if !icons.paint_file(painter, slot.shrink(2.0), Item::Heiltrank.icon_file(), tint) {
+                ui::item_icon(painter, slot.shrink(5.0), Item::Heiltrank);
+            }
+            if rest > 0.0 {
+                let mut schleier = slot.shrink(2.0);
+                schleier.set_height(schleier.height() * (rest / (crate::protocol::TRANK_ABKLINGEN as f32 / 60.0)).clamp(0.0, 1.0));
+                painter.rect_filled(schleier, 3.0, Color32::from_black_alpha(165));
+            }
+            count_label(painter, slot.right_bottom() - egui::vec2(3.0, 1.0), anzahl, 14.0);
+            if anzahl < 2 {
+                // count_label zeigt erst ab 2 – 0 und 1 selbst schreiben
+                painter.text(slot.right_bottom() - egui::vec2(3.0, 1.0), Align2::RIGHT_BOTTOM, anzahl.to_string(), FontId::proportional(14.0), Color32::WHITE);
+            }
+            let corner = slot.left_top() + egui::vec2(3.0, 1.0);
+            painter.text(corner + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, "Q", FontId::proportional(12.0), Color32::BLACK);
+            painter.text(corner, Align2::LEFT_TOP, "Q", FontId::proportional(12.0), GOLD_LIGHT);
+        });
     }
 
     /// Auswahlleiste unten in der Mitte: Werkzeuge und die drei Fähigkeiten der Figur, der gewählte

@@ -15,7 +15,7 @@ use crate::save::{player_key, WorldSave};
 use crate::td::{Ereignis, TdBefehl, TdStand};
 use crate::faehigkeiten::Faehigkeit;
 use crate::wildnis::Treffer;
-use crate::world::{bodenhoehe, World, HARVEST_COOLDOWN_TICKS, HEILEN_ANTEIL, HEILEN_NACH, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
+use crate::world::{bodenhoehe, World, HARVEST_COOLDOWN_TICKS, MINE_COOLDOWN_TICKS, RUNEN_REICHWEITE};
 
 /// Alle wie viele Takte ein Snapshot rausgeht (2 = 30 pro Sekunde).
 const SNAPSHOT_INTERVAL: u64 = 2;
@@ -137,6 +137,8 @@ pub struct Authority {
     strassen_spieler: Vec<Option<String>>,
     /// Wer sein Startgold schon bekommen hat (nach Namen)
     startgold: BTreeSet<String>,
+    /// Wer seine Start-Heiltränke schon bekommen hat (nach Namen)
+    start_traenke: BTreeSet<String>,
     /// Siedlungsplätze mit eingesetztem Runenstein: wem sie gehören (je Straße)
     runen: Vec<Option<String>>,
     /// Zufall für Beute (Runenfragmente, Waffen)
@@ -146,6 +148,8 @@ pub struct Authority {
     beute_bis: HashMap<u32, u64>,
     /// Kontrollpunkte in Dungeons: wo ein Spieler nach einer Niederlage wieder erwacht
     kontrollpunkte: HashMap<PlayerId, Vec3>,
+    /// Bis zu welchem Takt ein Spieler keinen Heiltrank trinken kann
+    trank_bis: HashMap<PlayerId, u64>,
     /// Serverbrowser: beantwortet Statusanfragen (Name, Spielport, höchste Spielerzahl)
     status: Option<(crate::status::StatusAntwort, String, u16, u16)>,
 }
@@ -169,11 +173,13 @@ impl Authority {
             ereignisse: Vec::new(),
             strassen_spieler: Vec::new(),
             startgold: BTreeSet::new(),
+            start_traenke: BTreeSet::new(),
             runen: Vec::new(),
             rng: Rng::new(0xB0_07E),
             beute_naechste: 1,
             beute_bis: HashMap::new(),
             kontrollpunkte: HashMap::new(),
+            trank_bis: HashMap::new(),
             status: None,
         }
     }
@@ -775,17 +781,43 @@ impl Authority {
         self.broadcast(ServerMessage::SpielerGefallen { player, von: von.to_string() });
     }
 
-    /// Wer eine Weile nicht getroffen wurde, heilt sich langsam.
+    /// Arkane Ladungen verfallen ohne neuen Treffer. (Von selbst heilt niemand – dafür gibt es
+    /// Heiltränke, siehe `trinken`.)
     fn heilen(&mut self, ctx: &Context, world: &mut World) {
         for avatar in world.players.values_mut() {
-            // Arkane Ladungen verfallen ohne neuen Treffer
             if avatar.ladung > 0 && ctx.time.tick > avatar.ladung_tick + crate::faehigkeiten::LADUNG_HAELT {
                 avatar.ladung = 0;
             }
-            if avatar.leben < avatar.max_leben() && ctx.time.tick > avatar.getroffen + HEILEN_NACH {
-                avatar.leben = (avatar.leben + avatar.max_leben() * HEILEN_ANTEIL * Physics::FIXED_DT).min(avatar.max_leben());
-            }
         }
+    }
+
+    /// Einen Heiltrank trinken: heilt sofort einen Teil der Lebenspunkte, danach eine kurze Pause.
+    pub fn trinken(&mut self, ctx: &mut Context, world: &mut World, player: PlayerId) -> Result<(), String> {
+        let tick = ctx.time.tick;
+        let avatar = world.players.get(&player).ok_or("Unbekannter Spieler")?;
+        if avatar.leben <= 0.0 {
+            return Err("Besiegt – erst wieder aufstehen".into());
+        }
+        if avatar.leben >= avatar.max_leben() {
+            return Err("Du bist unverletzt".into());
+        }
+        if self.trank_bis.get(&player).is_some_and(|&bis| tick < bis) {
+            return Err("Der letzte Trank wirkt noch".into());
+        }
+        let inventory = world.inventories.entry(player).or_default();
+        if !inventory.remove_item(Item::Heiltrank, 1) {
+            return Err("Keine Heiltränke mehr (der Händler … oder die Wildnis)".into());
+        }
+        let inventory = *inventory;
+        self.send_inventory(player, inventory);
+        self.trank_bis.insert(player, tick + crate::protocol::TRANK_ABKLINGEN);
+        let Some(avatar) = world.players.get_mut(&player) else { return Ok(()) };
+        avatar.leben = (avatar.leben + avatar.max_leben() * crate::protocol::TRANK_HEILUNG).min(avatar.max_leben());
+        let ort = ctx.physics.character_position(avatar.character);
+        let ereignis = Ereignis::Heilung(ort + Vec3::Y * 0.4);
+        world.ereignisse.push(ereignis);
+        self.ereignisse.push(ereignis);
+        Ok(())
     }
 
     /// Ein Takt der Wildnis: Lagerbewohner bewegen sich und greifen an; Besiegte bringen Gold und
@@ -1615,6 +1647,7 @@ impl Authority {
         let mut anlegen: Vec<(ClientId, u8, u8)> = Vec::new();
         let mut durchgaenge: Vec<(ClientId, u16)> = Vec::new();
         let mut handel: Vec<(ClientId, crate::handel::HandelBefehl)> = Vec::new();
+        let mut trinken: Vec<ClientId> = Vec::new();
         for (&id, client) in &mut self.clients {
             while let Some(bytes) = net.message(id, Channel::Reliable) {
                 match decode(&bytes) {
@@ -1628,6 +1661,7 @@ impl Authority {
                     Some(ClientMessage::RuestungAnlegen(platz, teil)) => anlegen.push((id, platz, teil)),
                     Some(ClientMessage::Durchgang(index)) => durchgaenge.push((id, index)),
                     Some(ClientMessage::Handel(befehl)) => handel.push((id, befehl)),
+                    Some(ClientMessage::Trinken) => trinken.push(id),
                     _ => {}
                 }
             }
@@ -1652,7 +1686,13 @@ impl Authority {
             self.chat(ctx, world, id, &text);
         }
         for (id, command) in admins {
-            self.admin(world, id, command);
+            // Admin-Befehle nur vom Admin (andere werden verworfen)
+            let name = world.players.get(&id).map(|a| a.name.clone()).unwrap_or_default();
+            if crate::protocol::ist_admin(&name) {
+                self.admin(world, id, command);
+            } else {
+                log::warn!("Admin-Befehl von {name} verworfen: {command:?}");
+            }
         }
         for (id, befehl) in changes {
             let result = self.td(ctx, world, id, befehl);
@@ -1680,6 +1720,12 @@ impl Authority {
         }
         for (id, index) in durchgaenge {
             let result = self.durchgang(ctx, world, id, index);
+            if let (Err(reason), Some(net)) = (result, &mut self.net) {
+                net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
+            }
+        }
+        for id in trinken {
+            let result = self.trinken(ctx, world, id);
             if let (Err(reason), Some(net)) = (result, &mut self.net) {
                 net.send(id, Channel::Reliable, encode(&ServerMessage::BuildRefused(reason)));
             }
@@ -1736,6 +1782,7 @@ impl Authority {
         );
         self.inventories = save.inventories;
         self.startgold = save.startgold;
+        self.start_traenke = save.start_traenke;
         self.runen = save.runen;
         // Ältere Stände: wer dort schon eine Dorfhalle hat, dem gehört der Siedlungsplatz
         self.runen.resize(world.schutzsteine.len(), None);
@@ -1756,8 +1803,12 @@ impl Authority {
         if let Some(&inventory) = self.inventories.get(&key) {
             world.inventories.insert(player, inventory);
         }
-        if self.startgold.insert(key) {
+        if self.startgold.insert(key.clone()) {
             world.inventories.entry(player).or_default().gold += crate::td::STARTGOLD;
+        }
+        // Eigenes Verzeichnis: auch wer schon vor den Heiltränken da war, bekommt sie einmal
+        if self.start_traenke.insert(key) {
+            world.inventories.entry(player).or_default().heiltraenke += crate::protocol::START_HEILTRAENKE;
         }
         let inventory = world.inventories.get(&player).copied().unwrap_or_default();
         if player != HOST_PLAYER {
@@ -1772,6 +1823,7 @@ impl Authority {
         let Some(path) = &self.save_path else { return };
         let mut save = WorldSave::capture(world, self.tick, &self.inventories);
         save.startgold = self.startgold.clone();
+        save.start_traenke = self.start_traenke.clone();
         save.runen = self.runen.clone();
         self.inventories = save.inventories.clone();
         match save.store(path) {

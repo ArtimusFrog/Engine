@@ -852,7 +852,31 @@ def kristall():
         objekt(f"Kristall{i}", bm2, mat)
 
 
-GEGENSTAENDE = {"gold": gold, "lehm": lehm, "kristall": kristall, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
+def heiltrank():
+    """Bauchige Glasflasche mit leuchtend rotem Trank, Korken und Lederband mit Siegel."""
+    glas = material("Glas", "#D8ECF4", rau=0.08, glanz=0.9)
+    trank = material("Trank", "#D0202E", rau=0.15, glanz=0.8)
+    kork = material("Kork", "#B07A48", rau=0.9, muster=True, muster_farbe="#8A5A30", muster_skala=18.0)
+    leder = material("Leder", "#6A3E22", rau=0.7)
+    siegel = material("Siegel", "#D8AE4A", rau=0.3, glanz=0.6)
+    # Bauch und Trank: der Trank etwas kleiner, damit das Glas als Rand sichtbar bleibt
+    kugel(0.72, (0, 0, -0.25), trank, name="Trank", unterteilung=4, groesse=(1.0, 1.0, 0.95))
+    hals = zylinder(0.2, 0.55, 16)
+    bewegen(hals, (0, 0, 0.62))
+    objekt("Hals", hals, glas, glatt=True)
+    rand = zylinder(0.26, 0.08, 16)
+    bewegen(rand, (0, 0, 0.9))
+    objekt("Rand", rand, glas, glatt=True)
+    stopfen = zylinder(0.17, 0.3, 12, 0.2)
+    bewegen(stopfen, (0, 0, 1.02))
+    objekt("Korken", stopfen, kork, glatt=True)
+    seil_ring(0.22, 0.04, (0, 0, 0.72), (0, 0, 0), leder, name="Band")
+    kugel(0.1, (0.0, -0.24, 0.62), siegel, name="Siegel", groesse=(1.0, 0.5, 1.0))
+    # Glanzlicht auf dem Bauch
+    kugel(0.1, (-0.32, -0.52, 0.05), leucht("Glanz", "#FFFFFF", 1.5), name="Glanz", groesse=(0.8, 0.4, 1.2))
+
+
+GEGENSTAENDE = {"gold": gold, "lehm": lehm, "kristall": kristall, "heiltrank": heiltrank, "holz": holz, "stein": stein, "erz": erz, "fleisch": fleisch, "fell": fell, "wolle": wolle,
                 "spitzhacke": spitzhacke, "axt": axt, "zauberstab": zauberstab, "runenfragment": runenfragment, "runenstein": runenstein,
                 "faehigkeit_arkangeschoss": faehigkeit_arkangeschoss, "faehigkeit_feuerball": faehigkeit_feuerball,
                 "faehigkeit_frostnova": faehigkeit_frostnova, "faehigkeit_hammerschlag": faehigkeit_hammerschlag,

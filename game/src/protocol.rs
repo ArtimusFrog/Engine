@@ -7,7 +7,7 @@ pub const DEFAULT_PORT: u16 = 7777;
 
 /// Bei jeder inkompatiblen Änderung an diesen Nachrichten hochzählen. Server und Client
 /// mit unterschiedlicher ID können sich nicht verbinden.
-pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0024;
+pub const PROTOCOL_ID: u64 = 0x4A4E_0000_0000_0025;
 
 pub type PlayerId = u64;
 pub type NetId = u32;
@@ -63,6 +63,14 @@ pub enum AdminCommand {
     Runenfragmente,
     /// Alle Lager der Wildnis sofort wieder besetzen
     LagerNeu,
+}
+
+/// Nur dieser Spieler darf das Admin-Panel (Taste X) benutzen.
+pub const ADMIN_NAME: &str = "nilsl";
+
+/// Darf ein Spieler mit diesem Namen Admin-Befehle geben?
+pub fn ist_admin(name: &str) -> bool {
+    crate::save::player_key(name) == ADMIN_NAME
 }
 
 /// Runen: Fragmente am Runenbrunnen der Burg zu einem Runenstein vereinen, einen Runenstein in
@@ -259,7 +267,16 @@ pub enum ClientMessage {
     Durchgang(u16),
     /// Mit dem Händler auf dem Marktplatz handeln
     Handel(crate::handel::HandelBefehl),
+    /// Einen Heiltrank trinken (Taste Q)
+    Trinken,
 }
+
+/// So viele Heiltränke bekommt jeder Spieler, wenn er die Welt zum ersten Mal betritt.
+pub const START_HEILTRAENKE: u32 = 100;
+/// Ein Heiltrank heilt sofort diesen Anteil der Lebenspunkte …
+pub const TRANK_HEILUNG: f32 = 0.4;
+/// … und danach kann man so lange keinen trinken (Takte, 60 je Sekunde).
+pub const TRANK_ABKLINGEN: u64 = 3 * 60;
 
 /// Was im Inventar angelegt werden soll (Klick oder auf einen Ausrüstungsplatz gezogen).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -338,6 +355,9 @@ pub struct Inventory {
     pub lehm: u32,
     #[serde(default)]
     pub kristalle: u32,
+    /// Heiltränke (Taste Q)
+    #[serde(default)]
+    pub heiltraenke: u32,
 }
 
 /// Alles, was im Inventar liegen kann.
@@ -354,10 +374,11 @@ pub enum Item {
     Runenstein,
     Lehm,
     Kristall,
+    Heiltrank,
 }
 
 impl Item {
-    pub const ALL: [Item; 11] = [Item::Gold, Item::Runenstein, Item::Runenfragment, Item::Kristall, Item::Wood, Item::Stone, Item::Lehm, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
+    pub const ALL: [Item; 12] = [Item::Gold, Item::Heiltrank, Item::Runenstein, Item::Runenfragment, Item::Kristall, Item::Wood, Item::Stone, Item::Lehm, Item::Ore, Item::Meat, Item::Pelt, Item::Wool];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -372,6 +393,7 @@ impl Item {
             Item::Runenstein => "Runenstein",
             Item::Lehm => "Lehm",
             Item::Kristall => "Kristall",
+            Item::Heiltrank => "Heiltrank",
         }
     }
 
@@ -389,6 +411,7 @@ impl Item {
             Item::Runenstein => "runenstein",
             Item::Lehm => "lehm",
             Item::Kristall => "kristall",
+            Item::Heiltrank => "heiltrank",
         }
     }
 
@@ -409,6 +432,7 @@ impl Item {
             Item::Runenstein => "Magie · öffnet einen Siedlungsplatz",
             Item::Lehm => "Rohstoff · Baumaterial",
             Item::Kristall => "Magie · Rohstoff für Zaubertürme",
+            Item::Heiltrank => "Trank · Q: trinken",
         }
     }
 
@@ -425,6 +449,7 @@ impl Item {
             Item::Runenstein => "Setze ihn in den Schutzstein am Ende einer Heerstraße (E): Dann gehört dir der Siedlungsplatz und du kannst deine Dorfhalle bauen.",
             Item::Lehm => "Heller, feuchter Lehm aus Lehmvorkommen in Niederungen und an der Küste. Für Rathaus, Burgfried, Kristallturm und Straßen.",
             Item::Kristall => "Ein magischer Kristall, den die Kristallmagier eines Kristallturms aus den leuchtenden Vorkommen lösen. Stärkt die Zaubertürme.",
+            Item::Heiltrank => "Roter Heiltrank. Mit Q getrunken heilt er sofort 40 % deiner Lebenspunkte – von selbst heilen Wunden nicht.",
         }
     }
 }
@@ -447,6 +472,7 @@ impl Inventory {
             Item::Runenstein => self.runensteine,
             Item::Lehm => self.lehm,
             Item::Kristall => self.kristalle,
+            Item::Heiltrank => self.heiltraenke,
         }
     }
 
@@ -463,6 +489,7 @@ impl Inventory {
             Item::Runenstein => &mut self.runensteine,
             Item::Lehm => &mut self.lehm,
             Item::Kristall => &mut self.kristalle,
+            Item::Heiltrank => &mut self.heiltraenke,
         };
         *slot += amount;
     }
@@ -481,6 +508,7 @@ impl Inventory {
             Item::Runenstein => &mut self.runensteine,
             Item::Lehm => &mut self.lehm,
             Item::Kristall => &mut self.kristalle,
+            Item::Heiltrank => &mut self.heiltraenke,
         };
         if *slot < amount {
             return false;

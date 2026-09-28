@@ -107,6 +107,11 @@ impl Replica {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Durchgang(index)));
     }
 
+    /// Einen Heiltrank trinken (der Server prüft Vorrat und Abklingzeit).
+    pub fn send_trinken(&mut self) {
+        self.net.send(Channel::Reliable, encode(&ClientMessage::Trinken));
+    }
+
     /// Mit dem Händler handeln (der Server prüft Entfernung, Besitz und Gold).
     pub fn send_handel(&mut self, befehl: crate::handel::HandelBefehl) {
         self.net.send(Channel::Reliable, encode(&ClientMessage::Handel(befehl)));

@@ -17,10 +17,6 @@ pub const CAST_RANGE: f32 = 45.0;
 pub const RUNEN_REICHWEITE: f32 = 7.0;
 /// So hoch schwebt ein eingesetzter Runenstein über dem Fuß des Schutzsteins (Meter).
 const RUNE_HOEHE: f32 = 7.6;
-/// Nach so vielen Takten ohne Treffer heilen Spieler sich (8 s) …
-pub const HEILEN_NACH: u64 = 8 * 60;
-/// … um diesen Anteil ihrer Lebenspunkte je Sekunde.
-pub const HEILEN_ANTEIL: f32 = 0.05;
 /// Takte zwischen zwei Axthieben auf einen Baum (so lang wie die Animation „Hacken“).
 pub const HARVEST_COOLDOWN_TICKS: u64 = 36;
 /// Takte zwischen zwei Schlägen mit der Spitzhacke (so lang wie die Animation „Abbauen“).

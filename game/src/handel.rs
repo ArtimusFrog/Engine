@@ -62,6 +62,7 @@ pub fn ankauf(item: Item) -> Option<u32> {
         Item::Lehm => Some(2),
         Item::Ore | Item::Wool => Some(3),
         Item::Kristall => Some(15),
+        Item::Heiltrank => Some(3),
         Item::Meat => Some(2),
         Item::Pelt => Some(4),
         Item::Runenfragment => Some(35),
@@ -75,12 +76,13 @@ pub fn verkauf(item: Item) -> Option<u32> {
         Item::Wood | Item::Stone => Some(4),
         Item::Lehm => Some(6),
         Item::Ore => Some(10),
+        Item::Heiltrank => Some(12),
         _ => None,
     }
 }
 
 /// Rohstoffe, die der Händler immer vorrätig hat.
-pub const ROHSTOFFE: [Item; 4] = [Item::Wood, Item::Stone, Item::Lehm, Item::Ore];
+pub const ROHSTOFFE: [Item; 5] = [Item::Heiltrank, Item::Wood, Item::Stone, Item::Lehm, Item::Ore];
 
 /// Wert einer Waffe oder eines Rüstungsteils in Gold (Kaufpreis beim Händler).
 pub fn wert(ware: Ware) -> Option<u32> {

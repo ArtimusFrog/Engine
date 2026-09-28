@@ -353,6 +353,14 @@ pub fn item_icon(painter: &egui::Painter, rect: egui::Rect, item: Item) {
             painter.line_segment([v(0.0, -8.0 * n), v(0.0, 8.0 * n)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
             painter.line_segment([v(-5.0 * n, -2.0), v(5.0 * n, 3.0)], Stroke::new(2.0 * s, Color32::from_rgb(190, 235, 255)));
         }
+        Item::Heiltrank => {
+            // Runde Flasche mit rotem Trank, Hals und Korken
+            painter.circle_filled(v(0.0, 5.0), 11.0 * s, Color32::from_rgb(200, 40, 50));
+            painter.circle_stroke(v(0.0, 5.0), 11.0 * s, outline);
+            painter.rect_filled(egui::Rect::from_center_size(v(0.0, -9.0), egui::vec2(7.0 * s, 8.0 * s)), 1.5 * s, Color32::from_rgb(210, 225, 235));
+            painter.rect_filled(egui::Rect::from_center_size(v(0.0, -14.0), egui::vec2(8.0 * s, 4.0 * s)), 1.5 * s, Color32::from_rgb(150, 100, 55));
+            painter.circle_filled(v(-4.0, 1.0), 2.5 * s, Color32::from_rgb(255, 170, 170));
+        }
         Item::Kristall => {
             // Hoher blauer Kristall mit Glanzkante
             let punkte = vec![v(0.0, -17.0), v(8.0, -8.0), v(7.0, 14.0), v(-7.0, 14.0), v(-8.0, -8.0)];

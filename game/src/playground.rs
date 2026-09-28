@@ -14,6 +14,8 @@ use crate::world::World;
 const CONNECT_TIMEOUT: f32 = 10.0;
 /// Bis zu dieser Entfernung (Meter) haben Tiere einen Lebensbalken, verletzte auch weiter.
 const HEALTH_BAR_DISTANCE: f32 = 24.0;
+/// Admin-Panel mit Taste X (zum Abschalten auf false setzen)
+const ADMIN_PANEL: bool = true;
 const HEALTH_BAR_DISTANCE_HURT: f32 = 45.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +110,8 @@ pub struct Playground {
     zielkreis: crate::zielkreis::Zielkreis,
     /// Handelsfenster des Händlers (E auf dem Marktplatz) offen
     handel_offen: bool,
+    /// Wann zuletzt ein Heiltrank getrunken wurde (für die Anzeige der Abklingzeit)
+    trank_um: f32,
     /// Siedlungsradien anzeigen (R)
     radius_an: bool,
     /// Wie viele Auswertungen schon da waren und seit wann die neueste gezeigt wird
@@ -229,6 +233,7 @@ impl Playground {
             td_open: false,
             zielkreis: Default::default(),
             handel_offen: false,
+            trank_um: -100.0,
             radius_an: false,
             bericht_seit: (0, 0.0),
             demo_fallen: false,
@@ -514,6 +519,12 @@ impl Playground {
         let session = self.session.as_ref()?;
         let p = session.world().player_position(ctx, session.local_player()?)?;
         session.world().durchgang_bei(p - Vec3::Y * 0.9).map(|(i, d)| (i, d.text.clone()))
+    }
+
+    /// Darf die eigene Figur das Admin-Panel öffnen? (nur der Spieler `protocol::ADMIN_NAME`)
+    fn bin_admin(&self) -> bool {
+        let name = self.session.as_ref().and_then(|s| s.local_player().and_then(|p| s.world().players.get(&p))).map_or(self.settings.name.as_str(), |a| a.name.as_str());
+        crate::protocol::ist_admin(name)
     }
 
     /// Steht die eigene Figur beim Händler?
@@ -1069,7 +1080,7 @@ impl Playground {
                     }
                 }
                 // X: Admin-Panel (Noclip, Wetter, Truppen der Festung)
-                if (escape && self.admin_open) || (ctx.input.key_pressed(KeyCode::KeyX) && !self.free_camera) {
+                if (escape && self.admin_open) || (ADMIN_PANEL && self.bin_admin() && ctx.input.key_pressed(KeyCode::KeyX) && !self.free_camera) {
                     self.admin_open = !self.admin_open;
                     self.build_menu_open = false;
                     self.inventory_open = false;
@@ -1150,6 +1161,17 @@ impl Playground {
                     }
                     self.jump_requested |= ctx.input.key_pressed(KeyCode::Space);
                     return;
+                }
+                // Q: Heiltrank trinken
+                if ctx.input.key_pressed(KeyCode::KeyQ) && !self.free_camera {
+                    let abgeklungen = ctx.time.elapsed - self.trank_um >= crate::protocol::TRANK_ABKLINGEN as f32 / 60.0;
+                    if let Some(session) = &mut self.session {
+                        let verletzt = session.local_player().and_then(|p| session.world().players.get(&p)).is_some_and(|a| a.leben > 0.0 && a.leben < a.max_leben());
+                        if abgeklungen && verletzt && session.local_inventory().heiltraenke > 0 {
+                            self.trank_um = ctx.time.elapsed;
+                        }
+                        session.trinken(ctx);
+                    }
                 }
                 // Auswahlleiste: Tasten 1–8 oder Mausrad
                 let digits = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8];
@@ -2049,6 +2071,8 @@ impl Playground {
         if !self.inventory_open {
             self.inventory_ui.hud(egui_ctx, &session.local_inventory());
         }
+        let trank_rest = (crate::protocol::TRANK_ABKLINGEN as f32 / 60.0 - (ctx.time.elapsed - self.trank_um)).max(0.0);
+        self.inventory_ui.trank_leiste(egui_ctx, session.local_inventory().heiltraenke, trank_rest);
         let jetzt = ctx.time.elapsed;
         let abklingen = self.bereit_ab.map(|t| (t - jetzt).max(0.0));
         let punkte = self.faehigkeits_punkte(ctx);
